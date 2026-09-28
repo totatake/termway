@@ -8,7 +8,7 @@ description = "In-terminal X11 GUI and DRM client runner"
 [dependencies]
 base64 = "0.22"
 libc = "0.2"
-nix = { version = "0.29", default-features = false, features = ["fs", "term", "signal", "ioctl", "process"] }
+nix = { version = "0.29", default-features = false, features = ["fs", "term", "signal", "ioctl", "process", "poll"] }
 x11 = { version = "2.21", features = ["xlib", "xtest"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
 
