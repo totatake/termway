@@ -40,7 +40,7 @@ impl KittyEncoder {
 
             if first {
                 output.push_str(&format!(
-                    "\x1b_Ga=T,i={},C=1,f=32,s={},v={},c={},r={},m={};",
+                    "\x1b_Ga=T,q=2,i={},C=1,f=32,s={},v={},c={},r={},m={};",
                     image_id, width, height, term_cols, term_rows, m_flag
                 ));
                 first = false;
@@ -125,7 +125,7 @@ impl KittyEncoder {
             let m_flag = if is_last { 0 } else { 1 };
 
             if first {
-                output.push_str("\x1b_Ga=T,f=32");
+                output.push_str("\x1b_Ga=T,q=2,f=32");
                 output.push_str(&format!(",s={},v={}", width, height));
 
                 if let Some(c) = cell_cols {

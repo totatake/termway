@@ -39,7 +39,7 @@ fn test_integration_framebuffer_to_kitty_pipeline() {
         encoded_stream.push_str(&chunk);
     }
 
-    assert!(encoded_stream.starts_with("\x1b_Ga=T,f=32"));
+    assert!(encoded_stream.starts_with("\x1b_Ga=T,q=2,f=32"));
     assert!(encoded_stream.contains(",X=1,Y=1"));
 }
 

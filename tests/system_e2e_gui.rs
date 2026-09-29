@@ -82,7 +82,7 @@ root.mainloop()
 
     // Verify Kitty encoding of initial frame (FR-1)
     let kitty_seq = KittyEncoder::encode_rgba_image(&fb.pixels, width, height, Some(1), Some(1));
-    assert!(kitty_seq.starts_with("\x1b_Ga=T,f=32"));
+    assert!(kitty_seq.starts_with("\x1b_Ga=T,q=2,f=32"));
 
     // 4. Inject synthetic mouse click event using XTest (FR-3)
     let mut injector = XTestInjector::new(xvfb.raw_display());

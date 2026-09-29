@@ -15,7 +15,7 @@ fn test_encode_rgba_small_image() {
     let encoded = KittyEncoder::encode_rgba_image(&rgba, 2, 2, None, None);
 
     // Verify protocol structure
-    assert!(encoded.starts_with("\x1b_Ga=T,f=32,s=2,v=2"));
+    assert!(encoded.starts_with("\x1b_Ga=T,q=2,f=32,s=2,v=2"));
     assert!(encoded.ends_with("\x1b\\"));
     assert!(encoded.contains(",m=0;"));
 }
@@ -31,7 +31,7 @@ fn test_encode_rgba_subimage() {
 
     // Extract 2x2 subimage starting at (1, 1)
     let encoded = KittyEncoder::encode_rgba_subimage(&full, 4, 4, 1, 1, 2, 2, Some(5), Some(10));
-    assert!(encoded.starts_with("\x1b_Ga=T,f=32,s=2,v=2,X=5,Y=10,m=0;"));
+    assert!(encoded.starts_with("\x1b_Ga=T,q=2,f=32,s=2,v=2,X=5,Y=10,m=0;"));
 }
 
 #[test]
@@ -50,6 +50,6 @@ fn test_encode_fullscreen_frame() {
     let encoded = KittyEncoder::encode_fullscreen_frame(&rgba, 32, 32, 80, 24, 1);
 
     // Must prepend cursor home sequence to align to top-left of terminal
-    assert!(encoded.starts_with("\x1b[H\x1b_Ga=T,i=1,C=1,f=32,s=32,v=32,c=80,r=24"));
+    assert!(encoded.starts_with("\x1b[H\x1b_Ga=T,q=2,i=1,C=1,f=32,s=32,v=32,c=80,r=24"));
     assert!(encoded.ends_with("\x1b\\"));
 }
