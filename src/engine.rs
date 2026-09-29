@@ -45,6 +45,12 @@ impl TermwayEngine {
         // 2. Select backend
         let mode = self.config.backend_mode.unwrap_or_else(detect_backend_mode);
 
+        if mode == BackendMode::Terminal {
+            if !crate::terminal::is_kitty_graphics_supported() {
+                return Err("Terminal does not support Kitty Graphics Protocol, and not running in local DRM/KMS mode. Please use Kitty, WezTerm, Ghostty, or run on a local virtual console.".into());
+            }
+        }
+
         let mut backend: Box<dyn Backend> = match mode {
             BackendMode::Terminal => {
                 Box::new(TerminalBackend::new(term_size))
@@ -54,6 +60,9 @@ impl TermwayEngine {
                     Ok(drm) => Box::new(drm),
                     Err(e) => {
                         eprintln!("[termway] DRM initialization failed ({}), falling back to Terminal mode", e);
+                        if !crate::terminal::is_kitty_graphics_supported() {
+                            return Err("Terminal does not support Kitty Graphics Protocol, and DRM fallback failed. Please use Kitty, WezTerm, Ghostty, or fix DRM.".into());
+                        }
                         Box::new(TerminalBackend::new(term_size))
                     }
                 }
