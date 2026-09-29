@@ -115,8 +115,4 @@ impl TerminalBackend {
 
         Ok(true)
     }
-
-    fn on_resize(&mut self, new_size: &TerminalSize) {
-        self.term_size = *new_size;
-    }
 }
