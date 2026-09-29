@@ -52,19 +52,31 @@ impl Backend for TerminalBackend {
         target_h: u32,
     ) -> io::Result<bool> {
         let mut chunk = [0u8; 512];
-        let mut stdin = io::stdin();
+        let stdin = io::stdin();
 
-        // Note: stdin is set to raw/non-blocking or polled via select/calloop
-        // Here we read whatever bytes are available
-        match stdin.read(&mut chunk) {
-            Ok(0) => return Ok(true), // EOF
-            Ok(n) => {
-                self.input_buffer.extend_from_slice(&chunk[..n]);
+        // Non-blocking poll on stdin (timeout: 0ms) to avoid blocking the frame loop
+        let mut poll_fds = [nix::poll::PollFd::new(
+            std::os::fd::AsFd::as_fd(&stdin),
+            nix::poll::PollFlags::POLLIN,
+        )];
+
+        let poll_res = nix::poll::poll(&mut poll_fds, nix::poll::PollTimeout::ZERO)
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+
+        if poll_res > 0 {
+            if let Some(revents) = poll_fds[0].revents() {
+                if revents.contains(nix::poll::PollFlags::POLLIN) {
+                    let mut stdin_lock = stdin.lock();
+                    match stdin_lock.read(&mut chunk) {
+                        Ok(0) => return Ok(true), // EOF
+                        Ok(n) => {
+                            self.input_buffer.extend_from_slice(&chunk[..n]);
+                        }
+                        Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {}
+                        Err(e) => return Err(e),
+                    }
+                }
             }
-            Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
-                return Ok(true);
-            }
-            Err(e) => return Err(e),
         }
 
         // Process buffer
