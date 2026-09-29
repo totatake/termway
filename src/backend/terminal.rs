@@ -25,24 +25,23 @@ impl Backend for TerminalBackend {
     }
 
     fn render_damage(&mut self, fb: &Framebuffer, damage: &[DamageRect]) -> io::Result<()> {
-        let mut stdout = io::stdout();
-
-        for rect in damage {
-            // Encode sub-image rectangle
-            let encoded = KittyEncoder::encode_rgba_subimage(
-                &fb.pixels,
-                fb.width,
-                fb.height,
-                rect.x,
-                rect.y,
-                rect.width,
-                rect.height,
-                Some(1),
-                Some(1),
-            );
-            write!(stdout, "{}", encoded)?;
+        if damage.is_empty() {
+            return Ok(());
         }
 
+        let mut stdout = io::stdout();
+
+        // Render full frame with image replacement ID=1 and cursor suppression C=1
+        // to avoid scrolling and flickering
+        let encoded = KittyEncoder::encode_fullscreen_frame(
+            &fb.pixels,
+            fb.width,
+            fb.height,
+            self.term_size.cols,
+            self.term_size.rows,
+            1, // Fixed image ID for the viewport
+        );
+        write!(stdout, "{}", encoded)?;
         stdout.flush()
     }
 

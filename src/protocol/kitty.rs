@@ -10,13 +10,54 @@ impl KittyEncoder {
         "\x1b_Ga=d,d=a\x1b\\"
     }
 
+    /// Encode a full-screen frame buffer to Kitty Graphics Protocol.
+    /// Uses image ID and C=1 to suppress cursor movement and prevent screen scrolling.
+    /// Prepends cursor home sequence `\x1b[H` so the frame aligns cleanly to the terminal viewport.
+    pub fn encode_fullscreen_frame(
+        rgba: &[u8],
+        width: u32,
+        height: u32,
+        term_cols: u16,
+        term_rows: u16,
+        image_id: u32,
+    ) -> String {
+        let b64_data = BASE64.encode(rgba);
+        let mut output = String::with_capacity(b64_data.len() + 256);
+
+        // Move cursor to top-left (1,1) before displaying
+        output.push_str("\x1b[H");
+
+        let chunk_size = 4096;
+        let total_len = b64_data.len();
+        let mut offset = 0;
+        let mut first = true;
+
+        while offset < total_len {
+            let next_offset = std::cmp::min(offset + chunk_size, total_len);
+            let chunk = &b64_data[offset..next_offset];
+            let is_last = next_offset >= total_len;
+            let m_flag = if is_last { 0 } else { 1 };
+
+            if first {
+                output.push_str(&format!(
+                    "\x1b_Ga=T,i={},C=1,f=32,s={},v={},c={},r={},m={};",
+                    image_id, width, height, term_cols, term_rows, m_flag
+                ));
+                first = false;
+            } else {
+                output.push_str(&format!("\x1b_Gm={};", m_flag));
+            }
+
+            output.push_str(chunk);
+            output.push_str("\x1b\\");
+
+            offset = next_offset;
+        }
+
+        output
+    }
+
     /// Encode RGBA pixel data to Kitty Graphics Protocol escape sequence chunks.
-    ///
-    /// - `rgba`: raw RGBA8888 byte buffer
-    /// - `width`: width in pixels
-    /// - `height`: height in pixels
-    /// - `dst_col`: 1-indexed destination terminal column (optional, None for current cursor)
-    /// - `dst_row`: 1-indexed destination terminal row (optional)
     pub fn encode_rgba_image(
         rgba: &[u8],
         width: u32,
@@ -40,7 +81,6 @@ impl KittyEncoder {
         dst_col: Option<u16>,
         dst_row: Option<u16>,
     ) -> String {
-        // Extract rectangular slice
         let mut sub_rgba = Vec::with_capacity((rect_w * rect_h * 4) as usize);
         let stride = (full_width * 4) as usize;
         let row_bytes = (rect_w * 4) as usize;
@@ -95,8 +135,6 @@ impl KittyEncoder {
                     output.push_str(&format!(",r={}", r));
                 }
                 if let (Some(col), Some(row)) = (dst_col, dst_row) {
-                    // Position cursor or specify placement
-                    // We can output cursor positioning \x1b[{row};{col}H before image or via format
                     output.push_str(&format!(",X={},Y={}", col, row));
                 }
                 output.push_str(&format!(",m={};", m_flag));

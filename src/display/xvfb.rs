@@ -111,7 +111,8 @@ impl XvfbServer {
     fn find_free_display() -> u32 {
         for num in 99..200 {
             let socket_path = format!("/tmp/.X11-unix/X{}", num);
-            if !std::path::Path::new(&socket_path).exists() {
+            let lock_path = format!("/tmp/.X{}-lock", num);
+            if !std::path::Path::new(&socket_path).exists() && !std::path::Path::new(&lock_path).exists() {
                 return num;
             }
         }
