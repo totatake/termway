@@ -28,7 +28,6 @@ src/
 └── backend/                  # マルチバックエンド抽象化層
     ├── mod.rs                # 共通 Backend トレイト & 環境自動判定
     ├── terminal.rs           # TerminalBackend (Kitty + SGR)
-    └── drm.rs                # DrmBackend (DRM/KMS 直接描画)
 ```
 
 ---
@@ -94,7 +93,6 @@ $$y_{x11} = \mathrm{clamp}\left(\lfloor \frac{py \times H_{x11}}{H_{term}} \rflo
 
 ## 4. マルチバックエンド（二刀流）アーキテクチャ
 
-`src/backend/mod.rs` で定義された共通トレイトにより、単一バイナリでリモート端末環境とローカルVT環境を両立します。
 
 ```rust
 pub trait Backend {
@@ -108,11 +106,8 @@ pub trait Backend {
 ### 4.1 起動環境の自動判定ロジック
 1. **SSH環境**: `$SSH_CONNECTION`, `$SSH_CLIENT`, `$SSH_TTY` のいずれかが存在する場合 → **`TerminalBackend`**
 2. **PTY環境**: 標準入力の tty 名が `/dev/pts/*` の場合（ローカル端末や tmux セッション） → **`TerminalBackend`**
-3. **ローカルVT環境**: 標準入力が `/dev/tty*`（仮想コンソール）かつ `/dev/dri/card0` が存在し、既存の `$DISPLAY` がない場合 → **`DrmBackend`**
 
-### 4.2 DrmBackend の制御機構
 - Linux カーネルの `/dev/dri/card0` を直接オープン。
-- DRM ioctl による Dumb Buffer（フレームバッファ）のアロケーションと CRTC/KMS への直結描画。
 - 物理コンソール上の直接描画により、X11/Wayland サーバーが一切常駐していないミニマル環境でも GUI を即座に表示可能。
 
 ---

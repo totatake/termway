@@ -1,8 +1,6 @@
 # termway
 
-**In-Terminal X11 GUI & DRM/KMS Client Runner**
 
-`termway` は、モダンターミナル（Kitty, WezTerm 等）の画面内に X11 GUI アプリケーションを直接埋め込み描画し、マウスやキーボードで対話操作できるようにするCLIブリッジツールです。また、ローカルの仮想端末（VT/Console）環境では、カーネルの DRM/KMS 経由で直接ハードウェア描画を行う「二刀流」アーキテクチャを備えています。
 
 ---
 
@@ -17,10 +15,7 @@
   - 矢印キー、Ctrlキー、Enter/Tab/Backspace 等のキー入力も完全転送。
 - **タイル差分レンダリング (Damage Tracking)**:
   - 画面をタイル（32x32ピクセル等）に分割し、高速ハッシュ比較により変化があった矩形領域のみを端末へ差分転送。帯域とターミナル負荷を大幅に削減。
-- **マルチバックエンド（二刀流）**:
   - **`TerminalBackend` (リモート/PTY用)**: Kitty Graphics + SGR マウス + 仮想X11 (Xvfb)。
-  - **`DrmBackend` (ローカルVT用)**: Linuxカーネルの DRM/KMS (Dumb Buffer) を直接制御したハードウェア描画。
-  - 起動環境（SSH/PTY か ローカルVT か）を自動判別し、`--backend` での明示指定も可能。
 - **堅牢な端末保護 (RAII Guard)**:
   - `RawModeGuard` の `Drop` 実装により、プログラムが強制終了（Ctrl+C 等）やパニックを起こしても、端末のマウス追跡解除・カーソル表示・画面復元を100%保証。
 
@@ -43,7 +38,6 @@ flowchart LR
 
         subgraph BackendLayer["Multi-Backend Engine"]
             TermBackend["TerminalBackend"]
-            DrmBackend["DrmBackend (KMS/DumbBuffer)"]
         end
 
         subgraph DisplayInput["Display & Input Bridge"]
@@ -128,15 +122,12 @@ cargo run -- -- wireshark
 # ターミナル描画モード
 cargo run -- --backend terminal --demo
 
-# ローカルVT / DRM描画モード
-cargo run -- --backend drm --demo
 ```
 
 ### 4. 主なコマンドラインオプション
 
 | オプション | 引数 | 説明 | デフォルト |
 | :--- | :--- | :--- | :--- |
-| `--backend` | `terminal` \| `drm` | 表示・入力バックエンドの選択 | 自動判別 |
 | `--width` | `<PIXELS>` | 仮想ディスプレイ解像度の幅 | 端末サイズから自動算出 |
 | `--height` | `<PIXELS>` | 仮想ディスプレイ解像度の高さ | 端末サイズから自動算出 |
 | `--fps` | `<FPS>` | 目標フレームレート | `30` |

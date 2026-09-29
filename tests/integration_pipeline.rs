@@ -1,4 +1,3 @@
-use termway::backend::{detect_backend_mode, Backend, BackendMode, DrmBackend};
 use termway::display::{DamageTracker, Framebuffer};
 use termway::protocol::{KittyEncoder, SgrMouseParser};
 use termway::terminal::TerminalSize;
@@ -59,26 +58,4 @@ fn test_integration_mouse_to_target_coordinate_pipeline() {
     // Should map roughly to center of 1024x768 screen
     assert!(target_x > 450 && target_x < 550, "mapped x: {}", target_x);
     assert!(target_y > 330 && target_y < 430, "mapped y: {}", target_y);
-}
-
-#[test]
-fn test_integration_drm_backend_mock_pipeline() {
-    let mut drm = DrmBackend::mock(64, 64);
-    assert_eq!(drm.name(), "Native DRM/KMS (Direct Hardware Display)");
-
-    let mut fb = Framebuffer::new(64, 64);
-    fb.pixels[0] = 42;
-
-    let mut tracker = DamageTracker::new(64, 64, 32);
-    let damage = tracker.track_damage(&fb.pixels);
-
-    let res = drm.render_damage(&fb, &damage);
-    assert!(res.is_ok());
-}
-
-#[test]
-fn test_integration_backend_detection() {
-    let mode = detect_backend_mode();
-    // In our test runner / container, it should safely fall back to Terminal mode
-    assert!(mode == BackendMode::Terminal || mode == BackendMode::Drm);
 }

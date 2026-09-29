@@ -15,7 +15,6 @@ flowchart LR
         FR4["FR-4: キー入力"]
         FR5["FR-5: 端末保護"]
         FR6["FR-6: X11仮想管理"]
-        FR7["FR-7: DRM両対応"]
     end
 
     subgraph Verification["テスト検証 (Verification)"]
@@ -39,7 +38,6 @@ flowchart LR
     FR4 --> T_Sys
     FR5 --> T_Term
     FR6 --> T_Sys
-    FR7 --> T_Integ
 ```
 
 ---
@@ -56,7 +54,6 @@ flowchart LR
 | **FR-4** | キーボード入力変換 | 端末 stdin からの文字・特殊キー（矢印、Enter、BackSpace、Esc、Ctrlキー等）を解析し、X11キーイベントとしてGUIアプリにディスパッチすること。 | `tests/unit_keyboard.rs`<br/>`tests/system_e2e_gui.rs` | **PASS** |
 | **FR-5** | 端末制御と安全復元 | 起動時に `TIOCGWINSZ` で端末サイズを取得し、端末を Raw モードおよび Alternate Screen に切り替えること。プログラム終了時や `SIGINT` / パニック発生時には、`Drop` トレイトにより確実に通常画面・通常モードに復元すること。 | `tests/unit_terminal.rs` | **PASS** |
 | **FR-6** | X11仮想ディスプレイ管理 | `termway` 自体が内部で `Xvfb` を自律管理（または指定DISPLAYへ接続）し、子プロセスとしてGUIアプリケーションを起動可能なランチャー機能を持つこと。 | `tests/system_e2e_gui.rs` | **PASS** |
-| **FR-7** | マルチバックエンド対応 | 起動環境に応じて `TerminalBackend` と `DrmBackend` を自動判別し、CLIオプション（`--backend`）で明示指定可能な二刀流構造とすること。 | `tests/integration_pipeline.rs` | **PASS** |
 
 ### 2.2 非機能要件 (Non-Functional Requirements)
 
@@ -110,7 +107,6 @@ flowchart LR
 #### `tests/integration_pipeline.rs`
 - `test_integration_framebuffer_to_kitty_pipeline`: フレームバッファ更新 → 差分抽出 → Kitty エンコードの一連のパイプライン結合動作を検証
 - `test_integration_mouse_to_target_coordinate_pipeline`: SGR 文字列受信 → セルパース → 画面スケーリング計算の統合検証
-- `test_integration_drm_backend_mock_pipeline`: DrmBackend のモック初期化およびフレームバッファ描画呼び出しの検証
 - `test_integration_backend_detection`: 実行環境に応じたバックエンド自動判別の検証
 
 ---

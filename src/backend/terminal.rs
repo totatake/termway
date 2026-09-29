@@ -1,4 +1,3 @@
-use crate::backend::Backend;
 use crate::display::{DamageRect, Framebuffer};
 use crate::input::XTestInjector;
 use crate::protocol::{KeyCode, KeyboardParser, KittyEncoder, SgrMouseParser};
@@ -17,14 +16,12 @@ impl TerminalBackend {
             input_buffer: Vec::with_capacity(1024),
         }
     }
-}
 
-impl Backend for TerminalBackend {
-    fn name(&self) -> &'static str {
+    pub fn name(&self) -> &'static str {
         "Terminal (Kitty Graphics + SGR Mouse)"
     }
 
-    fn render_damage(&mut self, fb: &Framebuffer, damage: &[DamageRect]) -> io::Result<()> {
+    pub fn render_damage(&mut self, fb: &Framebuffer, damage: &[DamageRect]) -> io::Result<()> {
         if damage.is_empty() {
             return Ok(());
         }
@@ -45,7 +42,7 @@ impl Backend for TerminalBackend {
         stdout.flush()
     }
 
-    fn poll_input(
+    pub fn poll_input(
         &mut self,
         injector: &mut XTestInjector,
         target_w: u32,

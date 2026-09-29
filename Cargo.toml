@@ -3,7 +3,7 @@ name = "termway"
 version = "0.1.0"
 edition = "2021"
 authors = ["termway developers"]
-description = "In-terminal X11 GUI and DRM client runner"
+description = "In-terminal X11 GUI "
 
 [dependencies]
 base64 = "0.22"

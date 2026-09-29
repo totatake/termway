@@ -1,16 +1,14 @@
 use std::env;
-use termway::backend::BackendMode;
 use termway::engine::{EngineConfig, TermwayEngine};
 
 fn print_help() {
     println!(
-        r#"termway: In-Terminal X11 GUI and DRM Client Runner
+        r#"termway: The Ultimate X11-to-Terminal GUI Bridge
 
 USAGE:
     termway [OPTIONS] [--] [COMMAND [ARGS...]]
 
 OPTIONS:
-    --backend <terminal|drm>  Explicitly select display & input backend
     --width <PIXELS>          Virtual display width (default: auto from terminal)
     --height <PIXELS>         Virtual display height (default: auto from terminal)
     --fps <FPS>               Target frame rate (default: 30)
@@ -20,7 +18,7 @@ OPTIONS:
 EXAMPLES:
     termway --demo
     termway -- python3 my_gui_app.py
-    termway --backend terminal -- xclock
+    termway -- xclock
 "#
     );
 }
@@ -37,20 +35,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if arg == "-h" || arg == "--help" {
             print_help();
             return Ok(());
-        } else if arg == "--backend" {
-            i += 1;
-            if i >= args.len() {
-                eprintln!("Error: --backend requires an argument (terminal or drm)");
-                std::process::exit(1);
-            }
-            match args[i].to_lowercase().as_str() {
-                "terminal" => config.backend_mode = Some(BackendMode::Terminal),
-                "drm" => config.backend_mode = Some(BackendMode::Drm),
-                other => {
-                    eprintln!("Unknown backend '{}', choose 'terminal' or 'drm'", other);
-                    std::process::exit(1);
-                }
-            }
         } else if arg == "--width" {
             i += 1;
             if i >= args.len() {
@@ -129,7 +113,7 @@ import tkinter as tk
 root = tk.Tk()
 root.title("termway Default")
 root.geometry("350x200")
-lbl = tk.Label(root, text="Welcome to termway!\nPress 'q' or Ctrl+C to exit.", font=("Helvetica", 13))
+lbl = tk.Label(root, text="Welcome to termway!\nPress Ctrl+C to exit.", font=("Helvetica", 13))
 lbl.pack(expand=True)
 root.mainloop()
 "#.to_string(),
@@ -137,5 +121,10 @@ root.mainloop()
     }
 
     let engine = TermwayEngine::new(config);
-    engine.run()
+    if let Err(e) = engine.run() {
+        eprintln!("Error: {}", e);
+        std::process::exit(1);
+    }
+    
+    Ok(())
 }

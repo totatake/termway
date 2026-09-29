@@ -89,9 +89,5 @@ pub fn is_kitty_graphics_supported() -> bool {
     // Restore terminal
     unsafe { libc::tcsetattr(stdin_fd, libc::TCSANOW, &orig_termios) };
 
-    // Clear any garbage printed by terminals that do not support APC \x1b_
-    let _ = write!(io::stdout(), "\r\x1b[2K");
-    let _ = io::stdout().flush();
-
     supported
 }
