@@ -95,8 +95,8 @@ impl TerminalBackend {
 
             // 2. Try parsing keyboard sequence
             if let Some((key_ev, consumed)) = KeyboardParser::parse(&self.input_buffer) {
-                // Check exit hotkeys: Ctrl+C or 'q'
-                if key_ev.code == KeyCode::Ctrl('c') || key_ev.code == KeyCode::Char('q') {
+                // Use Ctrl+Q as the emergency exit hotkey
+                if key_ev.code == KeyCode::Ctrl('q') {
                     return Ok(false); // Signal to terminate
                 }
 
