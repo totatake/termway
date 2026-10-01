@@ -126,7 +126,7 @@ root.mainloop()
         ];
     }
 
-    let engine = TermwayEngine::new(config);
+    let mut engine = TermwayEngine::new(config);
     if let Err(e) = engine.run() {
         eprintln!("Error: {}", e);
         std::process::exit(1);

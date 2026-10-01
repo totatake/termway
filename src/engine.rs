@@ -38,10 +38,22 @@ impl TermwayEngine {
         Self { config }
     }
 
-    pub fn run(&self) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn run(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         // 1. Check protocol support
-        if !self.config.use_sixel && !crate::terminal::is_kitty_graphics_supported() {
-            return Err("Terminal does not support Kitty Graphics Protocol. Please use Kitty, WezTerm, Ghostty, or another compatible terminal. (Or try --sixel)".into());
+        if !self.config.use_sixel {
+            use crate::terminal::query::GraphicsProtocol;
+            match crate::terminal::query::query_graphics_protocol() {
+                GraphicsProtocol::Kitty => {
+                    // Supported directly
+                }
+                GraphicsProtocol::Sixel => {
+                    eprintln!("[termway] Kitty Graphics Protocol not supported. Falling back to Sixel.");
+                    self.config.use_sixel = true;
+                }
+                GraphicsProtocol::None => {
+                    return Err("Terminal does not support Kitty Graphics Protocol or Sixel. Please use Kitty, WezTerm, Ghostty, Windows Terminal, iTerm2, or another compatible terminal.".into());
+                }
+            }
         }
 
         // 2. Detect terminal size & resolve resolution
