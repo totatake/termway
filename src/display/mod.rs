@@ -7,3 +7,4 @@ pub use framebuffer::Framebuffer;
 pub use xvfb::XvfbServer;
 pub mod cursor;
 pub mod clipboard;
+pub mod shm;

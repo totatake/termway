@@ -113,6 +113,7 @@ impl TermwayEngine {
         let mut fb = Framebuffer::new(width, height);
         let mut damage_tracker = DamageTracker::new(width, height, 32);
         let mut clipboard = crate::display::clipboard::ClipboardBridge::new(xvfb.raw_display());
+        let mut shm_image = crate::display::shm::ShmImage::new(xvfb.raw_display(), width, height);
 
         let mut running = true;
 
@@ -144,12 +145,25 @@ impl TermwayEngine {
             }
 
             // D. Capture X11 frame
-            let ximage = xvfb.get_image();
-            if !ximage.is_null() {
-                unsafe {
-                    fb.copy_from_ximage(ximage);
-                    x11::xlib::XDestroyImage(ximage);
+            let mut got_frame = false;
+            if let Some(shm) = &mut shm_image {
+                if shm.capture() {
+                    unsafe { fb.copy_from_ximage(shm.image) };
+                    got_frame = true;
                 }
+            } else {
+                // Fallback to slow XGetImage
+                let ximage = xvfb.get_image();
+                if !ximage.is_null() {
+                    unsafe {
+                        fb.copy_from_ximage(ximage);
+                        x11::xlib::XDestroyImage(ximage);
+                    }
+                    got_frame = true;
+                }
+            }
+
+            if got_frame {
 
                 // Composite hardware cursor
                 if let Some((mx, my)) = crate::display::cursor::query_pointer(xvfb.raw_display()) {

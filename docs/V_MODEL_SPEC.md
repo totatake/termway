@@ -19,6 +19,7 @@ flowchart LR
         FR8["FR-8: マウスカーソル描画 (XFixes)"]
         FR9["FR-9: ウィンドウマネージャ連携 (WM Launcher)"]
         FR10["FR-10: クリップボード共有 (OSC 52)"]
+        FR11["FR-11: 描画最適化 (MIT-SHM)"]
     end
 
     subgraph Verification["テスト検証 (Verification)"]
@@ -48,6 +49,7 @@ flowchart LR
     FR8 --> T_Cursor
     FR9 --> T_Sys
     FR10 --> T_Cursor
+    FR11 --> T_Sys
 ```
 
 ---
@@ -68,6 +70,7 @@ flowchart LR
 | **FR-8** | マウスカーソル描画 | XFixes 拡張を用いて X11 のハードウェアカーソル画像（Iビームやポインタ等）と絶対座標を取得し、フレームバッファにアルファブレンド合成して画面出力すること。 | `tests/unit_cursor.rs`<br/>`tests/unit_pointer.rs` | **PASS** |
 | **FR-9** | 軽量WM自動連携 | `--wm` オプション指定時、Xvfb起動直後に軽量ウィンドウマネージャ（`openbox` 等）を背後で自動起動し、GUIアプリのタイトルバー表示やドラッグ移動、マルチウィンドウ化をサポートすること。 | `tests/system_e2e_gui.rs` | **PASS** |
 | **FR-10** | クリップボード同期 | XFixesSelectionNotify イベントを購読し、ターミナル内（Xvfb内）のGUIアプリでテキストがコピーされた際、即座に X11 CLIPBOARD セレクションを取得し、OSC 52 エスケープシーケンス（`\x1b]52;c;...`）に変換してホスト端末に送信することで、手元のPCのクリップボードへ同期すること。 | `tests/unit_clipboard.rs` | **PASS** |
+| **FR-11** | 描画最適化 (MIT-SHM) | X11 共有メモリ拡張 (MIT-SHM) を用いて、Xvfbからの画面キャプチャをゼロコピー化し、プロセス間通信のオーバーヘッドを削減してCPU使用率を極小化すること。SHMが利用できない場合は従来の `XGetImage` にフォールバックすること。 | `tests/unit_shm.rs` | **PASS** |
 
 ### 2.2 非機能要件 (Non-Functional Requirements)
 
