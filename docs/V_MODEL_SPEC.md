@@ -17,6 +17,7 @@ flowchart LR
         FR6["FR-6: X11仮想管理 (Xvfb Launcher)"]
         FR7["FR-7: 端末プロトコル検証 (Capability Check)"]
         FR8["FR-8: マウスカーソル描画 (XFixes)"]
+        FR9["FR-9: ウィンドウマネージャ連携 (WM Launcher)"]
     end
 
     subgraph Verification["テスト検証 (Verification)"]
@@ -44,6 +45,7 @@ flowchart LR
     FR7 --> T_Term
     FR7 --> T_Sys
     FR8 --> T_Cursor
+    FR9 --> T_Sys
 ```
 
 ---
@@ -62,6 +64,7 @@ flowchart LR
 | **FR-6** | X11仮想ディスプレイ管理 | `termway` 自体が内部で `Xvfb` を自律管理（DISPLAY環境変数を自動割り当て）し、子プロセスとしてGUIアプリケーションを起動・監視・終了可能なランチャー機能を持つこと。 | `tests/system_e2e_gui.rs` | **PASS** |
 | **FR-7** | 端末プロトコル適合性検証 | 起動時に環境変数（`TERM`, `TERM_PROGRAM` 等）およびターミナルへの直接クエリ（`\x1b_G...` エスケープシーケンス）を用いて Kitty Graphics Protocol の対応可否を事前検証し、非対応環境ではわかりやすいエラーメッセージを出力して安全に終了すること。 | `tests/unit_terminal.rs`<br/>`tests/system_e2e_gui.rs` | **PASS** |
 | **FR-8** | マウスカーソル描画 | XFixes 拡張を用いて X11 のハードウェアカーソル画像（Iビームやポインタ等）と絶対座標を取得し、フレームバッファにアルファブレンド合成して画面出力すること。 | `tests/unit_cursor.rs`<br/>`tests/unit_pointer.rs` | **PASS** |
+| **FR-9** | 軽量WM自動連携 | `--wm` オプション指定時、Xvfb起動直後に軽量ウィンドウマネージャ（`openbox` 等）を背後で自動起動し、GUIアプリのタイトルバー表示やドラッグ移動、マルチウィンドウ化をサポートすること。 | `tests/system_e2e_gui.rs` | **PASS** |
 
 ### 2.2 非機能要件 (Non-Functional Requirements)
 

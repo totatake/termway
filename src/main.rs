@@ -12,13 +12,14 @@ OPTIONS:
     --width <PIXELS>          Virtual display width (default: auto from terminal)
     --height <PIXELS>         Virtual display height (default: auto from terminal)
     --fps <FPS>               Target frame rate (default: 30)
+    --wm                      Start a lightweight Window Manager (openbox)
     --demo                    Run built-in Tkinter demo GUI application
     -h, --help                Print this help information
 
 EXAMPLES:
     termway --demo
+    termway --wm -- xclock
     termway -- python3 my_gui_app.py
-    termway -- xclock
 "#
     );
 }
@@ -56,6 +57,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(1);
             }
             config.fps = args[i].parse()?;
+        } else if arg == "--wm" {
+            config.enable_wm = true;
         } else if arg == "--demo" {
             run_demo = true;
         } else if arg == "--" {

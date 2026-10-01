@@ -11,6 +11,7 @@ pub struct EngineConfig {
     pub width: Option<u32>,
     pub height: Option<u32>,
     pub fps: u32,
+    pub enable_wm: bool,
     pub command: Vec<String>,
 }
 
@@ -20,6 +21,7 @@ impl Default for EngineConfig {
             width: None,
             height: None,
             fps: 30,
+            enable_wm: false,
             command: Vec::new(),
         }
     }
@@ -57,7 +59,28 @@ impl TermwayEngine {
         // 4. Initialize XTest input injector
         let mut injector = XTestInjector::new(xvfb.raw_display());
 
-        // 5. Spawn client GUI application if specified
+        // 5. Spawn Window Manager if enabled
+        let wm_child: Option<Child> = if self.config.enable_wm {
+            let mut cmd = Command::new("openbox");
+            cmd.env("DISPLAY", &display_str);
+            cmd.stdout(std::process::Stdio::null());
+            cmd.stderr(std::process::Stdio::null());
+            
+            match cmd.spawn() {
+                Ok(child) => {
+                    eprintln!("[termway] Started Window Manager: openbox");
+                    Some(child)
+                }
+                Err(e) => {
+                    eprintln!("[termway] Failed to start openbox: {}. Is it installed?", e);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        // 6. Spawn client GUI application if specified
         let mut client_child: Option<Child> = if !self.config.command.is_empty() {
             let cmd_name = &self.config.command[0];
             let cmd_args = &self.config.command[1..];
@@ -122,6 +145,13 @@ impl TermwayEngine {
                     x11::xlib::XDestroyImage(ximage);
                 }
 
+                // Composite hardware cursor
+                if let Some((mx, my)) = crate::display::cursor::query_pointer(xvfb.raw_display()) {
+                    if let Some(cursor) = crate::display::cursor::HardwareCursor::query(xvfb.raw_display()) {
+                        cursor.composite(&mut fb, mx, my);
+                    }
+                }
+
                 // D. Track damage and render
                 let damage = damage_tracker.track_damage(&fb.pixels);
                 if !damage.is_empty() {
@@ -142,6 +172,12 @@ impl TermwayEngine {
         if let Some(mut child) = client_child {
             let _ = child.kill();
             let _ = child.wait();
+        }
+
+        // Cleanup WM child if still running
+        if let Some(mut wm) = wm_child {
+            let _ = wm.kill();
+            let _ = wm.wait();
         }
 
         Ok(())
