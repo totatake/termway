@@ -159,3 +159,16 @@ $ cargo test
 test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.25s
 ```
 全 27 テストが 100% 成功し、すべての要件定義項目が検証されました。
+
+---
+
+## 5. 今後の拡張計画 (Future Enhancements Roadmap)
+
+現在、次期バージョンに向けて以下の追加要件の実装を検討・計画しています。
+
+| 予定要件ID | 項目 | 概要 |
+| :--- | :--- | :--- |
+| **FR-12** | **Sixelプロトコル対応** | Kitty Graphics Protocol 非対応環境に対し、Sixel フォーマットでの描画フォールバックを提供し、Windows Terminal や iTerm2 などをサポートする。 |
+| **FR-13** | **動的画面リサイズ** | ターミナルのリサイズイベント（`SIGWINCH`）を捕捉し、XRandR 拡張を用いて内部 Xvfb サーバーの解像度を即座に動的追従させる。 |
+| **FR-14** | **双方向クリップボード** | Bracketed Paste モード等を解釈し、ホスト端末からのテキスト入力を X11 の PRIMARY / CLIPBOARD セレクションに自動転送し、完全な双方向同期を実現する。 |
+| **FR-15** | **画面キャプチャ・録画** | ショートカットキー等により、現在のフレームバッファを PNG や GIF/WebP としてホストOSのファイルシステム上に直接保存する。 |

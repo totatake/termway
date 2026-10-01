@@ -155,3 +155,16 @@ cargo test --test system_e2e_gui -- --nocapture
 
 - [システムアーキテクチャ詳細設計書 (docs/ARCHITECTURE.md)](docs/ARCHITECTURE.md)
 - [要求仕様およびテスト仕様書 (docs/SPECIFICATION.md)](docs/SPECIFICATION.md)
+
+## 🚀 今後のロードマップ (Roadmap)
+
+`termway` は将来のバージョンに向けて、以下の機能拡張を計画しています。
+
+- [ ] **Sixel プロトコル対応 (Broad Terminal Support)**
+  - 現在の Kitty Graphics Protocol に加え、Sixel 画像プロトコルに対応。Windows Terminal や iTerm2 などの多様なターミナルエミュレータでの利用を可能にします。
+- [ ] **画面リサイズへの動的追従 (Dynamic Resolution Resizing)**
+  - ターミナル（ホスト側）のウィンドウサイズ変更（`SIGWINCH`）に連動し、`XRandR` 拡張を用いて内部の X11 仮想ディスプレイ解像度をシームレスに動的リサイズします。
+- [ ] **双方向クリップボードの完全同期 (Bidirectional Clipboard Sync)**
+  - ターミナルのブラケットペースト（Bracketed Paste）機能を活用し、既存の「ゲスト(X) → ホスト」の同期に加え、「ホスト → ゲスト(X)」へのコピー＆ペーストも実現します。
+- [ ] **ワンキー・スクリーンショット / GIF 録画**
+  - ターミナル内での GUI 動作状況を、ショートカットキー一発で PNG 画像やアニメーション GIF として手軽にエクスポートする機能です。
