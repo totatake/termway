@@ -135,9 +135,9 @@ cargo run -- -- wireshark
 
 ---
 
-## テスト実行 (V字開発モデル検証)
+## テスト実行
 
-本プロジェクトは要件定義からシステム受入テストまでの V字開発モデル に基づいて開発されており、単体テスト・結合テスト・E2Eシステムテストが整備されています。
+本プロジェクトは要求仕様からシステム受入テストまでの厳密なトレーサビリティを確保して開発されており、単体テスト・結合テスト・E2Eシステムテストが整備されています。
 
 ```bash
 # 全テスト (単体・結合・E2E: 計24テスト) の実行
@@ -147,11 +147,11 @@ cargo test
 cargo test --test system_e2e_gui -- --nocapture
 ```
 
-詳細なテスト仕様と要件マッピングについては [docs/V_MODEL_SPEC.md](docs/V_MODEL_SPEC.md) を参照してください。
+詳細なテスト仕様と要件マッピングについては [docs/SPECIFICATION.md](docs/SPECIFICATION.md) を参照してください。
 
 ---
 
 ## 関連ドキュメント
 
 - [システムアーキテクチャ詳細設計書 (docs/ARCHITECTURE.md)](docs/ARCHITECTURE.md)
-- [V字開発 要件定義書 & テスト仕様書 (docs/V_MODEL_SPEC.md)](docs/V_MODEL_SPEC.md)
+- [要求仕様およびテスト仕様書 (docs/SPECIFICATION.md)](docs/SPECIFICATION.md)
