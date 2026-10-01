@@ -34,10 +34,15 @@ impl TerminalBackend {
 
         let mut stdout = io::stdout();
 
+        let overlay_text = "\x1b[40;37m [Ctrl-Q: Exit] \x1b[0m";
+        let overlay_row = self.term_size.rows;
+        let overlay_col = self.term_size.cols.saturating_sub(16).max(1);
+        let overlay_seq = format!("\x1b[{};{}H{}", overlay_row, overlay_col, overlay_text);
+
         if self.use_sixel {
             let encoded = SixelEncoder::encode_fullscreen_frame(&fb.pixels, fb.width, fb.height);
             // Sixel doesn't inherently position itself at the top left without a cursor move
-            write!(stdout, "\x1b[H{}", encoded)?;
+            write!(stdout, "\x1b[H{}{}", encoded, overlay_seq)?;
         } else {
             // Render full frame with image replacement ID=1 and cursor suppression C=1
             // to avoid scrolling and flickering
@@ -49,7 +54,7 @@ impl TerminalBackend {
                 self.term_size.rows,
                 1, // Fixed image ID for the viewport
             );
-            write!(stdout, "{}", encoded)?;
+            write!(stdout, "{}{}", encoded, overlay_seq)?;
         }
         stdout.flush()
     }
