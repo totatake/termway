@@ -8,8 +8,8 @@ impl SixelEncoder {
     pub fn encode_fullscreen_frame(rgba: &[u8], width: u32, height: u32) -> String {
         let mut out = Vec::with_capacity((width * height) as usize / 2);
         
-        // Sixel intro (DCS q)
-        out.extend_from_slice(b"\x1bPq");
+        // Sixel intro (DCS 7;1;q) with 1:1 pixel aspect ratio and raster attributes
+        write!(&mut out, "\x1bP7;1;q\"1;1;{};{}", width, height).unwrap();
 
         // 1. Quantize the image to RGB332 and collect used colors globally
         let mut used_colors = [false; 256];

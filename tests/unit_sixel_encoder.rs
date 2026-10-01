@@ -5,8 +5,8 @@ fn test_sixel_blank_image() {
     let rgba = vec![0u8; 4 * 4 * 4]; // 4x4 completely transparent/black image
     let encoded = SixelEncoder::encode_fullscreen_frame(&rgba, 4, 4);
 
-    // It should start with DCS q
-    assert!(encoded.starts_with("\x1bPq"));
+    // It should start with DCS 7;1;q"1;1;4;4
+    assert!(encoded.starts_with("\x1bP7;1;q\"1;1;4;4"));
     // It should define color 0
     assert!(encoded.contains("#0;2;0;0;0"));
     // It should have some blank RLE `!4?` (4 empty pixels)
