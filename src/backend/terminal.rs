@@ -90,15 +90,43 @@ impl TerminalBackend {
 
         // Process buffer
         while !self.input_buffer.is_empty() {
-            // 1. Try parsing SGR mouse sequence
+            // 1. Try parsing window pixel size response (\x1b[4;height;widtht)
             if let Ok(input_str) = std::str::from_utf8(&self.input_buffer) {
+                if let Some(start) = input_str.find("\x1b[4;") {
+                    if let Some(end_offset) = input_str[start..].find('t') {
+                        let inner = &input_str[start+4 .. start+end_offset];
+                        let parts: Vec<&str> = inner.split(';').collect();
+                        if parts.len() == 2 {
+                            if let (Ok(h), Ok(w)) = (parts[0].parse::<u16>(), parts[1].parse::<u16>()) {
+                                self.term_size.width_px = w;
+                                self.term_size.height_px = h;
+                                if self.term_size.cols > 0 {
+                                    self.term_size.cell_width_px = (w / self.term_size.cols).max(1);
+                                }
+                                if self.term_size.rows > 0 {
+                                    self.term_size.cell_height_px = (h / self.term_size.rows).max(1);
+                                }
+                            }
+                        }
+                        self.input_buffer.drain(start .. start + end_offset + 1);
+                        continue;
+                    }
+                }
+
+                // 2. Try parsing SGR mouse sequence
                 if let Some((mouse_ev, consumed)) = SgrMouseParser::parse(input_str) {
-                    let (mapped_x, mapped_y) = self.term_size.map_cell_to_target(
-                        mouse_ev.col,
-                        mouse_ev.row,
-                        target_w,
-                        target_h,
-                    );
+                    let (mapped_x, mapped_y) = if self.use_sixel {
+                        // Sixel draws 1:1 pixels, so do NOT stretch to target_w
+                        let (px, py) = self.term_size.cell_to_pixel(mouse_ev.col, mouse_ev.row);
+                        (px as i32, py as i32)
+                    } else {
+                        self.term_size.map_cell_to_target(
+                            mouse_ev.col,
+                            mouse_ev.row,
+                            target_w,
+                            target_h,
+                        )
+                    };
                     injector.inject_mouse(&mouse_ev, mapped_x, mapped_y);
                     self.input_buffer.drain(..consumed);
                     continue;

@@ -57,10 +57,10 @@ impl RawModeGuard {
         // \x1b[?1000h: Normal mouse tracking
         // \x1b[?1003h: Any-event mouse tracking (motion even without button pressed)
         // \x1b[?1006h: SGR extended mode
-        // \x1b[2J\x1b[H: Clear screen and move to home
+        // \x1b[2J\x1b[H\x1b[14t: Clear screen and move to home
         write!(
             stdout,
-            "\x1b[?1049h\x1b[?25l\x1b[?1000h\x1b[?1003h\x1b[?1006h\x1b[2J\x1b[H"
+            "\x1b[?1049h\x1b[?25l\x1b[?1000h\x1b[?1003h\x1b[?1006h\x1b[2J\x1b[H\x1b[14t"
         )?;
         stdout.flush()
     }
