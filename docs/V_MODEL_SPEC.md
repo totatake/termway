@@ -16,6 +16,7 @@ flowchart LR
         FR5["FR-5: 端末保護・安全復元 (RAII Guard)"]
         FR6["FR-6: X11仮想管理 (Xvfb Launcher)"]
         FR7["FR-7: 端末プロトコル検証 (Capability Check)"]
+        FR8["FR-8: マウスカーソル描画 (XFixes)"]
     end
 
     subgraph Verification["テスト検証 (Verification)"]
@@ -26,6 +27,7 @@ flowchart LR
         T_Term["unit_terminal<br/>(単体テスト)"]
         T_Damage["unit_damage_tracker<br/>(単体テスト)"]
         T_Key["unit_keyboard<br/>(単体テスト)"]
+        T_Cursor["unit_cursor & pointer<br/>(単体テスト)"]
     end
 
     FR1 --> T_Kitty
@@ -41,6 +43,7 @@ flowchart LR
     FR6 --> T_Sys
     FR7 --> T_Term
     FR7 --> T_Sys
+    FR8 --> T_Cursor
 ```
 
 ---
@@ -58,6 +61,7 @@ flowchart LR
 | **FR-5** | 端末制御と安全復元 | 起動時に `TIOCGWINSZ` で端末サイズを取得し、端末を Raw モードおよび Alternate Screen に切り替えること。プログラム終了時や `SIGINT` / パニック発生時には、`Drop` トレイトにより確実に通常画面・通常モードに復元すること。 | `tests/unit_terminal.rs` | **PASS** |
 | **FR-6** | X11仮想ディスプレイ管理 | `termway` 自体が内部で `Xvfb` を自律管理（DISPLAY環境変数を自動割り当て）し、子プロセスとしてGUIアプリケーションを起動・監視・終了可能なランチャー機能を持つこと。 | `tests/system_e2e_gui.rs` | **PASS** |
 | **FR-7** | 端末プロトコル適合性検証 | 起動時に環境変数（`TERM`, `TERM_PROGRAM` 等）およびターミナルへの直接クエリ（`\x1b_G...` エスケープシーケンス）を用いて Kitty Graphics Protocol の対応可否を事前検証し、非対応環境ではわかりやすいエラーメッセージを出力して安全に終了すること。 | `tests/unit_terminal.rs`<br/>`tests/system_e2e_gui.rs` | **PASS** |
+| **FR-8** | マウスカーソル描画 | XFixes 拡張を用いて X11 のハードウェアカーソル画像（Iビームやポインタ等）と絶対座標を取得し、フレームバッファにアルファブレンド合成して画面出力すること。 | `tests/unit_cursor.rs`<br/>`tests/unit_pointer.rs` | **PASS** |
 
 ### 2.2 非機能要件 (Non-Functional Requirements)
 
