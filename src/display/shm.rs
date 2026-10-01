@@ -4,6 +4,7 @@ use x11::xlib;
 use x11::xshm;
 
 pub struct ShmImage {
+    depth: u32,
     display: *mut xlib::Display,
     pub image: *mut xlib::XImage,
     shminfo: Box<xshm::XShmSegmentInfo>,
@@ -88,6 +89,7 @@ impl ShmImage {
             libc::shmctl(shmid, libc::IPC_RMID, ptr::null_mut());
 
             Some(Self {
+                depth,
                 display,
                 image,
                 shminfo,
@@ -100,7 +102,8 @@ impl ShmImage {
     pub fn capture(&mut self) -> bool {
         unsafe {
             let root = xlib::XDefaultRootWindow(self.display);
-            xshm::XShmGetImage(self.display, root, self.image, 0, 0, xlib::XAllPlanes()) != 0
+            let plane_mask = (1u32.checked_shl(self.depth).unwrap_or(0)).wrapping_sub(1);
+            xshm::XShmGetImage(self.display, root, self.image, 0, 0, plane_mask) != 0
         }
     }
 }
