@@ -13,7 +13,7 @@ pub struct ShmImage {
 }
 
 impl ShmImage {
-    pub fn new(display: *mut xlib::Display, width: u32, height: u32) -> Option<Self> {
+    pub fn new(display: *mut xlib::Display, _req_w: u32, _req_h: u32) -> Option<Self> {
         if display.is_null() {
             return None;
         }
@@ -22,6 +22,18 @@ impl ShmImage {
             if xshm::XShmQueryExtension(display) == 0 {
                 return None;
             }
+
+            let root_win = xlib::XDefaultRootWindow(display);
+            let mut root_ret = 0;
+            let mut x_ret = 0;
+            let mut y_ret = 0;
+            let mut width_ret = 0;
+            let mut height_ret = 0;
+            let mut bw_ret = 0;
+            let mut depth_ret = 0;
+            xlib::XGetGeometry(display, root_win, &mut root_ret, &mut x_ret, &mut y_ret, &mut width_ret, &mut height_ret, &mut bw_ret, &mut depth_ret);
+            let width = width_ret;
+            let height = height_ret;
 
             let visual = xlib::XDefaultVisual(display, 0);
             let depth = xlib::XDefaultDepth(display, 0) as u32;
