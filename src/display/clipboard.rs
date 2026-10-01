@@ -6,6 +6,7 @@ pub struct ClipboardBridge {
     display: *mut xlib::Display,
     window: xlib::Window,
     clipboard_atom: xlib::Atom,
+    primary_atom: xlib::Atom,
     utf8_string_atom: xlib::Atom,
     target_property_atom: xlib::Atom,
     xfixes_event_base: i32,
@@ -29,17 +30,20 @@ impl ClipboardBridge {
             let window = xlib::XCreateSimpleWindow(display, root, 0, 0, 1, 1, 0, 0, 0);
 
             let clipboard_atom = xlib::XInternAtom(display, b"CLIPBOARD\0".as_ptr() as _, xlib::False);
+            let primary_atom = xlib::XInternAtom(display, b"PRIMARY\0".as_ptr() as _, xlib::False);
             let utf8_string_atom = xlib::XInternAtom(display, b"UTF8_STRING\0".as_ptr() as _, xlib::False);
             let target_property_atom = xlib::XInternAtom(display, b"XSEL_DATA\0".as_ptr() as _, xlib::False);
 
-            // Subscribe to CLIPBOARD owner changes (XFixesSetSelectionOwnerNotifyMask = 1<<0)
+            // Subscribe to CLIPBOARD and PRIMARY owner changes (XFixesSetSelectionOwnerNotifyMask = 1<<0)
             xfixes::XFixesSelectSelectionInput(display, root, clipboard_atom, 1);
+            xfixes::XFixesSelectSelectionInput(display, root, primary_atom, 1);
             xlib::XFlush(display);
 
             Some(Self {
                 display,
                 window,
                 clipboard_atom,
+                primary_atom,
                 utf8_string_atom,
                 target_property_atom,
                 xfixes_event_base: event_base,
@@ -58,15 +62,20 @@ impl ClipboardBridge {
                 let ev_type = event.get_type();
                 if ev_type == self.xfixes_event_base + 0 /* XFixesSelectionNotify */ {
                     // Selection owner changed! Request the new selection.
-                    xlib::XConvertSelection(
-                        self.display,
-                        self.clipboard_atom,
-                        self.utf8_string_atom,
-                        self.target_property_atom,
-                        self.window,
-                        xlib::CurrentTime,
-                    );
-                    self.awaiting_selection = true;
+                    let fixes_event = &*(&event as *const _ as *const xfixes::XFixesSelectionNotifyEvent);
+                    let selection_atom = fixes_event.selection;
+
+                    if selection_atom == self.clipboard_atom || selection_atom == self.primary_atom {
+                        xlib::XConvertSelection(
+                            self.display,
+                            selection_atom,
+                            self.utf8_string_atom,
+                            self.target_property_atom,
+                            self.window,
+                            xlib::CurrentTime,
+                        );
+                        self.awaiting_selection = true;
+                    }
                 } else if ev_type == xlib::SelectionNotify && self.awaiting_selection {
                     self.awaiting_selection = false;
                     let sel = event.selection;
@@ -109,6 +118,7 @@ impl ClipboardBridge {
 
     fn send_osc52(&self, text: &str) {
         let b64 = BASE64.encode(text);
+        eprintln!("[termway] Copied to host clipboard: {:?}", text);
         // Print the OSC 52 sequence directly to stdout
         print!("\x1b]52;c;{}\x07", b64);
         use std::io::Write;
