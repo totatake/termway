@@ -1,24 +1,30 @@
 use crate::display::{DamageRect, Framebuffer};
 use crate::input::XTestInjector;
-use crate::protocol::{KeyCode, KeyboardParser, KittyEncoder, SgrMouseParser};
+use crate::protocol::{KeyCode, KeyboardParser, KittyEncoder, SixelEncoder, SgrMouseParser};
 use crate::terminal::TerminalSize;
 use std::io::{self, Read, Write};
 
 pub struct TerminalBackend {
     term_size: TerminalSize,
     input_buffer: Vec<u8>,
+    use_sixel: bool,
 }
 
 impl TerminalBackend {
-    pub fn new(term_size: TerminalSize) -> Self {
+    pub fn new(term_size: TerminalSize, use_sixel: bool) -> Self {
         Self {
             term_size,
             input_buffer: Vec::with_capacity(1024),
+            use_sixel,
         }
     }
 
     pub fn name(&self) -> &'static str {
-        "Terminal (Kitty Graphics + SGR Mouse)"
+        if self.use_sixel {
+            "Terminal (Sixel Graphics + SGR Mouse)"
+        } else {
+            "Terminal (Kitty Graphics + SGR Mouse)"
+        }
     }
 
     pub fn render_damage(&mut self, fb: &Framebuffer, damage: &[DamageRect]) -> io::Result<()> {
@@ -28,17 +34,23 @@ impl TerminalBackend {
 
         let mut stdout = io::stdout();
 
-        // Render full frame with image replacement ID=1 and cursor suppression C=1
-        // to avoid scrolling and flickering
-        let encoded = KittyEncoder::encode_fullscreen_frame(
-            &fb.pixels,
-            fb.width,
-            fb.height,
-            self.term_size.cols,
-            self.term_size.rows,
-            1, // Fixed image ID for the viewport
-        );
-        write!(stdout, "{}", encoded)?;
+        if self.use_sixel {
+            let encoded = SixelEncoder::encode_fullscreen_frame(&fb.pixels, fb.width, fb.height);
+            // Sixel doesn't inherently position itself at the top left without a cursor move
+            write!(stdout, "\x1b[H{}", encoded)?;
+        } else {
+            // Render full frame with image replacement ID=1 and cursor suppression C=1
+            // to avoid scrolling and flickering
+            let encoded = KittyEncoder::encode_fullscreen_frame(
+                &fb.pixels,
+                fb.width,
+                fb.height,
+                self.term_size.cols,
+                self.term_size.rows,
+                1, // Fixed image ID for the viewport
+            );
+            write!(stdout, "{}", encoded)?;
+        }
         stdout.flush()
     }
 

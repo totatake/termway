@@ -12,6 +12,7 @@ pub struct EngineConfig {
     pub height: Option<u32>,
     pub fps: u32,
     pub enable_wm: bool,
+    pub use_sixel: bool,
     pub command: Vec<String>,
 }
 
@@ -22,6 +23,7 @@ impl Default for EngineConfig {
             height: None,
             fps: 30,
             enable_wm: false,
+            use_sixel: false,
             command: Vec::new(),
         }
     }
@@ -37,9 +39,9 @@ impl TermwayEngine {
     }
 
     pub fn run(&self) -> Result<(), Box<dyn std::error::Error>> {
-        // 1. Check Kitty Graphics Protocol support
-        if !crate::terminal::is_kitty_graphics_supported() {
-            return Err("Terminal does not support Kitty Graphics Protocol. Please use Kitty, WezTerm, Ghostty, or another compatible terminal.".into());
+        // 1. Check protocol support
+        if !self.config.use_sixel && !crate::terminal::is_kitty_graphics_supported() {
+            return Err("Terminal does not support Kitty Graphics Protocol. Please use Kitty, WezTerm, Ghostty, or another compatible terminal. (Or try --sixel)".into());
         }
 
         // 2. Detect terminal size & resolve resolution
@@ -47,7 +49,8 @@ impl TermwayEngine {
         let width = self.config.width.unwrap_or(term_size.width_px as u32).max(320);
         let height = self.config.height.unwrap_or(term_size.height_px as u32).max(240);
 
-        eprintln!("[termway] Active backend: Terminal (Kitty Graphics + SGR Mouse)");
+        let backend_name = if self.config.use_sixel { "Terminal (Sixel Graphics + SGR Mouse)" } else { "Terminal (Kitty Graphics + SGR Mouse)" };
+        eprintln!("[termway] Active backend: {}", backend_name);
         eprintln!("[termway] Virtual display resolution: {}x{}", width, height);
 
         // 3. Start Xvfb virtual display server
@@ -103,7 +106,7 @@ impl TermwayEngine {
         thread::sleep(Duration::from_millis(500));
 
         // 7. Create backend instance
-        let mut backend = TerminalBackend::new(term_size);
+        let mut backend = TerminalBackend::new(term_size, self.config.use_sixel);
 
         // 8. Enter Raw mode and terminal alternate screen
         let _raw_guard = RawModeGuard::enter()?;

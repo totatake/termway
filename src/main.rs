@@ -13,6 +13,7 @@ OPTIONS:
     --height <PIXELS>         Virtual display height (default: auto from terminal)
     --fps <FPS>               Target frame rate (default: 30)
     --wm                      Start a lightweight Window Manager (openbox)
+    --sixel                   Use Sixel graphics instead of Kitty protocol
     --demo                    Run built-in Tkinter demo GUI application
     -h, --help                Print this help information
 
@@ -57,6 +58,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(1);
             }
             config.fps = args[i].parse()?;
+        } else if arg == "--sixel" {
+            config.use_sixel = true;
         } else if arg == "--wm" {
             config.enable_wm = true;
         } else if arg == "--demo" {
