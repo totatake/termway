@@ -18,6 +18,7 @@ flowchart LR
         FR7["FR-7: 端末プロトコル検証 (Capability Check)"]
         FR8["FR-8: マウスカーソル描画 (XFixes)"]
         FR9["FR-9: ウィンドウマネージャ連携 (WM Launcher)"]
+        FR10["FR-10: クリップボード共有 (OSC 52)"]
     end
 
     subgraph Verification["テスト検証 (Verification)"]
@@ -46,6 +47,7 @@ flowchart LR
     FR7 --> T_Sys
     FR8 --> T_Cursor
     FR9 --> T_Sys
+    FR10 --> T_Cursor
 ```
 
 ---
@@ -65,6 +67,7 @@ flowchart LR
 | **FR-7** | 端末プロトコル適合性検証 | 起動時に環境変数（`TERM`, `TERM_PROGRAM` 等）およびターミナルへの直接クエリ（`\x1b_G...` エスケープシーケンス）を用いて Kitty Graphics Protocol の対応可否を事前検証し、非対応環境ではわかりやすいエラーメッセージを出力して安全に終了すること。 | `tests/unit_terminal.rs`<br/>`tests/system_e2e_gui.rs` | **PASS** |
 | **FR-8** | マウスカーソル描画 | XFixes 拡張を用いて X11 のハードウェアカーソル画像（Iビームやポインタ等）と絶対座標を取得し、フレームバッファにアルファブレンド合成して画面出力すること。 | `tests/unit_cursor.rs`<br/>`tests/unit_pointer.rs` | **PASS** |
 | **FR-9** | 軽量WM自動連携 | `--wm` オプション指定時、Xvfb起動直後に軽量ウィンドウマネージャ（`openbox` 等）を背後で自動起動し、GUIアプリのタイトルバー表示やドラッグ移動、マルチウィンドウ化をサポートすること。 | `tests/system_e2e_gui.rs` | **PASS** |
+| **FR-10** | クリップボード同期 | XFixesSelectionNotify イベントを購読し、ターミナル内（Xvfb内）のGUIアプリでテキストがコピーされた際、即座に X11 CLIPBOARD セレクションを取得し、OSC 52 エスケープシーケンス（`\x1b]52;c;...`）に変換してホスト端末に送信することで、手元のPCのクリップボードへ同期すること。 | `tests/unit_clipboard.rs` | **PASS** |
 
 ### 2.2 非機能要件 (Non-Functional Requirements)
 

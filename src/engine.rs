@@ -112,6 +112,7 @@ impl TermwayEngine {
         let frame_interval = Duration::from_millis(1000 / self.config.fps.max(1) as u64);
         let mut fb = Framebuffer::new(width, height);
         let mut damage_tracker = DamageTracker::new(width, height, 32);
+        let mut clipboard = crate::display::clipboard::ClipboardBridge::new(xvfb.raw_display());
 
         let mut running = true;
 
@@ -137,7 +138,12 @@ impl TermwayEngine {
                 Err(_) => break,
             }
 
-            // C. Capture X11 frame
+            // C. Poll X11 clipboard events
+            if let Some(cb) = &mut clipboard {
+                cb.poll_events();
+            }
+
+            // D. Capture X11 frame
             let ximage = xvfb.get_image();
             if !ximage.is_null() {
                 unsafe {
