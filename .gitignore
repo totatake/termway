@@ -1,3 +1,4 @@
 target/
 *.bk
 *.swp
+*.swo\n*.swn\n*.swm\n*.swl\n*.swk\n*.swj
