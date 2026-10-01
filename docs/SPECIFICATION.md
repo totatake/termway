@@ -20,6 +20,7 @@ flowchart LR
         FR9["FR-9: ウィンドウマネージャ連携 (WM Launcher)"]
         FR10["FR-10: クリップボード共有 (OSC 52)"]
         FR11["FR-11: 描画最適化 (MIT-SHM)"]
+        FR12["FR-12: Sixelプロトコル対応 & ピクセルパーフェクト追従"]
     end
 
     subgraph Verification["テスト検証 (Verification)"]
@@ -71,6 +72,7 @@ flowchart LR
 | **FR-9** | 軽量WM自動連携 | `--wm` オプション指定時、Xvfb起動直後に軽量ウィンドウマネージャ（`openbox` 等）を背後で自動起動し、GUIアプリのタイトルバー表示やドラッグ移動、マルチウィンドウ化をサポートすること。 | `tests/system_e2e_gui.rs` | **PASS** |
 | **FR-10** | クリップボード同期 | XFixesSelectionNotify イベントを購読し、ターミナル内（Xvfb内）のGUIアプリでテキストがコピーされた際、即座に X11 CLIPBOARD セレクションを取得し、OSC 52 エスケープシーケンス（`\x1b]52;c;...`）に変換してホスト端末に送信することで、手元のPCのクリップボードへ同期すること。 | `tests/unit_clipboard.rs` | **PASS** |
 | **FR-11** | 描画最適化 (MIT-SHM) | X11 共有メモリ拡張 (MIT-SHM) を用いて、Xvfbからの画面キャプチャをゼロコピー化し、プロセス間通信のオーバーヘッドを削減してCPU使用率を極小化すること。SHMが利用できない場合は従来の `XGetImage` にフォールバックすること。 | `tests/unit_shm.rs` | **PASS** |
+| **FR-12** | Sixel対応＆ピクセル追従 | Sixelプロトコルでのフォールバック描画をサポート。さらに `\x1b[14t` を用いて端末の正確なピクセル解像度を動的取得し、1:1アスペクト比の維持とマウスクリック（X11ヒットボックス）のピクセルパーフェクトな同期を実現すること。 | `tests/unit_sixel_encoder.rs` | **PASS** |
 
 ### 2.2 非機能要件 (Non-Functional Requirements)
 
@@ -168,7 +170,6 @@ test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fin
 
 | 予定要件ID | 項目 | 概要 |
 | :--- | :--- | :--- |
-| **FR-12** | **Sixelプロトコル対応** | Kitty Graphics Protocol 非対応環境に対し、Sixel フォーマットでの描画フォールバックを提供し、Windows Terminal や iTerm2 などをサポートする。 |
 | **FR-13** | **動的画面リサイズ** | ターミナルのリサイズイベント（`SIGWINCH`）を捕捉し、XRandR 拡張を用いて内部 Xvfb サーバーの解像度を即座に動的追従させる。 |
 | **FR-14** | **双方向クリップボード** | Bracketed Paste モード等を解釈し、ホスト端末からのテキスト入力を X11 の PRIMARY / CLIPBOARD セレクションに自動転送し、完全な双方向同期を実現する。 |
 | **FR-15** | **画面キャプチャ・録画** | ショートカットキー等により、現在のフレームバッファを PNG や GIF/WebP としてホストOSのファイルシステム上に直接保存する。 |
