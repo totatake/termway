@@ -6,7 +6,7 @@ use x11::xshm;
 pub struct ShmImage {
     display: *mut xlib::Display,
     pub image: *mut xlib::XImage,
-    shminfo: xshm::XShmSegmentInfo,
+    shminfo: Box<xshm::XShmSegmentInfo>,
     pub width: u32,
     pub height: u32,
 }
@@ -25,7 +25,10 @@ impl ShmImage {
             let visual = xlib::XDefaultVisual(display, 0);
             let depth = xlib::XDefaultDepth(display, 0) as u32;
 
-            let mut shminfo: xshm::XShmSegmentInfo = std::mem::zeroed();
+            // XShmCreateImage stores a raw pointer to shminfo inside image->obdata.
+            // Therefore, shminfo MUST be pinned to a stable heap location (Box)
+            // and must NOT move in memory!
+            let mut shminfo = Box::new(std::mem::zeroed::<xshm::XShmSegmentInfo>());
 
             let image = xshm::XShmCreateImage(
                 display,
@@ -33,7 +36,7 @@ impl ShmImage {
                 depth,
                 xlib::ZPixmap,
                 ptr::null_mut(),
-                &mut shminfo,
+                shminfo.as_mut() as *mut _,
                 width,
                 height,
             );
@@ -41,6 +44,9 @@ impl ShmImage {
             if image.is_null() {
                 return None;
             }
+
+            // Ensure obdata explicitly points to our heap-allocated shminfo
+            (*image).obdata = (shminfo.as_mut() as *mut xshm::XShmSegmentInfo) as *mut libc::c_char;
 
             let bytes_per_line = (*image).bytes_per_line;
             let size = (bytes_per_line * height as i32) as usize;
@@ -68,7 +74,7 @@ impl ShmImage {
             shminfo.readOnly = xlib::False;
             (*image).data = shmaddr as *mut libc::c_char;
 
-            if xshm::XShmAttach(display, &mut shminfo) == 0 {
+            if xshm::XShmAttach(display, shminfo.as_mut() as *mut _) == 0 {
                 libc::shmdt(shmaddr);
                 libc::shmctl(shmid, libc::IPC_RMID, ptr::null_mut());
                 xlib::XDestroyImage(image);
@@ -76,7 +82,6 @@ impl ShmImage {
             }
 
             // MUST wait for the X server to actually process the Attach request!
-            // If we RMID before the X server attaches, the segment is destroyed prematurely.
             xlib::XSync(display, xlib::False);
 
             // Mark for auto-destruction
@@ -103,7 +108,8 @@ impl ShmImage {
 impl Drop for ShmImage {
     fn drop(&mut self) {
         unsafe {
-            xshm::XShmDetach(self.display, &mut self.shminfo);
+            xshm::XShmDetach(self.display, self.shminfo.as_mut() as *mut _);
+            xlib::XSync(self.display, xlib::False);
             let addr = self.shminfo.shmaddr;
             // XDestroyImage tries to free `image->data`.
             // Set it to null first so it doesn't free our SHM mapping.
