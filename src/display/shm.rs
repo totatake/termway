@@ -100,7 +100,7 @@ impl ShmImage {
     pub fn capture(&mut self) -> bool {
         unsafe {
             let root = xlib::XDefaultRootWindow(self.display);
-            xshm::XShmGetImage(self.display, root, self.image, 0, 0, !0u32) != 0
+            xshm::XShmGetImage(self.display, root, self.image, 0, 0, xlib::XAllPlanes()) != 0
         }
     }
 }
