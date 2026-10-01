@@ -75,6 +75,10 @@ impl ShmImage {
                 return None;
             }
 
+            // MUST wait for the X server to actually process the Attach request!
+            // If we RMID before the X server attaches, the segment is destroyed prematurely.
+            xlib::XSync(display, xlib::False);
+
             // Mark for auto-destruction
             libc::shmctl(shmid, libc::IPC_RMID, ptr::null_mut());
 
@@ -101,9 +105,8 @@ impl Drop for ShmImage {
         unsafe {
             xshm::XShmDetach(self.display, &mut self.shminfo);
             let addr = self.shminfo.shmaddr;
-            xlib::XDestroyImage(self.image); // Also frees data? No, it usually frees data if we allocated it, but we provided it. Wait!
-            // Actually, XDestroyImage tries to free `image->data`.
-            // Let's detach it first to avoid segfault.
+            // XDestroyImage tries to free `image->data`.
+            // Set it to null first so it doesn't free our SHM mapping.
             (*self.image).data = ptr::null_mut();
             xlib::XDestroyImage(self.image);
             libc::shmdt(addr as *mut _);
