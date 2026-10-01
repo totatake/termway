@@ -1,20 +1,21 @@
 # termway システムアーキテクチャ詳細設計書
 
-本書は、`termway` の内部構造、モジュール設計、プロトコル仕様、およびマルチバックエンド機構について解説する技術設計ドキュメントです。
+本書は、`termway` の内部構造、モジュール設計、プロトコル仕様、およびイベント同期制御について解説する技術設計ドキュメントです。
 
 ---
 
 ## 1. 全体構造とモジュール構成
 
-`termway` は以下の疎結合な 5 つのコアレイヤーによって構成されています。
+`termway` は以下の疎結合なコアレイヤーによって構成されています。
 
 ```
 src/
 ├── main.rs                   # CLIパーサー、起動パラメータ初期化
 ├── engine.rs                 # メインイベントループ、フレーム同期制御
-├── terminal/                 # 端末制御・保護層
+├── terminal/                 # 端末制御・保護・プロトコル検証層
 │   ├── winsize.rs            # TIOCGWINSZ によるピクセル/セル解像度取得
-│   └── raw.rs                # termios Rawモード化 & RAII Drop ガード
+│   ├── raw.rs                # termios Rawモード化 & RAII Drop ガード
+│   └── query.rs              # Kitty Graphics Protocol 対応可否の事前検証
 ├── protocol/                 # エスケープシーケンス解析・生成層
 │   ├── kitty.rs              # Kitty Graphics Protocol エンコーダ
 │   ├── sgr_mouse.rs          # xterm SGR 1006 マウスプロトコルパーサー
@@ -25,9 +26,9 @@ src/
 │   └── damage.rs             # タイルベース差分トラッカー
 ├── input/                    # 入力注入層
 │   └── xtest.rs              # libXtst によるマウス/キー仮想イベント注入
-└── backend/                  # マルチバックエンド抽象化層
-    ├── mod.rs                # 共通 Backend トレイト & 環境自動判定
-    ├── terminal.rs           # TerminalBackend (Kitty + SGR)
+└── backend/                  # ターミナル描画・入力処理層
+    ├── mod.rs                # モジュールエクスポート
+    └── terminal.rs           # TerminalBackend (Kitty + SGR + 非同期I/O)
 ```
 
 ---
@@ -42,19 +43,22 @@ Kitty Graphics Protocol は、エスケープシーケンス `\x1b_G<control-dat
 - `f=32`: 32-bit RGBA フォーマット
 - `s={width}, v={height}`: 送信画像矩形のピクセルサイズ
 - `X={col}, Y={row}`: ターミナルウィンドウ内でのピクセルオフセット配置
+- `q=2`: 応答抑制モード (Quiet mode 2)。端末からの `\x1b_Gi=...;OK\x1b\` 自律応答を抑止し、標準入力への文字混入・エコーバック無限ループを防止。
+- `C=1`: カーソル移動の抑制。画像表示時にテキストカーソルが勝手に移動・スクロールするのを防止。
+- `i=1`: 画像識別ID。フレーム置換を行うことで画像が重複描画されるのを防止。
 - `m=1`: チャンク継続フラグ（次のエスケープシーケンスに後続データがあることを示す）
 - `m=0`: チャンク終了フラグ（ペイロードの最終ブロック）
 
 #### チャンク分割転送
 ターミナルエミュレータのバッファオーバーフローを防止するため、エンコードされた Base64 ペイロードは 4096 文字ごとに分割して送信します：
-1. **先頭チャンク**: `\x1b_Ga=T,f=32,s=100,v=100,X=10,Y=20,m=1;<Base64 chunk 1>\x1b\`
+1. **先頭チャンク**: `\x1b_Ga=T,q=2,f=32,s=100,v=100,X=10,Y=20,m=1;<Base64 chunk 1>\x1b\`
 2. **中間チャンク**: `\x1b_Gm=1;<Base64 chunk 2>\x1b\`
 3. **最終チャンク**: `\x1b_Gm=0;<Base64 chunk N>\x1b\`
 
 ---
 
 ### 2.2 xterm SGR 1006 マウスプロトコル解析 (`src/protocol/sgr_mouse.rs`)
-ターミナルに `\x1b[?1000h\x1b[?1002h\x1b[?1006h` を送信することで、SGR 1006 拡張マウスモードを有効化します。
+ターミナルに `\x1b[?1000h\x1b[?1003h\x1b[?1006h` を送信することで、SGR 1006 拡張マウスモードおよび Any-event トラッキングを有効化します。
 
 #### シーケンスフォーマット
 - ボタン押下 / ドラッグ / 移動: `\x1b[<{btn};{col};{row}M`
@@ -65,6 +69,7 @@ Kitty Graphics Protocol は、エスケープシーケンス `\x1b_G<control-dat
   - `0`: 左クリック
   - `1`: 中クリック
   - `2`: 右クリック
+  - `3`: ボタン解放またはボタン非押下での移動（Hover）
 - ビット 5 (32): マウス移動フラグ (Drag または Hover)
 - ビット 6 (64): ホイールイベント (64: WheelUp, 65: WheelDown)
 - 修飾キー: Shift (+4), Meta (+8), Ctrl (+16)
@@ -91,24 +96,37 @@ $$y_{x11} = \mathrm{clamp}\left(\lfloor \frac{py \times H_{x11}}{H_{term}} \rflo
 
 ---
 
-## 4. マルチバックエンド（二刀流）アーキテクチャ
+## 4. イベント駆動・フレーム同期エンジン (`src/engine.rs`)
 
+`termway` のメインループは、入力待機による描画ブロック（スタベーション）を排除したノンブロッキング設計となっています。
 
-```rust
-pub trait Backend {
-    fn name(&self) -> &'static str;
-    fn render_damage(&mut self, fb: &Framebuffer, damage: &[DamageRect]) -> io::Result<()>;
-    fn poll_input(&mut self, injector: &mut XTestInjector, target_w: u32, target_h: u32) -> io::Result<bool>;
-    fn on_resize(&mut self, new_size: &TerminalSize);
-}
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Main as Engine Loop (30 FPS)
+    participant Stdin as Terminal stdin
+    participant XTest as XTest Injector
+    participant Xvfb as Xvfb Server
+    participant Term as Terminal stdout
+
+    loop 毎フレーム (33ms間隔)
+        Main->>Stdin: nix::poll (timeout: 0ms)
+        alt 入力データあり
+            Stdin-->>Main: キー / マウスシーケンス
+            Main->>XTest: 仮想イベント注入 (XTestFakeKeyEvent / Motion)
+        end
+        Main->>Xvfb: XGetImage (フレームバッファ取得)
+        Xvfb-->>Main: XImage (RGBA)
+        Main->>Main: DamageTracker (差分計算)
+        alt 差分あり
+            Main->>Term: Kitty Protocol 転送 (q=2, i=1, C=1)
+        end
+        Main->>Main: Frame Pacing Sleep (残り時間待機)
+    end
 ```
 
-### 4.1 起動環境の自動判定ロジック
-1. **SSH環境**: `$SSH_CONNECTION`, `$SSH_CLIENT`, `$SSH_TTY` のいずれかが存在する場合 → **`TerminalBackend`**
-2. **PTY環境**: 標準入力の tty 名が `/dev/pts/*` の場合（ローカル端末や tmux セッション） → **`TerminalBackend`**
-
-- Linux カーネルの `/dev/dri/card0` を直接オープン。
-- 物理コンソール上の直接描画により、X11/Wayland サーバーが一切常駐していないミニマル環境でも GUI を即座に表示可能。
+### 4.1 ノンブロッキング入力ポーリング
+`src/backend/terminal.rs` では `nix::poll` を `PollTimeout::ZERO` で使用。キーやマウスの入力がない場合でもブロックすることなく即座に画面キャプチャと描画ステップに進むため、「キーを押すまで画面が表示されない」「入力が1文字遅れて反映される」といった入力遅延問題を根絶しています。
 
 ---
 
@@ -126,6 +144,6 @@ impl Drop for RawModeGuard {
 }
 ```
 - `RawModeGuard` がスコープを抜ける際（通常終了、return、`?` によるエラー伝播、パニック時のスタック巻き戻しのいずれでも）、必ず以下の端末復元シーケンスが標準出力へフラッシュされ、`tcsetattr` で元の termios が再設定されます：
-  - `\x1b[?1006l\x1b[?1002l\x1b[?1000l`: マウストラッキング無効化
+  - `\x1b[?1006l\x1b[?1003l\x1b[?1000l`: マウストラッキング（Any-event含む）無効化
   - `\x1b[?25h`: カーソル再表示
   - `\x1b[?1049l`: Alternate Screen の終了（元のシェル画面に戻る）

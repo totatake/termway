@@ -9,12 +9,13 @@
 ```mermaid
 flowchart LR
     subgraph Requirements["要件定義 (Requirements)"]
-        FR1["FR-1: 端末画面描画"]
-        FR2["FR-2: 差分更新"]
-        FR3["FR-3: マウス入力"]
-        FR4["FR-4: キー入力"]
-        FR5["FR-5: 端末保護"]
-        FR6["FR-6: X11仮想管理"]
+        FR1["FR-1: 端末画面描画 (Kitty Graphics)"]
+        FR2["FR-2: 差分更新 (Damage Tracking)"]
+        FR3["FR-3: マウス入力・ホバー (SGR 1006 / 1003h)"]
+        FR4["FR-4: キー入力・ノンブロッキング (Keyboard / Poll)"]
+        FR5["FR-5: 端末保護・安全復元 (RAII Guard)"]
+        FR6["FR-6: X11仮想管理 (Xvfb Launcher)"]
+        FR7["FR-7: 端末プロトコル検証 (Capability Check)"]
     end
 
     subgraph Verification["テスト検証 (Verification)"]
@@ -38,6 +39,8 @@ flowchart LR
     FR4 --> T_Sys
     FR5 --> T_Term
     FR6 --> T_Sys
+    FR7 --> T_Term
+    FR7 --> T_Sys
 ```
 
 ---
@@ -48,21 +51,22 @@ flowchart LR
 
 | 要件ID | 要件名 | 詳細説明 | 対応テスト | 結果 |
 | :--- | :--- | :--- | :--- | :--- |
-| **FR-1** | 端末グラフィックス描画 | X11仮想フレームバッファの RGBA データを Kitty Graphics Protocol にエンコードし、端末 stdout に出力して画面表示すること。 | `tests/unit_kitty_encoder.rs`<br/>`tests/system_e2e_gui.rs` | **PASS** |
+| **FR-1** | 端末グラフィックス描画 | X11仮想フレームバッファの RGBA データを Kitty Graphics Protocol にエンコードし、端末 stdout に出力して画面表示すること。応答抑制フラグ（`q=2`）およびカーソル移動抑制（`C=1`）を指定して端末の自律応答・チラつきを防止すること。 | `tests/unit_kitty_encoder.rs`<br/>`tests/system_e2e_gui.rs` | **PASS** |
 | **FR-2** | 差分検出・更新 (Damage) | 画面全体を毎フレーム転送するのではなく、変化のあった矩形領域（汚損領域）のみを切り出して端末へ部分更新描画すること。 | `tests/unit_damage_tracker.rs`<br/>`tests/system_e2e_gui.rs` | **PASS** |
-| **FR-3** | マウスイベント変換 | 端末からの xterm SGR 1006 マウスシーケンス（クリック、ドラッグ、リリース、移動、ホイール）を解析し、端末のセル座標からX11ピクセル座標へマッピングして XTest 仮想マウスイベントとして送出すること。 | `tests/unit_sgr_mouse.rs`<br/>`tests/integration_pipeline.rs`<br/>`tests/system_e2e_gui.rs` | **PASS** |
-| **FR-4** | キーボード入力変換 | 端末 stdin からの文字・特殊キー（矢印、Enter、BackSpace、Esc、Ctrlキー等）を解析し、X11キーイベントとしてGUIアプリにディスパッチすること。 | `tests/unit_keyboard.rs`<br/>`tests/system_e2e_gui.rs` | **PASS** |
+| **FR-3** | マウス入力・ホバー変換 | 端末からの xterm SGR 1006 マウスシーケンス（クリック、ドラッグ、リリース、ホバー移動、ホイール）を Any-event モード（`1003h`）で検知し、端末の文字セル座標からX11ピクセル座標へマッピングして XTest 仮想マウスイベントとして送出すること。 | `tests/unit_sgr_mouse.rs`<br/>`tests/integration_pipeline.rs`<br/>`tests/system_e2e_gui.rs` | **PASS** |
+| **FR-4** | キー入力・非同期送出 | 端末 stdin からの文字・特殊キー（矢印、Enter、BackSpace、Esc、Ctrlキー等）をノンブロッキング（`nix::poll` タイムアウト0）で解析し、フレーム描画を停止させることなくX11キーイベントとしてGUIアプリに即時ディスパッチすること。 | `tests/unit_keyboard.rs`<br/>`tests/system_e2e_gui.rs` | **PASS** |
 | **FR-5** | 端末制御と安全復元 | 起動時に `TIOCGWINSZ` で端末サイズを取得し、端末を Raw モードおよび Alternate Screen に切り替えること。プログラム終了時や `SIGINT` / パニック発生時には、`Drop` トレイトにより確実に通常画面・通常モードに復元すること。 | `tests/unit_terminal.rs` | **PASS** |
-| **FR-6** | X11仮想ディスプレイ管理 | `termway` 自体が内部で `Xvfb` を自律管理（または指定DISPLAYへ接続）し、子プロセスとしてGUIアプリケーションを起動可能なランチャー機能を持つこと。 | `tests/system_e2e_gui.rs` | **PASS** |
+| **FR-6** | X11仮想ディスプレイ管理 | `termway` 自体が内部で `Xvfb` を自律管理（DISPLAY環境変数を自動割り当て）し、子プロセスとしてGUIアプリケーションを起動・監視・終了可能なランチャー機能を持つこと。 | `tests/system_e2e_gui.rs` | **PASS** |
+| **FR-7** | 端末プロトコル適合性検証 | 起動時に環境変数（`TERM`, `TERM_PROGRAM` 等）およびターミナルへの直接クエリ（`\x1b_G...` エスケープシーケンス）を用いて Kitty Graphics Protocol の対応可否を事前検証し、非対応環境ではわかりやすいエラーメッセージを出力して安全に終了すること。 | `tests/unit_terminal.rs`<br/>`tests/system_e2e_gui.rs` | **PASS** |
 
 ### 2.2 非機能要件 (Non-Functional Requirements)
 
 | 要件ID | 項目 | 目標基準 | 検証結果 |
 | :--- | :--- | :--- | :--- |
-| **NFR-1** | レスポンス・低遅延 | 差分更新により、通常のGUI操作で 20〜30 fps 以上の滑らかな描画レスポンスを実現すること。 | タイル差分（32x32）と Base64 チャンク分割転送により達成 |
+| **NFR-1** | レスポンス・低遅延 | ノンブロッキングI/Oと差分更新により、30 fps のフレームレートと即時キー・マウス追従（1キー遅延ゼロ）を実現すること。 | `nix::poll` 導入および Base64 チャンク分割転送により達成 |
 | **NFR-2** | 堅牢性・端末保護 | プログラムが異常終了しても、端末のRawモードやマウストラッキングが残留してシェルが壊れる事故を100%防止すること。 | `RawModeGuard::drop` の RAII パターンにより保証 |
-| **NFR-3** | 依存関係の最小化 | 追加のGUI環境や root 権限を一切必要とせず、ユーザー空間の単一バイナリとして動作すること。 | 外部Xサーバー不要（Xvfb自律起動）、オフラインクレートで完結 |
-| **NFR-4** | モジュール構造・テスタビリティ | 各コンポーネント（プロトコル、ディスプレイ、入力、端末制御）が疎結合で、単体テスト・モックテストが容易であること。 | 全25テストが外部依存なく高速にパス |
+| **NFR-3** | 依存関係の最小化 | 追加のGUIデスクトップ環境や root 権限を一切必要とせず、ユーザー空間の単一バイナリとして動作すること。 | 外部Xサーバー不要（Xvfb自律起動）、オフラインクレートで完結 |
+| **NFR-4** | モジュール構造・テスタビリティ | 各コンポーネント（プロトコル、ディスプレイ、入力、端末制御）が疎結合で、単体テスト・モックテストが容易であること。 | 全24テストが外部依存なく高速にパス |
 
 ---
 
@@ -80,8 +84,9 @@ flowchart LR
 
 #### `tests/unit_kitty_encoder.rs`
 - `test_clear_all_images`: 画面全画像削除シーケンスの検証
-- `test_encode_rgba_small_image`: 小画像（2x2）の Kitty プロトコルヘッダ・m=0 終了の検証
+- `test_encode_rgba_small_image`: 小画像（2x2）の Kitty プロトコルヘッダ・m=0 終了および `q=2` の検証
 - `test_encode_rgba_subimage`: 部分矩形（差分領域）抽出と `X=...`, `Y=...` オフセット配置の検証
+- `test_encode_fullscreen_frame`: フルスクリーン画像置換（`i=1`, `C=1`, `q=2`）のフォーマット検証
 - `test_chunked_transfer_for_large_image`: 4096文字を超える大画像の分割転送（`m=1`, `m=0`）の検証
 
 #### `tests/unit_keyboard.rs`
@@ -107,7 +112,6 @@ flowchart LR
 #### `tests/integration_pipeline.rs`
 - `test_integration_framebuffer_to_kitty_pipeline`: フレームバッファ更新 → 差分抽出 → Kitty エンコードの一連のパイプライン結合動作を検証
 - `test_integration_mouse_to_target_coordinate_pipeline`: SGR 文字列受信 → セルパース → 画面スケーリング計算の統合検証
-- `test_integration_backend_detection`: 実行環境に応じたバックエンド自動判別の検証
 
 ---
 
@@ -130,15 +134,15 @@ flowchart LR
 ```bash
 $ cargo test
    Compiling termway v0.1.0 (/path/to/termway)
-    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.86s
-     Running tests/integration_pipeline.rs (4 tests) ... ok
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.39s
+     Running tests/integration_pipeline.rs (2 tests) ... ok
      Running tests/system_e2e_gui.rs (1 test) ... ok
      Running tests/unit_damage_tracker.rs (3 tests) ... ok
      Running tests/unit_keyboard.rs (3 tests) ... ok
-     Running tests/unit_kitty_encoder.rs (4 tests) ... ok
+     Running tests/unit_kitty_encoder.rs (5 tests) ... ok
      Running tests/unit_sgr_mouse.rs (6 tests) ... ok
      Running tests/unit_terminal.rs (4 tests) ... ok
 
-test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.37s
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.25s
 ```
-全 25 テストが 100% 成功し、すべての要件定義項目が検証されました。
+全 24 テストが 100% 成功し、すべての要件定義項目が検証されました。

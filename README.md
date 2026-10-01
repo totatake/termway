@@ -1,6 +1,6 @@
-# termway
+# termway: The Ultimate X11-to-Terminal GUI Bridge
 
-
+ターミナル（端末エミュレータ）の画面内に、X11 GUI アプリケーションを直接埋め込んで実行・操作できる高速ブリッジツールです。
 
 ---
 
@@ -9,14 +9,14 @@
 - **ターミナル画面内でのGUI実行**:
   - **Kitty Graphics Protocol** を使用し、端末セル内に高精細なピクセル画像としてインライン描画。
   - SSH の単一ポート（PTY 1本）のみが通る踏み台環境やクラウド、tmux セッション内でも、追加のポートフォワーディングやクライアント側XサーバーなしでGUIツールが利用可能。
-- **フルマウス＆キーボード対話**:
-  - **xterm SGR 1006 マウスプロトコル** により、クリック、ドラッグ、マウス移動、ホイールスクロールを検知。
+- **フルマウス＆キーボード対話 (ホバー対応)**:
+  - **xterm SGR 1006 マウスプロトコル (Any-event 1003h)** により、クリック、ドラッグ、ホイールスクロールに加えてマウスカーソルの移動（ホバー追従）を完全検知。
   - 端末文字セル座標を仮想ディスプレイのピクセル解像度へ正確にマッピングし、**XTest** 拡張経由でX11クライアントに合成注入。
-  - 矢印キー、Ctrlキー、Enter/Tab/Backspace 等のキー入力も完全転送。
+  - 矢印キー、Ctrlキー、Enter/Tab/Backspace 等のキー入力もノンブロッキングで即時転送（1キー遅延なし）。
 - **タイル差分レンダリング (Damage Tracking)**:
   - 画面をタイル（32x32ピクセル等）に分割し、高速ハッシュ比較により変化があった矩形領域のみを端末へ差分転送。帯域とターミナル負荷を大幅に削減。
-  - **`TerminalBackend` (リモート/PTY用)**: Kitty Graphics + SGR マウス + 仮想X11 (Xvfb)。
-- **堅牢な端末保護 (RAII Guard)**:
+- **適合性検証＆堅牢な端末保護 (RAII Guard)**:
+  - 起動時に Kitty Graphics Protocol の対応可否を自動検証し、非対応環境では親切なエラーメッセージを出力。
   - `RawModeGuard` の `Drop` 実装により、プログラムが強制終了（Ctrl+C 等）やパニックを起こしても、端末のマウス追跡解除・カーソル表示・画面復元を100%保証。
 
 ---
@@ -25,19 +25,20 @@
 
 ```mermaid
 flowchart LR
-    subgraph ClientTerminal["Client Terminal (Kitty, WezTerm)"]
-        TermIn["stdin (SGR 1006 Mouse / Keys)"]
+    subgraph ClientTerminal["Client Terminal (Kitty, WezTerm, Ghostty)"]
+        TermIn["stdin (SGR 1006 / 1003h Mouse & Keys)"]
         TermOut["stdout (Kitty Graphics Protocol)"]
     end
 
-    subgraph termway["termway"]
+    subgraph termway["termway Core"]
         subgraph TerminalLayer["Terminal & Safety"]
             RawGuard["RawModeGuard (RAII Drop)"]
             WinSize["TIOCGWINSZ / Cell-to-Pixel"]
+            Query["Kitty Protocol Capability Query"]
         end
 
-        subgraph BackendLayer["Multi-Backend Engine"]
-            TermBackend["TerminalBackend"]
+        subgraph EngineLayer["Event Engine"]
+            TermBackend["TerminalBackend (Non-blocking I/O)"]
         end
 
         subgraph DisplayInput["Display & Input Bridge"]
@@ -48,17 +49,17 @@ flowchart LR
 
     subgraph X11["X11 Virtual Display"]
         Xvfb["Xvfb (:99)"]
-        App["GUI Application (Tkinter, GTK, Qt, etc.)"]
+        App["GUI Application (Tkinter, xeyes, xclock, GTK, Qt, etc.)"]
     end
 
     TermIn --> TermBackend
     TermBackend --> WinSize
     WinSize --> XTest
-    XTest -->|"Fake Events"| Xvfb
+    XTest -->|"Fake Events (Keys / Mouse)"| Xvfb
     Xvfb <-->|"Render / Events"| App
     Xvfb -->|"XImage"| Damage
     Damage --> TermBackend
-    TermBackend -->|"\\e_G...\\e\\"| TermOut
+    TermBackend -->|"\\e_Ga=T,q=2...\\e\\"| TermOut
 ```
 
 ---
@@ -87,7 +88,7 @@ flowchart LR
 git clone <repository-url>
 cd termway
 
-# オフラインまたは通常ビルド
+# ビルド
 cargo build --release
 ```
 
@@ -102,29 +103,27 @@ cargo build --release
 cargo run -- --demo
 ```
 ボタンクリックでカウンタが増加し、テキストボックスにキー入力ができる Tkinter GUI がターミナル内に起動します。
-終了するには `q` または `Ctrl+C` を押します。
+終了するには `Ctrl+C` を押すか、GUIウィンドウを閉じます。
 
 ### 2. 任意のX11アプリケーションの実行
 `--` の後に実行したいコマンドと引数を指定します：
 
 ```bash
+# マウス追従アプリ（ホバー動作確認）
+cargo run -- -- xeyes
+
+# 時計アプリ
+cargo run -- -- xclock
+
 # Python GUI スクリプトの実行
 cargo run -- -- python3 my_gui_app.py
 
-# 標準的なX11アプリの実行
-cargo run -- -- xclock
+# エディタや解析ツール
 cargo run -- -- gedit
 cargo run -- -- wireshark
 ```
 
-### 3. バックエンドの手動切り替え
-```bash
-# ターミナル描画モード
-cargo run -- --backend terminal --demo
-
-```
-
-### 4. 主なコマンドラインオプション
+### 3. 主なコマンドラインオプション
 
 | オプション | 引数 | 説明 | デフォルト |
 | :--- | :--- | :--- | :--- |
@@ -141,7 +140,7 @@ cargo run -- --backend terminal --demo
 本プロジェクトは要件定義からシステム受入テストまでの V字開発モデル に基づいて開発されており、単体テスト・結合テスト・E2Eシステムテストが整備されています。
 
 ```bash
-# 全テスト (単体・結合・E2E) の実行
+# 全テスト (単体・結合・E2E: 計24テスト) の実行
 cargo test
 
 # システムE2Eテストのみ実行 (Xvfb + 実Tkinter GUIの連携検証)
