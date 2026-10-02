@@ -77,6 +77,25 @@ impl TermwayCompositor {
         let backend = TerminalBackend::new(term_size, config.use_sixel);
 
         // 5. Try starting XWayland for legacy X11 compatibility
+        // Workaround for environments where WAYLAND_SOCKET FD gets closed (e.g. by security wrappers):
+        // We create a wrapper script that unsets WAYLAND_SOCKET and uses WAYLAND_DISPLAY instead.
+        let xwayland_real = String::from_utf8(
+            std::process::Command::new("which").arg("Xwayland").output().unwrap().stdout
+        ).unwrap();
+        let xwayland_real = xwayland_real.trim();
+        let wrap_dir = "/tmp/termway_wrap";
+        let _ = std::fs::create_dir_all(wrap_dir);
+        let wrapper_path = format!("{}/Xwayland", wrap_dir);
+        let wrapper_script = format!(
+            "#!/bin/bash\nunset WAYLAND_SOCKET\nexport WAYLAND_DISPLAY={}\nexec {} \"$@\"\n",
+            socket_name, xwayland_real
+        );
+        std::fs::write(&wrapper_path, wrapper_script).unwrap();
+        std::fs::set_permissions(&wrapper_path, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+        
+        let old_path = std::env::var("PATH").unwrap_or_default();
+        std::env::set_var("PATH", format!("{}:{}", wrap_dir, old_path));
+
         let (xwayland, x11_display) = match smithay::xwayland::XWayland::spawn(
             &dh,
             None,
