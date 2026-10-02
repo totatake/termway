@@ -99,10 +99,10 @@ impl TermwayCompositor {
         let (xwayland, x11_display) = match smithay::xwayland::XWayland::spawn(
             &dh,
             None,
-            std::iter::once((std::ffi::OsString::from("WAYLAND_DEBUG"), std::ffi::OsString::from("1"))),
+            std::iter::empty::<(std::ffi::OsString, std::ffi::OsString)>(),
             true,
             std::process::Stdio::null(),
-            std::process::Stdio::inherit(),
+            std::process::Stdio::null(),
             |_| (),
         ) {
             Ok((xwayland, client)) => {
