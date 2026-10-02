@@ -42,7 +42,7 @@ impl TermwayRenderer {
         let phys_size: Size<i32, Physical> = Size::from((self.width as i32, self.height as i32));
         let damage: Rectangle<i32, Physical> = Rectangle::from_size(phys_size);
 
-        // 1. Collect render elements from all toplevel surfaces
+        // 1. Collect render elements from all toplevel surfaces (Wayland XDG & XWayland)
         let mut elements: Vec<WaylandSurfaceRenderElement<PixmanRenderer>> = Vec::new();
         for window in &state.windows {
             let elems = render_elements_from_surface_tree(
@@ -54,6 +54,20 @@ impl TermwayRenderer {
                 Kind::Unspecified,
             );
             elements.extend(elems);
+        }
+
+        for xwindow in &state.x11_windows {
+            if let Some(surface) = xwindow.wl_surface() {
+                let elems = render_elements_from_surface_tree(
+                    &mut self.renderer,
+                    &surface,
+                    (0, 0),
+                    1.0,
+                    1.0,
+                    Kind::Unspecified,
+                );
+                elements.extend(elems);
+            }
         }
 
         // 2. Bind and render to offscreen pixman buffer

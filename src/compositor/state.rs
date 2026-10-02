@@ -49,6 +49,9 @@ pub struct TermwayState {
     pub pointer: PointerHandle<Self>,
 
     pub windows: Vec<ToplevelSurface>,
+    pub x11_windows: Vec<smithay::xwayland::X11Surface>,
+    pub xwayland_shell_state: smithay::wayland::xwayland_shell::XWaylandShellState,
+    pub xwm: Option<smithay::xwayland::xwm::X11Wm>,
     pub dirty: bool,
     pub running: bool,
     pub width: u32,
@@ -61,6 +64,7 @@ impl TermwayState {
         let compositor_state = CompositorState::new::<Self>(dh);
         let xdg_shell_state = XdgShellState::new::<Self>(dh);
         let shm_state = ShmState::new::<Self>(dh, vec![]);
+        let xwayland_shell_state = smithay::wayland::xwayland_shell::XWaylandShellState::new::<Self>(dh);
         let mut seat_state = SeatState::new();
         let mut seat = seat_state.new_wl_seat(dh, "termway");
 
@@ -76,6 +80,9 @@ impl TermwayState {
             keyboard,
             pointer,
             windows: Vec::new(),
+            x11_windows: Vec::new(),
+            xwayland_shell_state,
+            xwm: None,
             dirty: true,
             running: true,
             width,

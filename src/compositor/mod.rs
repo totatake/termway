@@ -1,5 +1,6 @@
 pub mod state;
 pub mod renderer;
+pub mod xwayland;
 
 use std::io::{self, Read};
 use std::process::{Child, Command};
@@ -30,7 +31,10 @@ pub struct TermwayCompositor {
     renderer: TermwayRenderer,
     backend: TerminalBackend,
     client_child: Option<Child>,
+    #[allow(dead_code)]
+    xwayland: Option<(smithay::xwayland::XWayland, smithay::reexports::wayland_server::Client)>,
     socket_name: String,
+    x11_display: Option<String>,
     input_buffer: Vec<u8>,
 }
 
@@ -71,7 +75,30 @@ impl TermwayCompositor {
         // 4. Initialize Terminal Output Backend
         let backend = TerminalBackend::new(term_size, config.use_sixel);
 
-        // 5. Spawn child client process if command provided
+        // 5. Try starting XWayland for legacy X11 compatibility
+        let (xwayland, x11_display) = match smithay::xwayland::XWayland::spawn(
+            &dh,
+            None,
+            std::iter::empty::<(String, String)>(),
+            true,
+            std::process::Stdio::null(),
+            std::process::Stdio::null(),
+            |_| (),
+        ) {
+            Ok((xwayland, client)) => {
+                let disp_num = xwayland.display_number();
+                let disp_str = format!(":{}", disp_num);
+                eprintln!("[termway] XWayland initialized on DISPLAY={}", disp_str);
+                std::env::set_var("DISPLAY", &disp_str);
+                (Some((xwayland, client)), Some(disp_str))
+            }
+            Err(e) => {
+                eprintln!("[termway] XWayland not started ({}). Native Wayland mode active.", e);
+                (None, None)
+            }
+        };
+
+        // 6. Spawn child client process if command provided
         let client_child = if !config.command.is_empty() {
             let mut cmd = Command::new(&config.command[0]);
             if config.command.len() > 1 {
@@ -82,6 +109,9 @@ impl TermwayCompositor {
             cmd.env("QT_QPA_PLATFORM", "wayland");
             cmd.env("CLUTTER_BACKEND", "wayland");
             cmd.env("SDL_VIDEODRIVER", "wayland");
+            if let Some(ref disp) = x11_display {
+                cmd.env("DISPLAY", disp);
+            }
 
             match cmd.spawn() {
                 Ok(child) => {
@@ -104,13 +134,19 @@ impl TermwayCompositor {
             renderer,
             backend,
             client_child,
+            xwayland,
             socket_name,
+            x11_display,
             input_buffer: Vec::with_capacity(1024),
         })
     }
 
     pub fn socket_name(&self) -> &str {
         &self.socket_name
+    }
+
+    pub fn x11_display(&self) -> Option<&str> {
+        self.x11_display.as_deref()
     }
 
     pub fn run(&mut self) -> Result<(), Box<dyn std::error::Error>> {

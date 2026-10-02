@@ -40,3 +40,21 @@ fn test_compositor_renderer_buffer() {
     // Alpha channel
     assert_eq!(pixels[3], 255);
 }
+
+#[test]
+fn test_xwayland_state_and_shell() {
+    let display = Display::<TermwayState>::new().expect("Failed to create Wayland Display");
+    let dh = display.handle();
+
+    let state = TermwayState::new(&dh, 640, 480);
+    assert!(state.x11_windows.is_empty());
+    assert!(state.xwm.is_none());
+}
+
+
+#[test]
+fn test_calloop_handle() {
+    let event_loop = smithay::reexports::calloop::EventLoop::<TermwayState>::try_new().unwrap();
+    let handle = event_loop.handle();
+    let _ = handle.clone();
+}
