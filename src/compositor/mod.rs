@@ -32,6 +32,9 @@ pub struct TermwayCompositor {
     backend: TerminalBackend,
     socket_name: String,
     x11_display: Option<String>,
+    // ターミナルのセル数（マウス座標変換に使用）
+    term_cols: u16,
+    term_rows: u16,
     input_buffer: Vec<u8>,
     pending_command: Option<Vec<String>>,
     client_child: Option<Child>,
@@ -146,6 +149,8 @@ impl TermwayCompositor {
             _xwayland_client,
             socket_name,
             x11_display,
+            term_cols: term_size.cols.max(1),
+            term_rows: term_size.rows.max(1),
             input_buffer: Vec::with_capacity(1024),
         })
     }
@@ -336,12 +341,13 @@ impl TermwayCompositor {
         let serial = SERIAL_COUNTER.next_serial();
         let time = self.state.start_time.elapsed().as_millis() as u32;
 
-        // ターミナル全体の解像度（ピクセル）でスケーリングする。
-        // col/row は 1 始まりのセル座標なので 0 始まりに変換してから比率を掛ける。
-        let w = self.renderer.width() as f64;
-        let h = self.renderer.height() as f64;
-        let px = (ev.col.saturating_sub(1)) as f64 / self.state.width as f64 * w;
-        let py = (ev.row.saturating_sub(1)) as f64 / self.state.height as f64 * h;
+        // col/row は 1 始まりのターミナルセル座標。
+        // 1 セルのピクセルサイズ = コンポジター解像度 / ターミナルのセル数。
+        // これを掛けてコンポジター空間のピクセル座標に変換する。
+        let cell_w = self.renderer.width() as f64 / self.term_cols as f64;
+        let cell_h = self.renderer.height() as f64 / self.term_rows as f64;
+        let px = (ev.col.saturating_sub(1)) as f64 * cell_w;
+        let py = (ev.row.saturating_sub(1)) as f64 * cell_h;
         let loc: Point<f64, Logical> = Point::from((px, py));
 
         // XWayland の wl_surface は association が壊れていることが多く wl_surface() が None になる。
