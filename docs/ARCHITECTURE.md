@@ -147,3 +147,64 @@ impl Drop for RawModeGuard {
   - `\x1b[?1006l\x1b[?1003l\x1b[?1000l`: マウストラッキング（Any-event含む）無効化
   - `\x1b[?25h`: カーソル再表示
   - `\x1b[?1049l`: Alternate Screen の終了（元のシェル画面に戻る）
+
+---
+
+## 6. 次期アーキテクチャ移行計画: Smithay + XWayland 自立型コンポジタ
+
+### 6.1 v1.0 (Xkitty方式) の成果と課題
+v1.0 では、外部の `Xvfb` および `openbox` を子プロセスとして立ち上げ、MIT-SHM によるフレームバッファの定周期キャプチャと XTest による入力注入を行う方式（Xkitty と同様の構造）を採用しました。
+このアプローチにより、「端末内に Kitty/Sixel で高速描画し、SGR マウスで対話する」というフロントエンドのプロトコル制御やピクセル追従（SGR 14t）の検証（PoC）には成功しました。
+
+しかしながら、以下の本質的な課題が存在します：
+1. **画面のポーリング監視**: 描画更新の有無に関わらずタイマー駆動でキャプチャを試みるため、不要な CPU 負荷や遅延が発生しやすい。
+2. **X11 への制限**: 純粋な Wayland ネイティブアプリ（GTK4 や Wayland 専用ツール）が動作しない。
+3. **外部依存**: `Xvfb` や `openbox`、`libXtst` などの外部バイナリ・ライブラリの事前インストールが必要。
+
+### 6.2 v2.0: Smithay ベースの自立型 Headless Wayland コンポジタ
+
+v2.0 では、`termway` 自体を **Smithay (Rust製Waylandコンポジタフレームワーク)** を用いた自立型コンポジタへと刷新します。
+
+```mermaid
+flowchart TD
+    subgraph Clients["クライアント層"]
+        WApp["Wayland ネイティブアプリ (GTK4, Qt6 等)"]
+        XApp["レガシー X11 アプリ (xclock, Tkinter 等)"]
+    end
+
+    subgraph termway["termway v2.0 (Smithay Wayland Compositor)"]
+        XWL["XWayland サーバーマネージャ (DISPLAY=:1)"]
+        WLS["Wayland サーバー (WAYLAND_DISPLAY=wayland-1)"]
+        Seat["Smithay Seat (入力パイプライン)"]
+        Comp["Smithay Compositor & Damage Tracker"]
+        Pixman["Headless Renderer (Pixman / CPU Buffer)"]
+        TermOut["Terminal Bridge (Kitty / Sixel)"]
+    end
+
+    subgraph Terminal["端末エミュレータ"]
+        PTYIn["stdin (キー・SGRマウス・14t)"]
+        PTYOut["stdout (Kitty / Sixel エスケープシーケンス)"]
+    end
+
+    WApp -->|"Wayland Protocol"| WLS
+    XApp -->|"X11 Protocol"| XWL
+    XWL -->|"Wayland Surface"| WLS
+    WLS --> Comp
+    Comp --> Pixman
+    Pixman -->|"On Commit / Damage (完全イベント駆動)"| TermOut
+    TermOut --> PTYOut
+    PTYIn --> Seat
+    Seat --> WLS
+```
+
+### 6.3 アーキテクチャ比較表
+
+| 観点 | v1.0 (Xkitty方式) | v2.0 (Smithay + XWayland方式) |
+| :--- | :--- | :--- |
+| **位置づけ** | 外部 X サーバーのキャプチャ＆転送 PoC | **自立型 Wayland コンポジタ ＋ 表示基盤** |
+| **描画トリガー** | タイマーループ (30 FPS) による定周期キャプチャ | **`wl_surface.commit` やダメージに連動する完全イベント駆動** |
+| **アプリ対応** | X11 アプリのみ | **Wayland ネイティブ ＋ X11 (XWayland経由) の両対応** |
+| **入力処理** | XTest 拡張による外部フェイク注入 | **Smithay `Seat` による内部ダイレクト入力処理** |
+| **ウィンドウ管理** | 外部 WM (`openbox`) に依存 | **コンポジタ自身がネイティブにタイリング/スタック管理** |
+| **外部依存性** | Xvfb, openbox, libXtst 等が必要 | **Rust 単一バイナリ** (X11 アプリ起動時のみ Xwayland を使用) |
+
