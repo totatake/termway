@@ -80,11 +80,48 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         i += 1;
     }
 
-    if run_demo {
-        config.command = vec![
-            "python3".to_string(),
-            "-c".to_string(),
-            r#"
+    if run_demo || config.command.is_empty() {
+        if use_wayland {
+            config.command = vec![
+                "python3".to_string(),
+                "-c".to_string(),
+                r#"
+import gi
+gi.require_version('Gtk', '3.0')
+from gi.repository import Gtk
+
+win = Gtk.Window(title="termway Wayland Demo")
+win.set_default_size(400, 300)
+win.connect("destroy", Gtk.main_quit)
+
+box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=15)
+win.add(box)
+
+lbl = Gtk.Label(label="Smithay Native Wayland Compositor Demo")
+box.pack_start(lbl, True, True, 10)
+
+count = 0
+btn = Gtk.Button(label="Click Me!")
+def on_click(b):
+    global count
+    count += 1
+    b.set_label(f"Clicked: {count} times!")
+btn.connect("clicked", on_click)
+box.pack_start(btn, True, True, 10)
+
+entry = Gtk.Entry()
+entry.set_text("Type here...")
+box.pack_start(entry, True, True, 10)
+
+win.show_all()
+Gtk.main()
+"#.to_string(),
+            ];
+        } else {
+            config.command = vec![
+                "python3".to_string(),
+                "-c".to_string(),
+                r#"
 import tkinter as tk
 
 root = tk.Tk()
@@ -110,24 +147,8 @@ entry.pack(pady=10)
 
 root.mainloop()
 "#.to_string(),
-        ];
-    }
-
-    if config.command.is_empty() {
-        println!("No command specified. Running built-in demo...");
-        config.command = vec![
-            "python3".to_string(),
-            "-c".to_string(),
-            r#"
-import tkinter as tk
-root = tk.Tk()
-root.title("termway Default")
-root.geometry("350x200")
-lbl = tk.Label(root, text="Welcome to termway!\nPress Ctrl+C to exit.", font=("Helvetica", 13))
-lbl.pack(expand=True)
-root.mainloop()
-"#.to_string(),
-        ];
+            ];
+        }
     }
 
     if use_wayland {

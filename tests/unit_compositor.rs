@@ -58,3 +58,41 @@ fn test_calloop_handle() {
     let handle = event_loop.handle();
     let _ = handle.clone();
 }
+
+#[test]
+fn test_spawn_xwayland_diag() {
+    let display = Display::<TermwayState>::new().unwrap();
+    let dh = display.handle();
+    let res = smithay::xwayland::XWayland::spawn(
+        &dh,
+        None,
+        std::iter::empty::<(String, String)>(),
+        true,
+        std::process::Stdio::null(),
+        std::process::Stdio::null(),
+        |_| (),
+    );
+    println!("XWayland::spawn(None, true) result: {:?}", res.as_ref().map(|_| "Ok").map_err(|e| e.to_string()));
+
+    let res_no_abstract = smithay::xwayland::XWayland::spawn(
+        &dh,
+        None,
+        std::iter::empty::<(String, String)>(),
+        false, // open_abstract_socket: false!
+        std::process::Stdio::null(),
+        std::process::Stdio::null(),
+        |_| (),
+    );
+    println!("XWayland::spawn(None, false) result: {:?}", res_no_abstract.as_ref().map(|_| "Ok").map_err(|e| e.to_string()));
+
+    let res_explicit = smithay::xwayland::XWayland::spawn(
+        &dh,
+        99,
+        std::iter::empty::<(String, String)>(),
+        true,
+        std::process::Stdio::null(),
+        std::process::Stdio::null(),
+        |_| (),
+    );
+    println!("XWayland::spawn(Some(99), true) result: {:?}", res_explicit.as_ref().map(|_| "Ok").map_err(|e| e.to_string()));
+}

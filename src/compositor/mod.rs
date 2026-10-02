@@ -93,7 +93,11 @@ impl TermwayCompositor {
                 (Some((xwayland, client)), Some(disp_str))
             }
             Err(e) => {
-                eprintln!("[termway] XWayland not started ({}). Native Wayland mode active.", e);
+                eprintln!("[termway] XWayland not available: {}.", e);
+                eprintln!("[termway] Note: Running in native Wayland mode. Wayland applications will run natively.");
+                eprintln!("[termway]       Pure X11 applications (e.g. xeyes, xclock) require an X server.");
+                eprintln!("[termway]       To run pure X11 apps in this environment, run without '--wayland':");
+                eprintln!("[termway]           termway -- {}", config.command.first().map(|s| s.as_str()).unwrap_or("xeyes"));
                 (None, None)
             }
         };
