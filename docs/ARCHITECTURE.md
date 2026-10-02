@@ -83,6 +83,15 @@ $$py = (row - 1) \times ch + \lfloor ch / 2 \rfloor$$
 $$x_{x11} = \mathrm{clamp}\left(\lfloor \frac{px \times W_{x11}}{W_{term}} \rfloor, 0, W_{x11} - 1\right)$$
 $$y_{x11} = \mathrm{clamp}\left(\lfloor \frac{py \times H_{x11}}{H_{term}} \rfloor, 0, H_{x11} - 1\right)$$
 
+#### Wayland コンポジタモードにおけるセル座標変換 (`src/compositor/`)
+`--wayland` モードでは、`TermwayCompositor` がコンポジタ空間のピクセル解像度 $W_{comp}, H_{comp}$ および端末のセル数 $C_{term}, R_{term}$ を保持します（`term_cols: u16`, `term_rows: u16` フィールド）。SGR マウスイベントのセル座標 $(col, row)$（1 始まり）を次の式でコンポジタ空間ピクセル座標へ変換します：
+
+$$cell\_w = W_{comp} / C_{term}, \quad cell\_h = H_{comp} / R_{term}$$
+$$px = (col - 1) \times cell\_w$$
+$$py = (row - 1) \times cell\_h$$
+
+この変換は `TermwayCompositor` の `term_cols` / `term_rows` フィールドを参照して行います。以前の実装では `state.width` で除算後に再乗算するため座標がほぼ $col - 1$ のままとなる不具合があり、上記の正しい変換式に修正されました。
+
 ---
 
 ## 3. 差分レンダリング (Tile Damage Tracking)
@@ -150,7 +159,7 @@ impl Drop for RawModeGuard {
 
 ---
 
-## 6. 次期アーキテクチャ移行計画: Smithay + XWayland 自立型コンポジタ
+## 6. Smithay + XWayland 自立型コンポジタ（v2.0 実装済み）
 
 ### 6.1 v1.0 (Xkitty方式) の成果と課題
 v1.0 では、外部の `Xvfb` および `openbox` を子プロセスとして立ち上げ、MIT-SHM によるフレームバッファの定周期キャプチャと XTest による入力注入を行う方式（Xkitty と同様の構造）を採用しました。
@@ -161,22 +170,24 @@ v1.0 では、外部の `Xvfb` および `openbox` を子プロセスとして�
 2. **X11 への制限**: 純粋な Wayland ネイティブアプリ（GTK4 や Wayland 専用ツール）が動作しない。
 3. **外部依存**: `Xvfb` や `openbox`、`libXtst` などの外部バイナリ・ライブラリの事前インストールが必要。
 
-### 6.2 v2.0: Smithay ベースの自立型 Headless Wayland コンポジタ
+### 6.2 v2.0: Smithay ベースの自立型 Headless Wayland コンポジタ（実装済み）
 
-v2.0 では、`termway` 自体を **Smithay (Rust製Waylandコンポジタフレームワーク)** を用いた自立型コンポジタへと刷新します。
+`--wayland` フラグにより、`termway` 自体が **Smithay (Rust製Waylandコンポジタフレームワーク)** を用いた自立型コンポジタとして動作します。
 
 ```mermaid
 flowchart TD
     subgraph Clients["クライアント層"]
         WApp["Wayland ネイティブアプリ (GTK4, Qt6 等)"]
-        XApp["レガシー X11 アプリ (xclock, Tkinter 等)"]
+        XApp["レガシー X11 アプリ (xclock, xeyes 等)"]
     end
 
     subgraph termway["termway v2.0 (Smithay Wayland Compositor)"]
         XWL["XWayland サーバーマネージャ (DISPLAY=:1)"]
+        Wrap["ラッパースクリプト (/tmp/termway_wrap/Xwayland)"]
         WLS["Wayland サーバー (WAYLAND_DISPLAY=wayland-1)"]
         Seat["Smithay Seat (入力パイプライン)"]
         Comp["Smithay Compositor & Damage Tracker"]
+        Unassoc["unassociated_surfaces フォールバック"]
         Pixman["Headless Renderer (Pixman / CPU Buffer)"]
         TermOut["Terminal Bridge (Kitty / Sixel)"]
     end
@@ -187,17 +198,72 @@ flowchart TD
     end
 
     WApp -->|"Wayland Protocol"| WLS
-    XApp -->|"X11 Protocol"| XWL
+    XApp -->|"X11 Protocol"| Wrap
+    Wrap -->|"FD クローズ問題を回避"| XWL
     XWL -->|"Wayland Surface"| WLS
     WLS --> Comp
-    Comp --> Pixman
-    Pixman -->|"On Commit / Damage (完全イベント駆動)"| TermOut
+    Comp --> Unassoc
+    Unassoc --> Pixman
+    Pixman -->|"On Commit / Damage"| TermOut
     TermOut --> PTYOut
     PTYIn --> Seat
     Seat --> WLS
 ```
 
-### 6.3 アーキテクチャ比較表
+### 6.3 XWayland 接続ワークアラウンド（FD クローズ問題）
+
+XWayland は Wayland クライアントとして動作するため、コンポジタ（termway）の Wayland ソケット経由で接続します。
+しかし、XWayland を直接起動した場合にファイルディスクリプタ（FD）のクローズ問題が発生し、接続に失敗することがあります。
+
+これを回避するため、`--wayland` 起動時に termway は `/tmp/termway_wrap/Xwayland` というラッパースクリプトを自動生成します。
+XWayland の起動はこのスクリプト経由で行われ、FD 管理の問題を透過的に解決します。
+
+```bash
+# 自動生成されるラッパースクリプトの例
+#!/bin/sh
+exec /usr/bin/Xwayland "$@"
+```
+
+### 6.4 unassociated_surfaces フォールバック機構
+
+XWayland がラッパースクリプト経由でコンポジタに接続する構成では、`X11Surface::wl_surface()` が `None` を返すケースが発生します。
+この場合、通常の Wayland サーフェス関連付けが行われないため、描画やマウス入力のフォーカス設定ができなくなります。
+
+termway はこれを以下のワークアラウンドで対処します：
+
+1. **`CompositorHandler::commit()` での収集**: `wl_surface()` が `None` の X11 サーフェスを `unassociated_surfaces: Vec<WlSurface>` リストに収集。
+2. **レンダラーでの描画対象化**: Pixman レンダラーは通常の関連付き Wayland サーフェスに加え、`unassociated_surfaces` リストの内容も描画対象とする。
+3. **マウス入力フォーカス**: Wayland ポインタの focus 設定時に `unassociated_surfaces.first()` を優先的に使用し、X11 アプリへのマウス入力を確保する。
+
+### 6.5 XOpenDisplay デッドロック問題と解決策
+
+コンポジタのイベントループ内から `XOpenDisplay` を呼び出すと、XWayland とのデッドロックが発生します。
+これは XWayland 自体が Wayland クライアントであるため、コンポジタのイベントループが停止すると XWayland も応答できなくなり、相互待ちになるためです。
+
+この問題を回避するため、以下の設計変更を実施しました：
+
+- **廃止**: XTest 拡張経由の直接マウス・キー注入（`XOpenDisplay` が必要）
+- **採用**: Smithay Seat の Wayland ポインタ・キーボードイベント経由での入力処理（コンポジタ内部で完結し、`XOpenDisplay` 不要）
+
+### 6.6 Sixel 自動フォールバック
+
+`--wayland` モードを含むすべての起動モードで、以下のロジックで Sixel プロトコルの自動選択が行われます：
+
+```mermaid
+flowchart TD
+    Start["termway 起動"] --> CheckKitty{"KITTY_WINDOW_ID\n環境変数が存在する？"}
+    CheckKitty -->|"Yes (Kitty ターミナル)"| CheckFlag{"--sixel フラグ\n指定あり？"}
+    CheckKitty -->|"No (Kitty 以外)"| AutoSixel["use_sixel = true\n(自動フォールバック)"]
+    CheckFlag -->|"Yes"| UseSixel["use_sixel = true"]
+    CheckFlag -->|"No"| UseKitty["use_kitty = true\n(デフォルト)"]
+    AutoSixel --> Run["描画開始"]
+    UseSixel --> Run
+    UseKitty --> Run
+```
+
+これにより GNOME Terminal・xterm など VTE 系端末では `--sixel` フラグを指定しなくても正常に動作します。
+
+### 6.7 アーキテクチャ比較表
 
 | 観点 | v1.0 (Xkitty方式) | v2.0 (Smithay + XWayland方式) |
 | :--- | :--- | :--- |
@@ -205,6 +271,9 @@ flowchart TD
 | **描画トリガー** | タイマーループ (30 FPS) による定周期キャプチャ | **`wl_surface.commit` やダメージに連動する完全イベント駆動** |
 | **アプリ対応** | X11 アプリのみ | **Wayland ネイティブ ＋ X11 (XWayland経由) の両対応** |
 | **入力処理** | XTest 拡張による外部フェイク注入 | **Smithay `Seat` による内部ダイレクト入力処理** |
-| **ウィンドウ管理** | 外部 WM (`openbox`) に依存 | **コンポジタ自身がネイティブにタイリング/スタック管理** |
+| **ウィンドウ管理** | 外部 WM (`openbox`) に依存 | **`X11Wm::start_wm()` によるコンポジタ内蔵 WM** |
 | **外部依存性** | Xvfb, openbox, libXtst 等が必要 | **Rust 単一バイナリ** (X11 アプリ起動時のみ Xwayland を使用) |
+| **マウス座標変換** | `W_term` スケーリング経由の X11 座標 | **`cell_w = compositor_width / term_cols` による直接変換** |
+| **Sixel 選択** | `--sixel` フラグ必須 | **`KITTY_WINDOW_ID` 不在時に自動フォールバック** |
+
 

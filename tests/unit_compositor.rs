@@ -49,6 +49,8 @@ fn test_xwayland_state_and_shell() {
     let state = TermwayState::new(&dh, 640, 480);
     assert!(state.x11_windows.is_empty());
     assert!(state.xwm.is_none());
+    // unassociated_surfaces は commit フックで収集される XWayland サーフェスのフォールバック用
+    assert!(state.unassociated_surfaces.is_empty());
 }
 
 

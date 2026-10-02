@@ -67,7 +67,7 @@ flowchart LR
 | :--- | :--- | :--- | :--- | :--- |
 | **FR-1** | 端末グラフィックス描画 | X11仮想フレームバッファの RGBA データを Kitty Graphics Protocol にエンコードし、端末 stdout に出力して画面表示すること。応答抑制フラグ（`q=2`）およびカーソル移動抑制（`C=1`）を指定して端末の自律応答・チラつきを防止すること。 | `tests/unit_kitty_encoder.rs`<br/>`tests/system_e2e_gui.rs` | **PASS** |
 | **FR-2** | 差分検出・更新 (Damage) | 画面全体を毎フレーム転送するのではなく、変化のあった矩形領域（汚損領域）のみを切り出して端末へ部分更新描画すること。 | `tests/unit_damage_tracker.rs`<br/>`tests/system_e2e_gui.rs` | **PASS** |
-| **FR-3** | マウス入力・ホバー変換 | 端末からの xterm SGR 1006 マウスシーケンス（クリック、ドラッグ、リリース、ホバー移動、ホイール）を Any-event モード（`1003h`）で検知し、端末の文字セル座標からX11ピクセル座標へマッピングして XTest 仮想マウスイベントとして送出すること。 | `tests/unit_sgr_mouse.rs`<br/>`tests/integration_pipeline.rs`<br/>`tests/system_e2e_gui.rs` | **PASS** |
+| **FR-3** | マウス入力・ホバー変換 | 端末からの xterm SGR 1006 マウスシーケンス（クリック、ドラッグ、リリース、ホバー移動、ホイール）を Any-event モード（`1003h`）で検知し、端末の文字セル座標から各モードのピクセル座標へマッピングして入力イベントとして送出すること。X11/Xvfb モードでは XTest 仮想マウスイベントとして送出し、Wayland コンポジタモード（`--wayland`）では Smithay Seat の Wayland ポインタイベント経由で送出すること。 | `tests/unit_sgr_mouse.rs`<br/>`tests/integration_pipeline.rs`<br/>`tests/system_e2e_gui.rs` | **PASS** |
 | **FR-4** | キー入力・非同期送出 | 端末 stdin からの文字・特殊キー（矢印、Enter、BackSpace、Esc、Ctrlキー等）をノンブロッキング（`nix::poll` タイムアウト0）で解析し、フレーム描画を停止させることなくX11キーイベントとしてGUIアプリに即時ディスパッチすること。 | `tests/unit_keyboard.rs`<br/>`tests/system_e2e_gui.rs` | **PASS** |
 | **FR-5** | 端末制御と安全復元 | 起動時に `TIOCGWINSZ` で端末サイズを取得し、端末を Raw モードおよび Alternate Screen に切り替えること。プログラム終了時や `SIGINT` / パニック発生時には、`Drop` トレイトにより確実に通常画面・通常モードに復元すること。 | `tests/unit_terminal.rs` | **PASS** |
 | **FR-6** | X11仮想ディスプレイ管理 | `termway` 自体が内部で `Xvfb` を自律管理（DISPLAY環境変数を自動割り当て）し、子プロセスとしてGUIアプリケーションを起動・監視・終了可能なランチャー機能を持つこと。 | `tests/system_e2e_gui.rs` | **PASS** |
@@ -77,6 +77,8 @@ flowchart LR
 | **FR-10** | クリップボード同期 | XFixesSelectionNotify イベントを購読し、ターミナル内（Xvfb内）のGUIアプリでテキストがコピーされた際、即座に X11 CLIPBOARD セレクションを取得し、OSC 52 エスケープシーケンス（`\x1b]52;c;...`）に変換してホスト端末に送信することで、手元のPCのクリップボードへ同期すること。 | `tests/unit_clipboard.rs` | **PASS** |
 | **FR-11** | 描画最適化 (MIT-SHM) | X11 共有メモリ拡張 (MIT-SHM) を用いて、Xvfbからの画面キャプチャをゼロコピー化し、プロセス間通信のオーバーヘッドを削減してCPU使用率を極小化すること。SHMが利用できない場合は従来の `XGetImage` にフォールバックすること。 | `tests/unit_shm.rs` | **PASS** |
 | **FR-12** | Sixel対応＆ピクセル追従 | Sixelプロトコルでのフォールバック描画をサポート。さらに `\x1b[14t` を用いて端末の正確なピクセル解像度を動的取得し、1:1アスペクト比の維持とマウスクリック（X11ヒットボックス）のピクセルパーフェクトな同期を実現すること。 | `tests/unit_sixel_encoder.rs` | **PASS** |
+| **FR-16** | Smithay Wayland コンポジタ＆XWayland 統合 | `--wayland` フラグ指定時、Smithay ベースのヘッドレス Wayland コンポジタを termway 自身として起動すること。具体的には以下を満たすこと：(1) Wayland ソケット経由でクライアントアプリを受け付けること、(2) XWayland を起動してレガシー X11 アプリ（xeyes, xclock 等）を実行可能にすること、(3) `X11Wm::start_wm()` による X11 ウィンドウマネージャを内蔵すること、(4) XWayland 接続に際し FD クローズ問題を回避するラッパースクリプト（`/tmp/termway_wrap/Xwayland`）を自動生成すること、(5) `X11Surface::wl_surface()` が `None` を返す場合に備え `unassociated_surfaces` リストへのフォールバック描画を行うこと。 | `tests/unit_compositor.rs` | **PASS** |
+| **FR-17** | Sixel 自動フォールバック | 起動時に `KITTY_WINDOW_ID` 環境変数を検査し、存在しない場合（Kitty ターミナル以外の環境）は `--sixel` フラグを明示しなくても自動的に `use_sixel = true` に設定すること。`--sixel` フラグによる明示的な上書きは従来どおり有効であること。これにより GNOME Terminal や VTE 系端末でも追加オプションなしで動作すること。 | `tests/unit_terminal.rs` | **PASS** |
 
 ### 2.2 非機能要件 (Non-Functional Requirements)
 

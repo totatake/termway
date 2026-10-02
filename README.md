@@ -120,11 +120,38 @@ cargo run --release -- --sixel --wm -- xeyes
 cargo run --release -- --sixel --wm -- xclock
 ```
 
-### 3. 主なコマンドラインオプション
+### 3. Smithay Wayland コンポジタモードの使用（v2.0 実装済み）
+
+`--wayland` フラグを指定すると、termway 自身が Smithay ベースのヘッドレス Wayland コンポジタとして起動します。
+XWayland も自動で起動されるため、レガシーな X11 アプリケーションもそのまま実行できます。
+
+```bash
+# Smithay コンポジタモードで xeyes を起動（Sixel 端末の場合）
+cargo run --release -- --wayland -- xeyes
+
+# Kitty 端末では Sixel 自動フォールバックなしで起動
+cargo run --release -- --wayland -- xclock
+```
+
+### 4. Sixel 自動フォールバック
+
+起動時に `KITTY_WINDOW_ID` 環境変数が存在しない場合（Kitty ターミナル以外の環境）、`--sixel` フラグを明示しなくても自動的に Sixel プロトコルが使用されます。
+GNOME Terminal や xterm など VTE 系端末でも追加オプションなしで動作します。
+
+```bash
+# GNOME Terminal 等では --sixel なしで自動的に Sixel が使用される
+cargo run --release -- -- xeyes
+
+# 明示的に Sixel を指定することも可能（以前の動作と互換）
+cargo run --release -- --sixel -- xeyes
+```
+
+### 5. 主なコマンドラインオプション
 
 | オプション | 引数 | 説明 | デフォルト |
 | :--- | :--- | :--- | :--- |
-| `--sixel` | - | Kittyプロトコルの代わりにSixelプロトコルを使用する | - |
+| `--sixel` | - | Kittyプロトコルの代わりにSixelプロトコルを明示的に使用する（`KITTY_WINDOW_ID` 未設定時は自動有効化） | - |
+| `--wayland` | - | Smithay ベースのヘッドレス Wayland コンポジタモードで起動する（XWayland を自動起動） | - |
 | `--wm` | - | 仮想ディスプレイで軽量ウィンドウマネージャー (Openbox) を起動する | - |
 | `--width` | `<PIXELS>` | 仮想ディスプレイ解像度の幅 | 端末サイズから自動算出 |
 | `--height` | `<PIXELS>` | 仮想ディスプレイ解像度の高さ | 端末サイズから自動算出 |
@@ -167,18 +194,18 @@ cargo test
 
 ---
 
-## 🚀 今後のロードマップ (Roadmap)
+## v2.0 実装済み: Smithay + XWayland 自立型コンポジタ
 
-### v2.0 計画: Smithay + XWayland 自立型コンポジタへの全面移行
-現在の v1.0（Xvfb 外部キャプチャ＆ XTest 注入の PoC 構成）から、**Smithay による自立型 Headless Wayland コンポジタ ＋ XWayland** へとアーキテクチャを全面移行します。
-- [ ] **Smithay Headless / Pixman レンダラー統合**:
+v1.0（Xvfb 外部キャプチャ＆ XTest 注入の PoC 構成）から、**Smithay による自立型 Headless Wayland コンポジタ ＋ XWayland** へのアーキテクチャ移行を実装しました（`--wayland` フラグで起動）。
+
+- [x] **Smithay Headless / Pixman レンダラー統合**:
   - `wl_surface.commit` やダメージ通知に連動する完全イベント駆動レンダリング（ポーリング廃止、省電力・超低遅延化）。
-- [ ] **Wayland ネイティブアプリ ＋ X11 アプリ両対応**:
-  - `WAYLAND_DISPLAY` と `DISPLAY` (XWayland) を同時に提供し、最新の Wayland アプリと従来の X11 アプリを混在実行可能に。
-- [ ] **Smithay `Seat` による入力直接統合**:
-  - XTest による外部偽装注入を撤廃し、コンポジタ内部の入力パイプラインで正確なフォーカス・ウィンドウ制御を実現。
-- [ ] **自律ウィンドウ管理 (Tiling / Stacking)**:
-  - 外部 WM (`openbox`) を不要とし、コンポジタ自身がウィンドウ配置を制御。
+- [x] **Wayland ネイティブアプリ ＋ X11 アプリ両対応**:
+  - `WAYLAND_DISPLAY` と `DISPLAY` (XWayland) を同時に提供し、最新の Wayland アプリと従来の X11 アプリ（xeyes, xclock 等）を混在実行可能。
+- [x] **Smithay `Seat` による入力直接統合**:
+  - Wayland ポインタイベント経由で正確なフォーカス・ウィンドウ制御を実現（XTest による外部偽装注入を廃止）。
+- [x] **自律ウィンドウ管理**:
+  - `X11Wm::start_wm()` によるコンポジタ内蔵の X11 ウィンドウマネージャを実装。
 
 ### 機能拡張
 - [x] **Sixel プロトコル対応 (Broad Terminal Support)**:
