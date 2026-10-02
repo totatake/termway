@@ -21,6 +21,7 @@ flowchart LR
         FR10["FR-10: クリップボード共有 (OSC 52)"]
         FR11["FR-11: 描画最適化 (MIT-SHM)"]
         FR12["FR-12: Sixelプロトコル対応 & ピクセルパーフェクト追従"]
+        FR16["FR-16: Smithay Wayland コンポジタ & XWayland 統合"]
     end
 
     subgraph Verification["テスト検証 (Verification)"]
@@ -32,6 +33,7 @@ flowchart LR
         T_Damage["unit_damage_tracker<br/>(単体テスト)"]
         T_Key["unit_keyboard<br/>(単体テスト)"]
         T_Cursor["unit_cursor & pointer<br/>(単体テスト)"]
+        T_Comp["unit_compositor<br/>(単体テスト)"]
     end
 
     FR1 --> T_Kitty
@@ -51,6 +53,8 @@ flowchart LR
     FR9 --> T_Sys
     FR10 --> T_Cursor
     FR11 --> T_Sys
+    FR12 --> T_Term
+    FR16 --> T_Comp
 ```
 
 ---
@@ -120,6 +124,12 @@ flowchart LR
 - `test_damage_tracker_no_change`: 変化なしフレームにおける差分ゼロ（0件）検出検証
 - `test_damage_tracker_partial_change`: 特定タイルのみのピクセル変更に対する単一矩形抽出検証
 
+#### `tests/unit_compositor.rs`
+- `test_compositor_state_init`: Smithay Wayland コンポジタ状態（Compositor, XdgShell, Shm, Seat）初期化検証
+- `test_compositor_renderer_buffer`: Pixman オフスクリーン描画および RGBA カラーチャンネル配置検証
+- `test_xwayland_state_and_shell`: XWayland シェルおよび X11 サーフェス管理状態検証
+- `test_calloop_handle`: イベントループハンドルのライフタイム・クローン安全性検証
+
 ---
 
 ### 3.2 結合テスト (Integration Tests)
@@ -149,18 +159,24 @@ flowchart LR
 ```bash
 $ cargo test
    Compiling termway v0.1.0 (/path/to/termway)
-    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.39s
+    Finished `test` profile [unoptimized + debuginfo] target(s)
      Running tests/integration_pipeline.rs (2 tests) ... ok
      Running tests/system_e2e_gui.rs (1 test) ... ok
+     Running tests/unit_clipboard.rs (1 test) ... ok
+     Running tests/unit_compositor.rs (4 tests) ... ok
+     Running tests/unit_cursor.rs (1 test) ... ok
      Running tests/unit_damage_tracker.rs (3 tests) ... ok
      Running tests/unit_keyboard.rs (3 tests) ... ok
      Running tests/unit_kitty_encoder.rs (5 tests) ... ok
+     Running tests/unit_pointer.rs (1 test) ... ok
      Running tests/unit_sgr_mouse.rs (6 tests) ... ok
+     Running tests/unit_shm.rs (1 test) ... ok
+     Running tests/unit_sixel_encoder.rs (3 tests) ... ok
      Running tests/unit_terminal.rs (4 tests) ... ok
 
-test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.25s
+test result: ok. 34 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.65s
 ```
-全 27 テストが 100% 成功し、すべての要件定義項目が検証されました。
+全 34 テストが 100% 成功し、すべての要件定義項目が検証されました。
 
 ---
 
