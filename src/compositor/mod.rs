@@ -36,6 +36,7 @@ pub struct TermwayCompositor {
     socket_name: String,
     x11_display: Option<String>,
     input_buffer: Vec<u8>,
+    pending_command: Option<Vec<String>>,
 }
 
 impl TermwayCompositor {
@@ -102,33 +103,9 @@ impl TermwayCompositor {
             }
         };
 
-        // 6. Spawn child client process if command provided
-        let client_child = if !config.command.is_empty() {
-            let mut cmd = Command::new(&config.command[0]);
-            if config.command.len() > 1 {
-                cmd.args(&config.command[1..]);
-            }
-            cmd.env("WAYLAND_DISPLAY", &socket_name);
-            cmd.env("GDK_BACKEND", "wayland");
-            cmd.env("QT_QPA_PLATFORM", "wayland");
-            cmd.env("CLUTTER_BACKEND", "wayland");
-            cmd.env("SDL_VIDEODRIVER", "wayland");
-            if let Some(ref disp) = x11_display {
-                cmd.env("DISPLAY", disp);
-                // Give XWayland a moment to initialize before spawning an X11 app
-                std::thread::sleep(std::time::Duration::from_millis(500));
-            }
-
-            match cmd.spawn() {
-                Ok(child) => {
-                    eprintln!("[termway] Spawned client: {:?}", config.command);
-                    Some(child)
-                }
-                Err(e) => {
-                    eprintln!("[termway] Failed to spawn client {:?}: {}", config.command, e);
-                    None
-                }
-            }
+        // 6. We will spawn the child process inside `run()` to avoid blocking the Wayland event loop.
+        let pending_command = if !config.command.is_empty() {
+            Some(config.command.clone())
         } else {
             None
         };
@@ -139,7 +116,8 @@ impl TermwayCompositor {
             state,
             renderer,
             backend,
-            client_child,
+            client_child: None,
+            pending_command,
             xwayland,
             socket_name,
             x11_display,
@@ -162,7 +140,36 @@ impl TermwayCompositor {
         let mut chunk = [0u8; 512];
         let stdin = io::stdin();
 
+        let mut loop_count = 0;
         while self.state.running {
+            loop_count += 1;
+            // Spawn pending command after 5 iterations (50ms) to ensure Wayland globals are negotiated
+            if loop_count == 5 {
+                if let Some(cmd_args) = self.pending_command.take() {
+                    let mut cmd = Command::new(&cmd_args[0]);
+                    if cmd_args.len() > 1 {
+                        cmd.args(&cmd_args[1..]);
+                    }
+                    cmd.env("WAYLAND_DISPLAY", &self.socket_name);
+                    cmd.env("GDK_BACKEND", "wayland");
+                    cmd.env("QT_QPA_PLATFORM", "wayland");
+                    cmd.env("CLUTTER_BACKEND", "wayland");
+                    cmd.env("SDL_VIDEODRIVER", "wayland");
+                    if let Some(ref disp) = self.x11_display {
+                        cmd.env("DISPLAY", disp);
+                    }
+                    match cmd.spawn() {
+                        Ok(child) => {
+                            eprintln!("[termway] Spawned client: {:?}", cmd_args);
+                            self.client_child = Some(child);
+                        }
+                        Err(e) => {
+                            eprintln!("[termway] Failed to spawn client {:?}: {}", cmd_args, e);
+                        }
+                    }
+                }
+            }
+
             // A. Check if client process exited
             if let Some(ref mut child) = self.client_child {
                 match child.try_wait() {
