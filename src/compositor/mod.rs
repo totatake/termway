@@ -115,6 +115,8 @@ impl TermwayCompositor {
             cmd.env("SDL_VIDEODRIVER", "wayland");
             if let Some(ref disp) = x11_display {
                 cmd.env("DISPLAY", disp);
+                // Give XWayland a moment to initialize before spawning an X11 app
+                std::thread::sleep(std::time::Duration::from_millis(500));
             }
 
             match cmd.spawn() {
