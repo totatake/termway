@@ -169,8 +169,30 @@ impl TermwayCompositor {
         let loop_handle = event_loop.handle();
 
         if let Some(xwayland) = self.xwayland_source.take() {
-            let _ = loop_handle.insert_source(xwayland, |event, _, state| {
-                // Poll XWM events
+            let client = self._xwayland_client.clone().unwrap();
+            let handle = loop_handle.clone();
+            let _ = loop_handle.insert_source(xwayland, move |event, _, state| {
+                match event {
+                    smithay::xwayland::XWaylandEvent::Ready {
+                        x11_socket,
+                        display_number: _,
+                    } => {
+                        eprintln!("[termway] XWayland ready, starting XWM...");
+                        if let Ok(wm) = smithay::xwayland::xwm::X11Wm::start_wm(
+                            handle.clone(),
+                            x11_socket,
+                            client.clone(),
+                        ) {
+                            state.xwm = Some(wm);
+                            eprintln!("[termway] XWM started successfully.");
+                        } else {
+                            eprintln!("[termway] Failed to start XWM.");
+                        }
+                    }
+                    smithay::xwayland::XWaylandEvent::Error => {
+                        eprintln!("[termway] XWayland encountered an error.");
+                    }
+                }
             });
         }
 
@@ -262,6 +284,11 @@ impl TermwayCompositor {
                     let time = self.state.start_time.elapsed().as_millis() as u32;
                     for window in &self.state.windows {
                         send_frames_surface_tree(window.wl_surface(), time);
+                    }
+                    for window in &self.state.x11_windows {
+                        if let Some(surface) = window.wl_surface() {
+                            send_frames_surface_tree(&surface, time);
+                        }
                     }
                 }
                 self.state.dirty = false;
