@@ -25,11 +25,16 @@ impl XwmHandler for TermwayState {
         self.xwm.as_mut().expect("X11Wm not initialized")
     }
 
-    fn new_window(&mut self, _xwm: XwmId, _window: X11Surface) {}
-    fn new_override_redirect_window(&mut self, _xwm: XwmId, _window: X11Surface) {}
+    fn new_window(&mut self, _xwm: XwmId, _window: X11Surface) {
+    }
+    fn new_override_redirect_window(&mut self, _xwm: XwmId, _window: X11Surface) {
+    }
 
     fn map_window_request(&mut self, _xwm: XwmId, window: X11Surface) {
+        // XWayland が自動的にサイズ決定するので、ここで geometry を上書きしない
         let _ = window.set_mapped(true);
+        // フォーカスを取得してマウス・キーボードイベントがウィンドウへ届くようにする
+        let _ = window.set_activated(true);
         if !self.x11_windows.iter().any(|w| w == &window) {
             self.x11_windows.push(window);
         }
@@ -58,9 +63,19 @@ impl XwmHandler for TermwayState {
         h: Option<u32>,
         _reorder: Option<Reorder>,
     ) {
+        // アプリが要求した x/y/w/h を尊重する。
+        // w/h が未指定の場合はターミナル全体サイズを強制せず、現在のジオメトリをそのまま保つ。
+        let current = window.geometry();
+        let (cur_w, cur_h) = (current.size.w as u32, current.size.h as u32);
+        // ジオメトリが 0 の場合（初期化直後）はアプリのデフォルトサイズとして 300 を使う
+        let (cur_w, cur_h) = (
+            if cur_w == 0 { 300 } else { cur_w },
+            if cur_h == 0 { 300 } else { cur_h },
+        );
+
         let rect = Rectangle::new(
             (x.unwrap_or(0), y.unwrap_or(0)).into(),
-            ((w.unwrap_or(self.width)) as i32, (h.unwrap_or(self.height)) as i32).into(),
+            (w.unwrap_or(cur_w) as i32, h.unwrap_or(cur_h) as i32).into(),
         );
         let _ = window.configure(rect);
         self.dirty = true;

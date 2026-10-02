@@ -32,12 +32,17 @@ pub struct TermwayCompositor {
     backend: TerminalBackend,
     socket_name: String,
     x11_display: Option<String>,
+    // XTest 経由で X11 にマウス・キーボードイベントを注入するための Xlib Display 接続
+    x11_xlib_display: *mut x11::xlib::Display,
     input_buffer: Vec<u8>,
     pending_command: Option<Vec<String>>,
     client_child: Option<Child>,
     xwayland_source: Option<smithay::xwayland::XWayland>,
     _xwayland_client: Option<smithay::reexports::wayland_server::Client>,
 }
+
+// x11_xlib_display は FFI ポインタだが、シングルスレッドで使用するため Send を明示的に実装する
+unsafe impl Send for TermwayCompositor {}
 
 impl TermwayCompositor {
     pub fn new(config: EngineConfig) -> Result<Self, Box<dyn std::error::Error>> {
@@ -146,6 +151,8 @@ impl TermwayCompositor {
             _xwayland_client,
             socket_name,
             x11_display,
+            // XWayland が起動している場合は Xlib で接続し、XTest 注入に使う
+            x11_xlib_display: std::ptr::null_mut(),
             input_buffer: Vec::with_capacity(1024),
         })
     }
@@ -202,9 +209,9 @@ impl TermwayCompositor {
             
             // Dispatch calloop (processes XWM and other registered sources) with 0 timeout
             let _ = event_loop.dispatch(Some(std::time::Duration::ZERO), &mut self.state);
-            loop_count += 1;
-            // Spawn pending command after 5 iterations (50ms) to ensure Wayland globals are negotiated
-            if loop_count == 5 {
+            
+            // Spawn pending command after a few iterations to ensure Wayland globals are negotiated
+            if loop_count >= 5 {
                 if let Some(cmd_args) = self.pending_command.take() {
                     let mut cmd = Command::new(&cmd_args[0]);
                     if cmd_args.len() > 1 {
@@ -222,6 +229,17 @@ impl TermwayCompositor {
                         Ok(child) => {
                             eprintln!("[termway] Spawned client: {:?}", cmd_args);
                             self.client_child = Some(child);
+
+                            // クライアント起動後、XTest でマウスを注入するために Xlib 接続をオープンする
+                            if self.x11_xlib_display.is_null() {
+                                if let Some(ref disp) = self.x11_display {
+                                    let disp_cstr = std::ffi::CString::new(disp.as_str()).unwrap();
+                                    let xdpy = unsafe { x11::xlib::XOpenDisplay(disp_cstr.as_ptr()) };
+                                    if !xdpy.is_null() {
+                                        self.x11_xlib_display = xdpy;
+                                    }
+                                }
+                            }
                         }
                         Err(e) => {
                             eprintln!("[termway] Failed to spawn client {:?}: {}", cmd_args, e);
@@ -281,6 +299,7 @@ impl TermwayCompositor {
                 if let Ok(pixels) = self.renderer.render(&self.state) {
                     let _ = self.backend.render_pixels(pixels, w, h);
 
+
                     let time = self.state.start_time.elapsed().as_millis() as u32;
                     for window in &self.state.windows {
                         send_frames_surface_tree(window.wl_surface(), time);
@@ -289,6 +308,9 @@ impl TermwayCompositor {
                         if let Some(surface) = window.wl_surface() {
                             send_frames_surface_tree(&surface, time);
                         }
+                    }
+                    for surface in &self.state.unassociated_surfaces {
+                        send_frames_surface_tree(surface, time);
                     }
                 }
                 self.state.dirty = false;
@@ -332,43 +354,97 @@ impl TermwayCompositor {
         let serial = SERIAL_COUNTER.next_serial();
         let time = self.state.start_time.elapsed().as_millis() as u32;
 
-        let px = ev.col as f64 * (self.renderer.width() as f64 / 80.0);
-        let py = ev.row as f64 * (self.renderer.height() as f64 / 24.0);
+        // ターミナル全体の解像度（ピクセル）でスケーリングする。
+        // col/row は 1 始まりのセル座標なので 0 始まりに変換してから比率を掛ける。
+        let w = self.renderer.width() as f64;
+        let h = self.renderer.height() as f64;
+        let px = (ev.col.saturating_sub(1)) as f64 / self.state.width as f64 * w;
+        let py = (ev.row.saturating_sub(1)) as f64 / self.state.height as f64 * h;
         let loc: Point<f64, Logical> = Point::from((px, py));
 
-        // Focus toplevel window under pointer
-        let focus = self.state.windows.first().map(|w| (w.wl_surface().clone(), Point::from((0.0, 0.0))));
+        // X11 アプリが存在する場合は XTest 経由で直接 X11 にマウスイベントを注入する。
+        // XWayland は X11 ディスプレイ上のポインタ位置をそのまま xeyes 等に伝えるため、
+        // Wayland ポインタイベント（surface association が None になりがち）より確実。
+        let has_x11 = !self.state.x11_windows.is_empty()
+            || !self.state.unassociated_surfaces.is_empty();
+
+        if has_x11 && !self.x11_xlib_display.is_null() {
+            let xdpy = self.x11_xlib_display;
+            unsafe {
+                match ev.action {
+                    MouseAction::Move | MouseAction::Drag => {
+                        x11::xtest::XTestFakeMotionEvent(
+                            xdpy,
+                            -1,
+                            px as i32,
+                            py as i32,
+                            x11::xlib::CurrentTime,
+                        );
+                        x11::xlib::XFlush(xdpy);
+                    }
+                    MouseAction::Press => {
+                        x11::xtest::XTestFakeMotionEvent(
+                            xdpy, -1, px as i32, py as i32, x11::xlib::CurrentTime,
+                        );
+                        let btn: u32 = match ev.button {
+                            MouseButton::Left => 1,
+                            MouseButton::Middle => 2,
+                            MouseButton::Right => 3,
+                            MouseButton::WheelUp => 4,
+                            MouseButton::WheelDown => 5,
+                            _ => 1,
+                        };
+                        x11::xtest::XTestFakeButtonEvent(xdpy, btn, 1, x11::xlib::CurrentTime);
+                        x11::xlib::XFlush(xdpy);
+                    }
+                    MouseAction::Release => {
+                        let btn: u32 = match ev.button {
+                            MouseButton::Left => 1,
+                            MouseButton::Middle => 2,
+                            MouseButton::Right => 3,
+                            _ => 1,
+                        };
+                        x11::xtest::XTestFakeButtonEvent(xdpy, btn, 0, x11::xlib::CurrentTime);
+                        x11::xlib::XFlush(xdpy);
+                    }
+                }
+            }
+            return;
+        }
+
+        // X11 アプリがない場合（ネイティブ Wayland アプリ）は Wayland ポインタイベントを使う。
+        // unassociated_surfaces を優先し、なければ xdg_shell ウィンドウを使う。
+        let focus = if let Some(surface) = self.state.unassociated_surfaces.first() {
+            Some((surface.clone(), Point::from((0.0_f64, 0.0_f64))))
+        } else if let Some(xwin) = self.state.x11_windows.first() {
+            xwin.wl_surface().map(|s| (s, Point::from((0.0_f64, 0.0_f64))))
+        } else {
+            self.state.windows.first().map(|w| (w.wl_surface().clone(), Point::from((0.0, 0.0))))
+        };
+
         let pointer = self.state.pointer.clone();
         let keyboard = self.state.keyboard.clone();
 
         match ev.action {
             MouseAction::Move | MouseAction::Drag => {
-                let motion = MotionEvent {
-                    location: loc,
-                    serial,
-                    time,
-                };
+                let motion = MotionEvent { location: loc, serial, time };
                 pointer.motion(&mut self.state, focus, &motion);
                 pointer.frame(&mut self.state);
             }
             MouseAction::Press => {
                 let btn = match ev.button {
-                    MouseButton::Left => 0x110,   // BTN_LEFT
-                    MouseButton::Middle => 0x112, // BTN_MIDDLE
-                    MouseButton::Right => 0x111,  // BTN_RIGHT
+                    MouseButton::Left => 0x110,
+                    MouseButton::Middle => 0x112,
+                    MouseButton::Right => 0x111,
                     _ => 0x110,
                 };
-                let btn_ev = ButtonEvent {
-                    serial,
-                    time,
-                    button: btn,
-                    state: ButtonState::Pressed,
-                };
+                let btn_ev = ButtonEvent { serial, time, button: btn, state: ButtonState::Pressed };
                 pointer.button(&mut self.state, &btn_ev);
                 pointer.frame(&mut self.state);
 
-                // Set keyboard focus on click
-                if let Some(window) = self.state.windows.first() {
+                if let Some(surface) = self.state.unassociated_surfaces.first().cloned() {
+                    keyboard.set_focus(&mut self.state, Some(surface), serial);
+                } else if let Some(window) = self.state.windows.first() {
                     let surface = window.wl_surface().clone();
                     keyboard.set_focus(&mut self.state, Some(surface), serial);
                 }
@@ -380,12 +456,7 @@ impl TermwayCompositor {
                     MouseButton::Right => 0x111,
                     _ => 0x110,
                 };
-                let btn_ev = ButtonEvent {
-                    serial,
-                    time,
-                    button: btn,
-                    state: ButtonState::Released,
-                };
+                let btn_ev = ButtonEvent { serial, time, button: btn, state: ButtonState::Released };
                 pointer.button(&mut self.state, &btn_ev);
                 pointer.frame(&mut self.state);
             }

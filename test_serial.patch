@@ -1,0 +1,9 @@
+--- src/compositor/xwayland.rs
++++ src/compositor/xwayland.rs
+@@ -34,6 +34,7 @@
+ 
+     fn map_window_request(&mut self, _xwm: XwmId, window: X11Surface) {
+         eprintln!("[termway] XWM: map_window_request");
++        eprintln!("[termway] XWM: serial = {:?}", window.wl_surface_serial());
+         
+         let rect = Rectangle::new(

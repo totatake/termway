@@ -69,6 +69,17 @@ impl TermwayRenderer {
                 elements.extend(elems);
             }
         }
+        for surface in &state.unassociated_surfaces {
+            let elems = render_elements_from_surface_tree(
+                &mut self.renderer,
+                surface,
+                (0, 0),
+                1.0,
+                1.0,
+                Kind::Unspecified,
+            );
+            elements.extend(elems);
+        }
 
         // 2. Bind and render to offscreen pixman buffer
         let mut target = self.renderer.bind(&mut self.buffer)?;

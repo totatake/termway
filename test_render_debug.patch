@@ -1,0 +1,17 @@
+--- src/compositor/renderer.rs
++++ src/compositor/renderer.rs
+@@ -48,6 +48,9 @@
+ 
+         for xwindow in &state.x11_windows {
+             if let Some(surface) = xwindow.wl_surface() {
++                eprintln!("[termway] x11 window has surface!");
+                 let elems = render_elements_from_surface_tree(
+                     &mut self.renderer,
+                     &surface,
+@@ -58,6 +61,8 @@
+                 );
+                 elements.extend(elems);
++            } else {
++                eprintln!("[termway] x11 window has NO surface!");
+             }
+         }

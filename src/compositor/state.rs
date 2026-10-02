@@ -61,6 +61,7 @@ pub struct TermwayState {
 
     pub windows: Vec<ToplevelSurface>,
     pub x11_windows: Vec<smithay::xwayland::X11Surface>,
+    pub unassociated_surfaces: Vec<WlSurface>,
     pub xwayland_shell_state: smithay::wayland::xwayland_shell::XWaylandShellState,
     pub xwm: Option<smithay::xwayland::xwm::X11Wm>,
     pub dirty: bool,
@@ -115,6 +116,7 @@ impl TermwayState {
             data_device_state,
             windows: Vec::new(),
             x11_windows: Vec::new(),
+            unassociated_surfaces: Vec::new(),
             xwayland_shell_state,
             xwm: None,
             dirty: true,
@@ -144,6 +146,25 @@ impl CompositorHandler for TermwayState {
     fn commit(&mut self, surface: &WlSurface) {
         smithay::backend::renderer::utils::on_commit_buffer_handler::<Self>(surface);
         self.dirty = true;
+        
+        let mut tracked = false;
+        for w in &self.windows {
+            if w.wl_surface() == surface {
+                tracked = true; break;
+            }
+        }
+        for w in &self.x11_windows {
+            if let Some(s) = w.wl_surface() {
+                if &s == surface {
+                    tracked = true; break;
+                }
+            }
+        }
+        if !tracked {
+            if !self.unassociated_surfaces.iter().any(|s| s == surface) {
+                self.unassociated_surfaces.push(surface.clone());
+            }
+        }
     }
 }
 

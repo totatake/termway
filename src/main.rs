@@ -30,6 +30,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
     let mut config = EngineConfig::default();
 
+    // 端末が Kitty かどうかを環境変数で判定する。
+    // KITTY_WINDOW_ID が存在しない場合は Sixel をデフォルトで有効にする。
+    // --sixel フラグで明示的に上書きすることも引き続きできる。
+    if std::env::var_os("KITTY_WINDOW_ID").is_none() {
+        config.use_sixel = true;
+    }
+
     let mut i = 1;
     let mut run_demo = false;
     let mut use_wayland = false;
