@@ -63,19 +63,10 @@ impl XwmHandler for TermwayState {
         h: Option<u32>,
         _reorder: Option<Reorder>,
     ) {
-        // アプリが要求した x/y/w/h を尊重する。
-        // w/h が未指定の場合はターミナル全体サイズを強制せず、現在のジオメトリをそのまま保つ。
-        let current = window.geometry();
-        let (cur_w, cur_h) = (current.size.w as u32, current.size.h as u32);
-        // ジオメトリが 0 の場合（初期化直後）はアプリのデフォルトサイズとして 300 を使う
-        let (cur_w, cur_h) = (
-            if cur_w == 0 { 300 } else { cur_w },
-            if cur_h == 0 { 300 } else { cur_h },
-        );
-
+        // アプリが要求したサイズを優先し、指定がなければターミナル全体サイズを使う。
         let rect = Rectangle::new(
             (x.unwrap_or(0), y.unwrap_or(0)).into(),
-            (w.unwrap_or(cur_w) as i32, h.unwrap_or(cur_h) as i32).into(),
+            (w.unwrap_or(self.width) as i32, h.unwrap_or(self.height) as i32).into(),
         );
         let _ = window.configure(rect);
         self.dirty = true;
