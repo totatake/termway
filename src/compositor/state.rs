@@ -1,10 +1,14 @@
+use std::os::unix::io::OwnedFd;
 use smithay::{
-    delegate_compositor, delegate_seat, delegate_shm, delegate_xdg_shell,
+    delegate_compositor, delegate_data_device, delegate_output, delegate_seat, delegate_shm,
+    delegate_xdg_shell,
     input::{
         keyboard::KeyboardHandle,
         pointer::PointerHandle,
         Seat, SeatHandler, SeatState,
     },
+    output::{Mode, Output, PhysicalProperties, Scale, Subpixel},
+    reexports::wayland_protocols::xdg::shell::server::xdg_toplevel,
     reexports::wayland_server::{
         backend::{ClientData, ClientId, DisconnectReason},
         protocol::{
@@ -14,12 +18,17 @@ use smithay::{
         },
         Client, DisplayHandle,
     },
-    utils::Serial,
+    utils::{Serial, Transform},
     wayland::{
         buffer::BufferHandler,
         compositor::{
             with_surface_tree_downward, CompositorClientState, CompositorHandler, CompositorState,
             SurfaceAttributes, TraversalAction,
+        },
+        output::OutputHandler,
+        selection::{
+            data_device::{ClientDndGrabHandler, DataDeviceHandler, DataDeviceState, ServerDndGrabHandler},
+            SelectionHandler,
         },
         shell::xdg::{
             PopupSurface, PositionerState, ToplevelSurface, XdgShellHandler, XdgShellState,
@@ -27,7 +36,6 @@ use smithay::{
         shm::{ShmHandler, ShmState},
     },
 };
-use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
 
 #[derive(Default)]
 pub struct ClientState {
@@ -47,6 +55,9 @@ pub struct TermwayState {
     pub seat: Seat<Self>,
     pub keyboard: KeyboardHandle<Self>,
     pub pointer: PointerHandle<Self>,
+
+    pub output: Output,
+    pub data_device_state: DataDeviceState,
 
     pub windows: Vec<ToplevelSurface>,
     pub x11_windows: Vec<smithay::xwayland::X11Surface>,
@@ -71,6 +82,27 @@ impl TermwayState {
         let keyboard = seat.add_keyboard(Default::default(), 200, 25).unwrap();
         let pointer = seat.add_pointer();
 
+        // Initialize output and advertise it to Wayland clients
+        let output = Output::new(
+            "termway-0".into(),
+            PhysicalProperties {
+                size: (200, 150).into(),
+                subpixel: Subpixel::HorizontalRgb,
+                make: "termway".into(),
+                model: "virtual-terminal".into(),
+            },
+        );
+        let _global = output.create_global::<Self>(dh);
+        output.change_current_state(
+            Some(Mode { size: (width as i32, height as i32).into(), refresh: 60000 }),
+            Some(Transform::Normal),
+            Some(Scale::Integer(1)),
+            Some((0, 0).into()),
+        );
+        output.set_preferred(Mode { size: (width as i32, height as i32).into(), refresh: 60000 });
+
+        let data_device_state = DataDeviceState::new::<Self>(dh);
+
         Self {
             compositor_state,
             xdg_shell_state,
@@ -79,6 +111,8 @@ impl TermwayState {
             seat,
             keyboard,
             pointer,
+            output,
+            data_device_state,
             windows: Vec::new(),
             x11_windows: Vec::new(),
             xwayland_shell_state,
@@ -155,6 +189,25 @@ impl SeatHandler for TermwayState {
     fn cursor_image(&mut self, _seat: &Seat<Self>, _image: smithay::input::pointer::CursorImageStatus) {}
 }
 
+// 6. OutputHandler
+impl OutputHandler for TermwayState {}
+
+// 7. SelectionHandler & DataDeviceHandler
+impl SelectionHandler for TermwayState {
+    type SelectionUserData = ();
+}
+
+impl DataDeviceHandler for TermwayState {
+    fn data_device_state(&self) -> &DataDeviceState {
+        &self.data_device_state
+    }
+}
+
+impl ClientDndGrabHandler for TermwayState {}
+impl ServerDndGrabHandler for TermwayState {
+    fn send(&mut self, _mime_type: String, _fd: OwnedFd, _seat: Seat<Self>) {}
+}
+
 pub fn send_frames_surface_tree(surface: &WlSurface, time: u32) {
     with_surface_tree_downward(
         surface,
@@ -180,3 +233,5 @@ delegate_compositor!(TermwayState);
 delegate_xdg_shell!(TermwayState);
 delegate_shm!(TermwayState);
 delegate_seat!(TermwayState);
+delegate_output!(TermwayState);
+delegate_data_device!(TermwayState);
