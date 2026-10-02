@@ -82,7 +82,7 @@ impl TermwayCompositor {
             std::iter::empty::<(String, String)>(),
             true,
             std::process::Stdio::null(),
-            std::process::Stdio::null(),
+            std::process::Stdio::inherit(),
             |_| (),
         ) {
             Ok((xwayland, client)) => {
