@@ -9,6 +9,7 @@ USAGE:
     termway [OPTIONS] [--] [COMMAND [ARGS...]]
 
 OPTIONS:
+    --wayland                 Use native Smithay Wayland Compositor instead of X11/Xvfb
     --width <PIXELS>          Virtual display width (default: auto from terminal)
     --height <PIXELS>         Virtual display height (default: auto from terminal)
     --fps <FPS>               Target frame rate (default: 30)
@@ -19,8 +20,8 @@ OPTIONS:
 
 EXAMPLES:
     termway --demo
+    termway --wayland -- weston-terminal
     termway --wm -- xclock
-    termway -- python3 my_gui_app.py
 "#
     );
 }
@@ -31,6 +32,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut i = 1;
     let mut run_demo = false;
+    let mut use_wayland = false;
 
     while i < args.len() {
         let arg = &args[i];
@@ -58,6 +60,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(1);
             }
             config.fps = args[i].parse()?;
+        } else if arg == "--wayland" {
+            use_wayland = true;
         } else if arg == "--sixel" {
             config.use_sixel = true;
         } else if arg == "--wm" {
@@ -126,10 +130,18 @@ root.mainloop()
         ];
     }
 
-    let mut engine = TermwayEngine::new(config);
-    if let Err(e) = engine.run() {
-        eprintln!("Error: {}", e);
-        std::process::exit(1);
+    if use_wayland {
+        let mut compositor = termway::compositor::TermwayCompositor::new(config)?;
+        if let Err(e) = compositor.run() {
+            eprintln!("Compositor Error: {}", e);
+            std::process::exit(1);
+        }
+    } else {
+        let mut engine = TermwayEngine::new(config);
+        if let Err(e) = engine.run() {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
+        }
     }
     
     Ok(())

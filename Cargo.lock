@@ -729,6 +729,7 @@ dependencies = [
  "image",
  "libc",
  "nix",
+ "pixman",
  "smithay",
  "x11",
 ]

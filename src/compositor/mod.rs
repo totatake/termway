@@ -1,0 +1,331 @@
+pub mod state;
+pub mod renderer;
+
+use std::io::{self, Read};
+use std::process::{Child, Command};
+use std::sync::Arc;
+
+use smithay::{
+    backend::input::{ButtonState, KeyState, Keycode},
+    input::{
+        keyboard::FilterResult,
+        pointer::{ButtonEvent, MotionEvent},
+    },
+    reexports::wayland_server::{Display, ListeningSocket},
+    utils::{Logical, Point, SERIAL_COUNTER},
+};
+
+use crate::backend::TerminalBackend;
+use crate::engine::EngineConfig;
+use crate::protocol::{KeyCode, KeyboardParser, MouseAction, MouseButton, SgrMouseParser};
+use crate::terminal::{RawModeGuard, TerminalSize};
+
+use self::renderer::TermwayRenderer;
+use self::state::{send_frames_surface_tree, ClientState, TermwayState};
+
+pub struct TermwayCompositor {
+    display: Display<TermwayState>,
+    listener: ListeningSocket,
+    state: TermwayState,
+    renderer: TermwayRenderer,
+    backend: TerminalBackend,
+    client_child: Option<Child>,
+    socket_name: String,
+    input_buffer: Vec<u8>,
+}
+
+impl TermwayCompositor {
+    pub fn new(config: EngineConfig) -> Result<Self, Box<dyn std::error::Error>> {
+        let term_size = TerminalSize::query().unwrap_or_else(|_| TerminalSize::fallback(80, 24));
+        let width = config.width.unwrap_or(term_size.width_px as u32).max(320);
+        let height = config.height.unwrap_or(term_size.height_px as u32).max(240);
+
+        let display = Display::new()?;
+        let dh = display.handle();
+
+        // 1. Create Wayland listening socket
+        let (listener, socket_name) = {
+            let mut id = 1;
+            loop {
+                let name = format!("wayland-{}", id);
+                if let Ok(socket) = ListeningSocket::bind(&name) {
+                    break (socket, name);
+                }
+                id += 1;
+                if id > 32 {
+                    return Err("Failed to find free wayland socket name".into());
+                }
+            }
+        };
+
+        eprintln!("[termway] Headless Wayland Compositor (Smithay)");
+        eprintln!("[termway] Socket: WAYLAND_DISPLAY={}", socket_name);
+        eprintln!("[termway] Resolution: {}x{}", width, height);
+
+        // 2. Initialize Compositor State
+        let state = TermwayState::new(&dh, width, height);
+
+        // 3. Initialize Pixman Offscreen Renderer
+        let renderer = TermwayRenderer::new(width, height)?;
+
+        // 4. Initialize Terminal Output Backend
+        let backend = TerminalBackend::new(term_size, config.use_sixel);
+
+        // 5. Spawn child client process if command provided
+        let client_child = if !config.command.is_empty() {
+            let mut cmd = Command::new(&config.command[0]);
+            if config.command.len() > 1 {
+                cmd.args(&config.command[1..]);
+            }
+            cmd.env("WAYLAND_DISPLAY", &socket_name);
+            cmd.env("GDK_BACKEND", "wayland");
+            cmd.env("QT_QPA_PLATFORM", "wayland");
+            cmd.env("CLUTTER_BACKEND", "wayland");
+            cmd.env("SDL_VIDEODRIVER", "wayland");
+
+            match cmd.spawn() {
+                Ok(child) => {
+                    eprintln!("[termway] Spawned client: {:?}", config.command);
+                    Some(child)
+                }
+                Err(e) => {
+                    eprintln!("[termway] Failed to spawn client {:?}: {}", config.command, e);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        Ok(Self {
+            display,
+            listener,
+            state,
+            renderer,
+            backend,
+            client_child,
+            socket_name,
+            input_buffer: Vec::with_capacity(1024),
+        })
+    }
+
+    pub fn socket_name(&self) -> &str {
+        &self.socket_name
+    }
+
+    pub fn run(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        // Raw mode guard ensures terminal is restored upon exit
+        let _guard = RawModeGuard::enter()?;
+
+        let mut chunk = [0u8; 512];
+        let stdin = io::stdin();
+
+        while self.state.running {
+            // A. Check if client process exited
+            if let Some(ref mut child) = self.client_child {
+                match child.try_wait() {
+                    Ok(Some(_status)) => break,
+                    Ok(None) => {}
+                    Err(_) => break,
+                }
+            }
+
+            // B. Accept new Wayland clients
+            while let Ok(Some(stream)) = self.listener.accept() {
+                let _ = self
+                    .display
+                    .handle()
+                    .insert_client(stream, Arc::new(ClientState::default()));
+            }
+
+            // C. Non-blocking read from terminal stdin
+            let mut poll_fds = [nix::poll::PollFd::new(
+                std::os::fd::AsFd::as_fd(&stdin),
+                nix::poll::PollFlags::POLLIN,
+            )];
+
+            if let Ok(res) = nix::poll::poll(&mut poll_fds, nix::poll::PollTimeout::try_from(10).unwrap()) {
+                if res > 0 {
+                    if let Some(revents) = poll_fds[0].revents() {
+                        if revents.contains(nix::poll::PollFlags::POLLIN) {
+                            if let Ok(n) = stdin.lock().read(&mut chunk) {
+                                if n > 0 {
+                                    self.input_buffer.extend_from_slice(&chunk[..n]);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // D. Process terminal input events
+            self.process_terminal_input();
+
+            // E. Dispatch Wayland client protocol messages
+            let _ = self.display.dispatch_clients(&mut self.state);
+            let _ = self.display.flush_clients();
+
+            // F. Render if damaged
+            if self.state.dirty {
+                let w = self.renderer.width();
+                let h = self.renderer.height();
+                if let Ok(pixels) = self.renderer.render(&self.state) {
+                    let _ = self.backend.render_pixels(pixels, w, h);
+
+                    let time = self.state.start_time.elapsed().as_millis() as u32;
+                    for window in &self.state.windows {
+                        send_frames_surface_tree(window.wl_surface(), time);
+                    }
+                }
+                self.state.dirty = false;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn process_terminal_input(&mut self) {
+        while !self.input_buffer.is_empty() {
+            // 1. Try parsing SGR mouse sequence
+            if let Ok(input_str) = std::str::from_utf8(&self.input_buffer) {
+                if let Some((mouse_ev, consumed)) = SgrMouseParser::parse(input_str) {
+                    self.dispatch_mouse_event(&mouse_ev);
+                    self.input_buffer.drain(..consumed);
+                    continue;
+                }
+            }
+
+            // 2. Try parsing keyboard sequence
+            if let Some((key_ev, consumed)) = KeyboardParser::parse(&self.input_buffer) {
+                if key_ev.code == KeyCode::Ctrl('q') {
+                    self.state.running = false;
+                    return;
+                }
+                self.dispatch_key_event(key_ev.code);
+                self.input_buffer.drain(..consumed);
+                continue;
+            }
+
+            if self.input_buffer.len() > 32 {
+                self.input_buffer.remove(0);
+            } else {
+                break;
+            }
+        }
+    }
+
+    fn dispatch_mouse_event(&mut self, ev: &crate::protocol::MouseEvent) {
+        let serial = SERIAL_COUNTER.next_serial();
+        let time = self.state.start_time.elapsed().as_millis() as u32;
+
+        let px = ev.col as f64 * (self.renderer.width() as f64 / 80.0);
+        let py = ev.row as f64 * (self.renderer.height() as f64 / 24.0);
+        let loc: Point<f64, Logical> = Point::from((px, py));
+
+        // Focus toplevel window under pointer
+        let focus = self.state.windows.first().map(|w| (w.wl_surface().clone(), Point::from((0.0, 0.0))));
+        let pointer = self.state.pointer.clone();
+        let keyboard = self.state.keyboard.clone();
+
+        match ev.action {
+            MouseAction::Move | MouseAction::Drag => {
+                let motion = MotionEvent {
+                    location: loc,
+                    serial,
+                    time,
+                };
+                pointer.motion(&mut self.state, focus, &motion);
+                pointer.frame(&mut self.state);
+            }
+            MouseAction::Press => {
+                let btn = match ev.button {
+                    MouseButton::Left => 0x110,   // BTN_LEFT
+                    MouseButton::Middle => 0x112, // BTN_MIDDLE
+                    MouseButton::Right => 0x111,  // BTN_RIGHT
+                    _ => 0x110,
+                };
+                let btn_ev = ButtonEvent {
+                    serial,
+                    time,
+                    button: btn,
+                    state: ButtonState::Pressed,
+                };
+                pointer.button(&mut self.state, &btn_ev);
+                pointer.frame(&mut self.state);
+
+                // Set keyboard focus on click
+                if let Some(window) = self.state.windows.first() {
+                    let surface = window.wl_surface().clone();
+                    keyboard.set_focus(&mut self.state, Some(surface), serial);
+                }
+            }
+            MouseAction::Release => {
+                let btn = match ev.button {
+                    MouseButton::Left => 0x110,
+                    MouseButton::Middle => 0x112,
+                    MouseButton::Right => 0x111,
+                    _ => 0x110,
+                };
+                let btn_ev = ButtonEvent {
+                    serial,
+                    time,
+                    button: btn,
+                    state: ButtonState::Released,
+                };
+                pointer.button(&mut self.state, &btn_ev);
+                pointer.frame(&mut self.state);
+            }
+        }
+    }
+
+    fn dispatch_key_event(&mut self, code: KeyCode) {
+        let serial = SERIAL_COUNTER.next_serial();
+        let time = self.state.start_time.elapsed().as_millis() as u32;
+
+        // Map standard keys to Linux evdev keycodes
+        let evdev_code: u32 = match code {
+            KeyCode::Char(c) => match c.to_ascii_lowercase() {
+                'a' => 30, 'b' => 48, 'c' => 46, 'd' => 32, 'e' => 18,
+                'f' => 33, 'g' => 34, 'h' => 35, 'i' => 23, 'j' => 36,
+                'k' => 37, 'l' => 38, 'm' => 50, 'n' => 49, 'o' => 24,
+                'p' => 25, 'q' => 16, 'r' => 19, 's' => 31, 't' => 20,
+                'u' => 22, 'v' => 47, 'w' => 17, 'x' => 45, 'y' => 21,
+                'z' => 44, '1' => 2,  '2' => 3,  '3' => 4,  '4' => 5,
+                '5' => 6,  '6' => 7,  '7' => 8,  '8' => 9,  '9' => 10,
+                '0' => 11, ' ' => 57, '\n' | '\r' => 28, '\t' => 15,
+                _ => 30,
+            },
+            KeyCode::Enter => 28,
+            KeyCode::Backspace => 14,
+            KeyCode::Tab => 15,
+            KeyCode::Escape => 1,
+            KeyCode::Up => 103,
+            KeyCode::Down => 108,
+            KeyCode::Left => 105,
+            KeyCode::Right => 106,
+            _ => return,
+        };
+
+        let key = Keycode::new(evdev_code);
+        let keyboard = self.state.keyboard.clone();
+
+        // Send Press then Release
+        keyboard.input::<(), _>(
+            &mut self.state,
+            key,
+            KeyState::Pressed,
+            serial,
+            time,
+            |_, _, _| FilterResult::Forward,
+        );
+        let release_serial = SERIAL_COUNTER.next_serial();
+        keyboard.input::<(), _>(
+            &mut self.state,
+            key,
+            KeyState::Released,
+            release_serial,
+            time,
+            |_, _, _| FilterResult::Forward,
+        );
+    }
+}

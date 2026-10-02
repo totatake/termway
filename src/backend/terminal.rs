@@ -59,6 +59,31 @@ impl TerminalBackend {
         stdout.flush()
     }
 
+    pub fn render_pixels(&mut self, pixels: &[u8], width: u32, height: u32) -> io::Result<()> {
+        let mut stdout = io::stdout();
+
+        let overlay_text = "\x1b[40;37m [Ctrl-Q: Exit] \x1b[0m";
+        let overlay_row = self.term_size.rows;
+        let overlay_col = self.term_size.cols.saturating_sub(16).max(1);
+        let overlay_seq = format!("\x1b[{};{}H{}", overlay_row, overlay_col, overlay_text);
+
+        if self.use_sixel {
+            let encoded = SixelEncoder::encode_fullscreen_frame(pixels, width, height);
+            write!(stdout, "\x1b[H{}{}", encoded, overlay_seq)?;
+        } else {
+            let encoded = KittyEncoder::encode_fullscreen_frame(
+                pixels,
+                width,
+                height,
+                self.term_size.cols,
+                self.term_size.rows,
+                1,
+            );
+            write!(stdout, "{}{}", encoded, overlay_seq)?;
+        }
+        stdout.flush()
+    }
+
     pub fn poll_input(
         &mut self,
         injector: &mut XTestInjector,
