@@ -30,13 +30,13 @@ pub struct TermwayCompositor {
     state: TermwayState,
     renderer: TermwayRenderer,
     backend: TerminalBackend,
-    client_child: Option<Child>,
-    #[allow(dead_code)]
-    xwayland: Option<(smithay::xwayland::XWayland, smithay::reexports::wayland_server::Client)>,
     socket_name: String,
     x11_display: Option<String>,
     input_buffer: Vec<u8>,
     pending_command: Option<Vec<String>>,
+    client_child: Option<Child>,
+    xwayland_source: Option<smithay::xwayland::XWayland>,
+    _xwayland_client: Option<smithay::reexports::wayland_server::Client>,
 }
 
 impl TermwayCompositor {
@@ -80,7 +80,7 @@ impl TermwayCompositor {
         let (xwayland, x11_display) = match smithay::xwayland::XWayland::spawn(
             &dh,
             None,
-            std::iter::empty::<(String, String)>(),
+            std::iter::once((std::ffi::OsString::from("WAYLAND_DEBUG"), std::ffi::OsString::from("1"))),
             true,
             std::process::Stdio::null(),
             std::process::Stdio::inherit(),
@@ -110,6 +110,11 @@ impl TermwayCompositor {
             None
         };
 
+        let (xwayland_source, _xwayland_client) = match xwayland {
+            Some((source, client)) => (Some(source), Some(client)),
+            None => (None, None),
+        };
+
         Ok(Self {
             display,
             listener,
@@ -118,7 +123,8 @@ impl TermwayCompositor {
             backend,
             client_child: None,
             pending_command,
-            xwayland,
+            xwayland_source,
+            _xwayland_client,
             socket_name,
             x11_display,
             input_buffer: Vec::with_capacity(1024),
@@ -140,8 +146,21 @@ impl TermwayCompositor {
         let mut chunk = [0u8; 512];
         let stdin = io::stdin();
 
+        let mut event_loop = smithay::reexports::calloop::EventLoop::<TermwayState>::try_new()?;
+        let loop_handle = event_loop.handle();
+
+        if let Some(xwayland) = self.xwayland_source.take() {
+            let _ = loop_handle.insert_source(xwayland, |event, _, state| {
+                // Poll XWM events
+            });
+        }
+
         let mut loop_count = 0;
         while self.state.running {
+            loop_count += 1;
+            
+            // Dispatch calloop (processes XWM and other registered sources) with 0 timeout
+            let _ = event_loop.dispatch(Some(std::time::Duration::ZERO), &mut self.state);
             loop_count += 1;
             // Spawn pending command after 5 iterations (50ms) to ensure Wayland globals are negotiated
             if loop_count == 5 {
