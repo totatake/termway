@@ -5,6 +5,7 @@ pub mod xwayland;
 use std::io::{self, Read};
 use std::process::{Child, Command};
 use std::sync::Arc;
+use crate::terminal::winsize::WINCH_RECEIVED;
 
 use smithay::{
     backend::input::{ButtonState, KeyState, Keycode},
@@ -217,6 +218,29 @@ impl TermwayCompositor {
             
             // Dispatch calloop (processes XWM and other registered sources) with 0 timeout
             let _ = event_loop.dispatch(Some(std::time::Duration::ZERO), &mut self.state);
+            
+            if WINCH_RECEIVED.swap(false, std::sync::atomic::Ordering::Relaxed) {
+                if let Ok(new_size) = TerminalSize::query() {
+                    self.term_cols = new_size.cols;
+                    self.term_rows = new_size.rows;
+                    self.state.width = new_size.width_px as u32;
+                    self.state.height = new_size.height_px as u32;
+                    
+                    let new_mode = smithay::output::Mode { 
+                        size: (self.state.width as i32, self.state.height as i32).into(), 
+                        refresh: 60000 
+                    };
+                    self.state.output.change_current_state(Some(new_mode), None, None, None);
+                    
+                    for window in &self.state.windows {
+                        window.with_pending_state(|state| {
+                            state.size = Some((self.state.width as i32, self.state.height as i32).into());
+                        });
+                        window.send_configure();
+                    }
+                    self.state.dirty = true;
+                }
+            }
             
             // Spawn pending command after Wayland globals are advertised and XWayland (if present) is ready
             let xwayland_is_ready = self.state.xwayland_ready || self.x11_display.is_none();

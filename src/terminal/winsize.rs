@@ -1,4 +1,17 @@
 use std::os::fd::AsRawFd;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+pub static WINCH_RECEIVED: AtomicBool = AtomicBool::new(false);
+
+pub fn setup_sigwinch() {
+    unsafe {
+        libc::signal(libc::SIGWINCH, handle_sigwinch as usize);
+    }
+}
+
+extern "C" fn handle_sigwinch(_: libc::c_int) {
+    WINCH_RECEIVED.store(true, Ordering::Relaxed);
+}
 
 /// Terminal window size and resolution information
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

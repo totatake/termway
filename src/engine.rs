@@ -5,6 +5,7 @@ use crate::terminal::{RawModeGuard, TerminalSize};
 use std::process::{Child, Command};
 use std::thread;
 use std::time::{Duration, Instant};
+use crate::terminal::winsize::WINCH_RECEIVED;
 
 #[derive(Debug, Clone)]
 pub struct EngineConfig {
@@ -133,6 +134,12 @@ impl TermwayEngine {
         let mut running = true;
 
         while running {
+            if WINCH_RECEIVED.swap(false, std::sync::atomic::Ordering::Relaxed) {
+                if let Ok(new_size) = TerminalSize::query() {
+                    backend.term_size = new_size;
+                }
+            }
+
             let frame_start = Instant::now();
 
             // A. Check if client process exited

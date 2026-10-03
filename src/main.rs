@@ -27,6 +27,7 @@ EXAMPLES:
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    termway::terminal::winsize::setup_sigwinch();
     let args: Vec<String> = env::args().collect();
     let mut config = EngineConfig::default();
 

@@ -234,6 +234,9 @@ termway はこれを以下のワークアラウンドで対処します：
 1. **`CompositorHandler::commit()` での収集**: `wl_surface()` が `None` の X11 サーフェスを `unassociated_surfaces: Vec<WlSurface>` リストに収集。
 2. **レンダラーでの描画対象化**: Pixman レンダラーは通常の関連付き Wayland サーフェスに加え、`unassociated_surfaces` リストの内容も描画対象とする。
 3. **マウス入力フォーカス**: Wayland ポインタの focus 設定時に `unassociated_surfaces.first()` を優先的に使用し、X11 アプリへのマウス入力を確保する。
+   *修正: XWayland が複数のダミーサーフェス（ルートウィンドウ等）を生成するため、対象を `unassociated_surfaces.last()` に変更し、実体のアプリ画面へフォーカスが当たるように改善しました。*
+4. **キーボードフォーカス**: 起動直後のフォーカス空振りを防ぐため、`commit` 時に新規の未関連付けサーフェスが登録された瞬間に `keyboard.set_focus()` を適用しています。
+5. **修飾キー (Shift) のタイミング**: 記号 (`:`, `!` 等) の入力時、Shift の押下・解放と実キーのイベントのタイムスタンプを意図的に 1ms ずつずらして送信し、XWayland 側での解釈ミス（順番の前後や Shift 抜け）を防止しています。
 
 ### 6.5 XOpenDisplay デッドロック問題と解決策
 

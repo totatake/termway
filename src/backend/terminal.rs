@@ -5,7 +5,7 @@ use crate::terminal::TerminalSize;
 use std::io::{self, Read, Write};
 
 pub struct TerminalBackend {
-    term_size: TerminalSize,
+    pub term_size: TerminalSize,
     input_buffer: Vec<u8>,
     use_sixel: bool,
 }
