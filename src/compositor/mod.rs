@@ -355,15 +355,21 @@ impl TermwayCompositor {
         let py = (ev.row.saturating_sub(1)) as f64 * cell_h;
         let loc: Point<f64, Logical> = Point::from((px, py));
 
-        // XWayland の wl_surface は association が壊れていることが多く wl_surface() が None になる。
-        // 代わりに commit フックで収集した unassociated_surfaces を優先してポインタ focus に使う。
-        // XWayland はここで受け取った Wayland ポインタイベントを X11 MotionNotify/Button に変換する。
-        let focus = if let Some(surface) = self.state.unassociated_surfaces.first() {
-            Some((surface.clone(), Point::from((0.0_f64, 0.0_f64))))
+        // 優先度：
+        // 1. Wayland ネイティブ Toplevel ウィンドウ (Gtkデモなど)
+        // 2. X11 関連ウィンドウ (XWayland)
+        // 3. その他関連付け前のサーフェス (unassociated_surfaces)
+        // focus の Point は「サーフェス原点のコンポジタ座標」。クライアントには
+        // (motion.location - 原点) が届く。ウィンドウは全画面 (0,0) 配置なので原点は (0,0)。
+        let origin: Point<f64, Logical> = Point::from((0.0_f64, 0.0_f64));
+        let focus = if let Some(window) = self.state.windows.first() {
+            Some((window.wl_surface().clone(), origin))
         } else if let Some(xwin) = self.state.x11_windows.first() {
-            xwin.wl_surface().map(|s| (s, Point::from((0.0_f64, 0.0_f64))))
+            xwin.wl_surface().map(|s| (s, origin))
+        } else if let Some(surface) = self.state.unassociated_surfaces.first() {
+            Some((surface.clone(), origin))
         } else {
-            self.state.windows.first().map(|w| (w.wl_surface().clone(), Point::from((0.0, 0.0))))
+            None
         };
 
         let pointer = self.state.pointer.clone();
@@ -386,10 +392,15 @@ impl TermwayCompositor {
                 pointer.button(&mut self.state, &btn_ev);
                 pointer.frame(&mut self.state);
 
-                if let Some(surface) = self.state.unassociated_surfaces.first().cloned() {
-                    keyboard.set_focus(&mut self.state, Some(surface), serial);
-                } else if let Some(window) = self.state.windows.first() {
-                    let surface = window.wl_surface().clone();
+                // キーボードフォーカスもポインタと同じ優先順位で選ぶ。
+                let kb_surface = if let Some(window) = self.state.windows.first() {
+                    Some(window.wl_surface().clone())
+                } else if let Some(xwin) = self.state.x11_windows.first() {
+                    xwin.wl_surface()
+                } else {
+                    self.state.unassociated_surfaces.first().cloned()
+                };
+                if let Some(surface) = kb_surface {
                     keyboard.set_focus(&mut self.state, Some(surface), serial);
                 }
             }

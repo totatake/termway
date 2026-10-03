@@ -147,6 +147,9 @@ impl CompositorHandler for TermwayState {
         smithay::backend::renderer::utils::on_commit_buffer_handler::<Self>(surface);
         self.dirty = true;
         
+        // 破棄済みサーフェスをフォーカス・描画候補から除く
+        self.unassociated_surfaces.retain(|s| smithay::reexports::wayland_server::Resource::is_alive(s));
+
         let mut tracked = false;
         for w in &self.windows {
             if w.wl_surface() == surface {
@@ -159,6 +162,13 @@ impl CompositorHandler for TermwayState {
                     tracked = true; break;
                 }
             }
+        }
+        // サブサーフェス（親あり）とカーソル画像は独立サーフェスとして扱わない
+        if smithay::wayland::compositor::get_parent(surface).is_some() {
+            tracked = true;
+        }
+        if smithay::wayland::compositor::get_role(surface) == Some("cursor_image") {
+            tracked = true;
         }
         if !tracked {
             if !self.unassociated_surfaces.iter().any(|s| s == surface) {
@@ -180,6 +190,8 @@ impl XdgShellHandler for TermwayState {
             state.size = Some((self.width as i32, self.height as i32).into());
         });
         surface.send_configure();
+        let wl = surface.wl_surface().clone();
+        self.unassociated_surfaces.retain(|s| s != &wl);
         self.windows.push(surface);
         self.dirty = true;
     }
