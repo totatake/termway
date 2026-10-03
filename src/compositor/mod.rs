@@ -194,16 +194,21 @@ impl TermwayCompositor {
                             client.clone(),
                         ) {
                             state.xwm = Some(wm);
+                            state.xwayland_ready = true;
                             log_line("[termway] XWM started successfully.");
                         } else {
+                            state.xwayland_ready = true;
                             log_line("[termway] Failed to start XWM.");
                         }
                     }
                     smithay::xwayland::XWaylandEvent::Error => {
+                        state.xwayland_ready = true;
                         log_line("[termway] XWayland encountered an error.");
                     }
                 }
             });
+        } else {
+            self.state.xwayland_ready = true;
         }
 
         let mut loop_count = 0;
@@ -213,18 +218,19 @@ impl TermwayCompositor {
             // Dispatch calloop (processes XWM and other registered sources) with 0 timeout
             let _ = event_loop.dispatch(Some(std::time::Duration::ZERO), &mut self.state);
             
-            // Spawn pending command after a few iterations to ensure Wayland globals are negotiated
-            if loop_count >= 5 {
+            // Spawn pending command after Wayland globals are advertised and XWayland (if present) is ready
+            let xwayland_is_ready = self.state.xwayland_ready || self.x11_display.is_none();
+            if loop_count >= 5 && xwayland_is_ready {
                 if let Some(cmd_args) = self.pending_command.take() {
                     let mut cmd = Command::new(&cmd_args[0]);
                     if cmd_args.len() > 1 {
                         cmd.args(&cmd_args[1..]);
                     }
                     cmd.env("WAYLAND_DISPLAY", &self.socket_name);
-                    cmd.env("GDK_BACKEND", "wayland");
-                    cmd.env("QT_QPA_PLATFORM", "wayland");
+                    cmd.env("GDK_BACKEND", "wayland,x11");
+                    cmd.env("QT_QPA_PLATFORM", "wayland;xcb");
                     cmd.env("CLUTTER_BACKEND", "wayland");
-                    cmd.env("SDL_VIDEODRIVER", "wayland");
+                    cmd.env("SDL_VIDEODRIVER", "wayland,x11");
                     if let Some(ref disp) = self.x11_display {
                         cmd.env("DISPLAY", disp);
                     }
