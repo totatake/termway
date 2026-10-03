@@ -440,7 +440,7 @@ impl TermwayCompositor {
 
     fn dispatch_key_event(&mut self, code: KeyCode) {
         let serial = SERIAL_COUNTER.next_serial();
-        let time = self.state.start_time.elapsed().as_millis() as u32;
+        let mut time = self.state.start_time.elapsed().as_millis() as u32;
 
         // Map standard keys to Linux evdev scancodes.
         // Also determine if Shift modifier is required (e.g. for uppercase letters or symbols).
@@ -535,6 +535,7 @@ impl TermwayCompositor {
                 time,
                 |_, _, _| FilterResult::Forward,
             );
+            time += 1;
         }
 
         // Send Press then Release
@@ -546,6 +547,7 @@ impl TermwayCompositor {
             time,
             |_, _, _| FilterResult::Forward,
         );
+        time += 1;
         let release_serial = SERIAL_COUNTER.next_serial();
         keyboard.input::<(), _>(
             &mut self.state,
@@ -555,6 +557,7 @@ impl TermwayCompositor {
             time,
             |_, _, _| FilterResult::Forward,
         );
+        time += 1;
 
         if need_shift {
             let shift_release_serial = SERIAL_COUNTER.next_serial();
