@@ -24,6 +24,11 @@ use crate::terminal::{RawModeGuard, TerminalSize};
 use self::renderer::TermwayRenderer;
 use self::state::{send_frames_surface_tree, ClientState, TermwayState};
 
+// Raw mode では `\n` だけだと行頭に戻らず表示が崩れるため、CRLF で出力する。
+fn log_line(msg: impl AsRef<str>) {
+    eprint!("{}\r\n", msg.as_ref());
+}
+
 pub struct TermwayCompositor {
     display: Display<TermwayState>,
     listener: ListeningSocket,
@@ -66,9 +71,9 @@ impl TermwayCompositor {
             }
         };
 
-        eprintln!("[termway] Headless Wayland Compositor (Smithay)");
-        eprintln!("[termway] Socket: WAYLAND_DISPLAY={}", socket_name);
-        eprintln!("[termway] Resolution: {}x{}", width, height);
+        log_line("[termway] Headless Wayland Compositor (Smithay)");
+        log_line(format!("[termway] Socket: WAYLAND_DISPLAY={}", socket_name));
+        log_line(format!("[termway] Resolution: {}x{}", width, height));
 
         // 2. Initialize Compositor State
         let state = TermwayState::new(&dh, width, height);
@@ -111,16 +116,16 @@ impl TermwayCompositor {
             Ok((xwayland, client)) => {
                 let disp_num = xwayland.display_number();
                 let disp_str = format!(":{}", disp_num);
-                eprintln!("[termway] XWayland initialized on DISPLAY={}", disp_str);
+                log_line(format!("[termway] XWayland initialized on DISPLAY={}", disp_str));
                 std::env::set_var("DISPLAY", &disp_str);
                 (Some((xwayland, client)), Some(disp_str))
             }
             Err(e) => {
-                eprintln!("[termway] XWayland not available: {}.", e);
-                eprintln!("[termway] Note: Running in native Wayland mode. Wayland applications will run natively.");
-                eprintln!("[termway]       Pure X11 applications (e.g. xeyes, xclock) require an X server.");
-                eprintln!("[termway]       To run pure X11 apps in this environment, run without '--wayland':");
-                eprintln!("[termway]           termway -- {}", config.command.first().map(|s| s.as_str()).unwrap_or("xeyes"));
+                log_line(format!("[termway] XWayland not available: {}.", e));
+                log_line("[termway] Note: Running in native Wayland mode. Wayland applications will run natively.");
+                log_line("[termway]       Pure X11 applications (e.g. xeyes, xclock) require an X server.");
+                log_line("[termway]       To run pure X11 apps in this environment, run without '--wayland':");
+                log_line(format!("[termway]           termway -- {}", config.command.first().map(|s| s.as_str()).unwrap_or("xeyes")));
                 (None, None)
             }
         };
@@ -182,20 +187,20 @@ impl TermwayCompositor {
                         x11_socket,
                         display_number: _,
                     } => {
-                        eprintln!("[termway] XWayland ready, starting XWM...");
+                        log_line("[termway] XWayland ready, starting XWM...");
                         if let Ok(wm) = smithay::xwayland::xwm::X11Wm::start_wm(
                             handle.clone(),
                             x11_socket,
                             client.clone(),
                         ) {
                             state.xwm = Some(wm);
-                            eprintln!("[termway] XWM started successfully.");
+                            log_line("[termway] XWM started successfully.");
                         } else {
-                            eprintln!("[termway] Failed to start XWM.");
+                            log_line("[termway] Failed to start XWM.");
                         }
                     }
                     smithay::xwayland::XWaylandEvent::Error => {
-                        eprintln!("[termway] XWayland encountered an error.");
+                        log_line("[termway] XWayland encountered an error.");
                     }
                 }
             });
@@ -225,11 +230,11 @@ impl TermwayCompositor {
                     }
                     match cmd.spawn() {
                         Ok(child) => {
-                            eprintln!("[termway] Spawned client: {:?}", cmd_args);
+                            log_line(format!("[termway] Spawned client: {:?}", cmd_args));
                             self.client_child = Some(child);
                         }
                         Err(e) => {
-                            eprintln!("[termway] Failed to spawn client {:?}: {}", cmd_args, e);
+                            log_line(format!("[termway] Failed to spawn client {:?}: {}", cmd_args, e));
                         }
                     }
                 }
