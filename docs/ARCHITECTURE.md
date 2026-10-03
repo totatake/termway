@@ -170,6 +170,36 @@ v1.0 では、外部の `Xvfb` および `openbox` を子プロセスとして�
 2. **X11 への制限**: 純粋な Wayland ネイティブアプリ（GTK4 や Wayland 専用ツール）が動作しない。
 3. **外部依存**: `Xvfb` や `openbox`、`libXtst` などの外部バイナリ・ライブラリの事前インストールが必要。
 
+```mermaid
+flowchart TD
+    subgraph X11["X11 アプリ層"]
+        App["GUI アプリケーション (xclock, gvim 等)"]
+    end
+
+    subgraph termway["termway (v1.0 / Xvfb Mode)"]
+        Xvfb["Xvfb サーバー (ディスプレイ :99)"]
+        Engine["TermwayEngine (30 FPS ループ)"]
+        Tracker["DamageTracker (差分計算)"]
+        Injector["XTest Injector (入力注入)"]
+        TermBackend["Terminal Backend (解像度・出力管理)"]
+    end
+
+    subgraph Terminal["端末エミュレータ"]
+        PTYIn["stdin (キー・SGRマウス・14t応答)"]
+        PTYOut["stdout (Kitty / Sixel 画像転送)"]
+    end
+
+    App -->|X11 描画| Xvfb
+    Engine -->|XGetImage| Xvfb
+    Xvfb -->|RGBA ピクセル| Engine
+    Engine -->|フレーム比較| Tracker
+    Tracker -->|差分領域のみ| TermBackend
+    TermBackend -->|エンコード| PTYOut
+    PTYIn -->|イベント解析| Engine
+    Engine -->|座標変換| Injector
+    Injector -->|XTestFakeEvent| Xvfb
+```
+
 ### 6.2 v2.0: Smithay ベースの自立型 Headless Wayland コンポジタ（実装済み）
 
 `--wayland` フラグにより、`termway` 自体が **Smithay (Rust製Waylandコンポジタフレームワーク)** を用いた自立型コンポジタとして動作します。
