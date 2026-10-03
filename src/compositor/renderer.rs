@@ -56,9 +56,11 @@ impl TermwayRenderer {
             elements.extend(elems);
         }
 
+        let mut unassoc = state.unassociated_surfaces.clone();
+
         for xwindow in &state.x11_windows {
             let geo = xwindow.geometry();
-            if let Some(surface) = xwindow.wl_surface() {
+            if let Some(surface) = xwindow.wl_surface().or_else(|| unassoc.pop()) {
                 let elems = render_elements_from_surface_tree(
                     &mut self.renderer,
                     &surface,
@@ -70,7 +72,7 @@ impl TermwayRenderer {
                 elements.extend(elems);
             }
         }
-        for surface in &state.unassociated_surfaces {
+        for surface in &unassoc {
             let elems = render_elements_from_surface_tree(
                 &mut self.renderer,
                 surface,

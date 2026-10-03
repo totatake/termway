@@ -26,8 +26,11 @@ use self::renderer::TermwayRenderer;
 use self::state::{send_frames_surface_tree, ClientState, TermwayState};
 
 // Raw mode では `\n` だけだと行頭に戻らず表示が崩れるため、CRLF で出力する。
-fn log_line(msg: impl AsRef<str>) {
-    eprint!("{}\r\n", msg.as_ref());
+pub(crate) fn log_line(msg: impl AsRef<str>) {
+    use std::io::Write;
+    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/termway_debug.log") {
+        let _ = writeln!(file, "{}", msg.as_ref());
+    }
 }
 
 pub struct TermwayCompositor {
@@ -392,17 +395,20 @@ impl TermwayCompositor {
         // focus の Point は「サーフェス原点のコンポジタ座標」。クライアントには
         // (motion.location - 原点) が届く。ウィンドウは全画面 (0,0) 配置なので原点は (0,0)。
         let mut focus = None;
+        let mut unassoc = self.state.unassociated_surfaces.clone();
+        
         if let Some(window) = self.state.windows.first() {
             focus = Some((window.wl_surface().clone(), Point::from((0.0, 0.0))));
         } else {
             for xwin in self.state.x11_windows.iter().rev() {
                 let geo = xwin.geometry();
+                let surface = xwin.wl_surface().or_else(|| unassoc.pop());
                 let rect = smithay::utils::Rectangle::<f64, Logical>::new(
                     smithay::utils::Point::from((geo.loc.x as f64, geo.loc.y as f64)),
                     smithay::utils::Size::from((geo.size.w as f64, geo.size.h as f64)),
                 );
                 if rect.contains(loc) {
-                    if let Some(s) = xwin.wl_surface() {
+                    if let Some(s) = surface {
                         let win_origin = smithay::utils::Point::<f64, Logical>::from((geo.loc.x as f64, geo.loc.y as f64));
                         focus = Some((s, win_origin));
                         break;
