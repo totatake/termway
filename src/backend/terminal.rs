@@ -8,22 +8,32 @@ pub struct TerminalBackend {
     pub term_size: TerminalSize,
     input_buffer: Vec<u8>,
     use_sixel: bool,
+    is_wayland: bool,
 }
 
 impl TerminalBackend {
-    pub fn new(term_size: TerminalSize, use_sixel: bool) -> Self {
+    pub fn new(term_size: TerminalSize, use_sixel: bool, is_wayland: bool) -> Self {
         Self {
             term_size,
             input_buffer: Vec::with_capacity(1024),
             use_sixel,
+            is_wayland,
         }
     }
 
     pub fn name(&self) -> &'static str {
-        if self.use_sixel {
-            "Terminal (Sixel Graphics + SGR Mouse)"
+        if self.is_wayland {
+            if self.use_sixel {
+                "Wayland (Sixel)"
+            } else {
+                "Wayland (Kitty)"
+            }
         } else {
-            "Terminal (Kitty Graphics + SGR Mouse)"
+            if self.use_sixel {
+                "X11/Xvfb (Sixel)"
+            } else {
+                "X11/Xvfb (Kitty)"
+            }
         }
     }
 
@@ -34,9 +44,11 @@ impl TerminalBackend {
 
         let mut stdout = io::stdout();
 
-        let overlay_text = "\x1b[40;37m [Ctrl-Q: Exit] \x1b[0m";
+        let mode_desc = self.name();
+        let overlay_text = format!("\x1b[40;37m [{}] [Ctrl-Q: Exit] \x1b[0m", mode_desc);
+        let overlay_len = mode_desc.len() + 18;
         let overlay_row = self.term_size.rows;
-        let overlay_col = self.term_size.cols.saturating_sub(16).max(1);
+        let overlay_col = self.term_size.cols.saturating_sub(overlay_len as u16).max(1);
         let overlay_seq = format!("\x1b[{};{}H{}", overlay_row, overlay_col, overlay_text);
 
         if self.use_sixel {
@@ -62,9 +74,11 @@ impl TerminalBackend {
     pub fn render_pixels(&mut self, pixels: &[u8], width: u32, height: u32) -> io::Result<()> {
         let mut stdout = io::stdout();
 
-        let overlay_text = "\x1b[40;37m [Ctrl-Q: Exit] \x1b[0m";
+        let mode_desc = self.name();
+        let overlay_text = format!("\x1b[40;37m [{}] [Ctrl-Q: Exit] \x1b[0m", mode_desc);
+        let overlay_len = mode_desc.len() + 18;
         let overlay_row = self.term_size.rows;
-        let overlay_col = self.term_size.cols.saturating_sub(16).max(1);
+        let overlay_col = self.term_size.cols.saturating_sub(overlay_len as u16).max(1);
         let overlay_seq = format!("\x1b[{};{}H{}", overlay_row, overlay_col, overlay_text);
 
         if self.use_sixel {

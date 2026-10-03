@@ -28,7 +28,7 @@ impl XwmHandler for TermwayState {
     fn new_window(&mut self, _xwm: XwmId, _window: X11Surface) {
         crate::compositor::log_line("[xwayland] new_window");
     }
-    fn new_override_redirect_window(&mut self, _xwm: XwmId, window: X11Surface) {
+    fn new_override_redirect_window(&mut self, _xwm: XwmId, _window: X11Surface) {
         crate::compositor::log_line("[xwayland] new_override_redirect_window");
     }
 

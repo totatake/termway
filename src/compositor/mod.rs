@@ -86,7 +86,7 @@ impl TermwayCompositor {
         let renderer = TermwayRenderer::new(width, height)?;
 
         // 4. Initialize Terminal Output Backend
-        let backend = TerminalBackend::new(term_size, config.use_sixel);
+        let backend = TerminalBackend::new(term_size, config.use_sixel, true);
 
         // 5. Try starting XWayland for legacy X11 compatibility
         // Workaround for environments where WAYLAND_SOCKET FD gets closed (e.g. by security wrappers):

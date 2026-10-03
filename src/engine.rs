@@ -119,7 +119,7 @@ impl TermwayEngine {
         thread::sleep(Duration::from_millis(500));
 
         // 7. Create backend instance
-        let mut backend = TerminalBackend::new(term_size, self.config.use_sixel);
+        let mut backend = TerminalBackend::new(term_size, self.config.use_sixel, false);
 
         // 8. Enter Raw mode and terminal alternate screen
         let _raw_guard = RawModeGuard::enter()?;
