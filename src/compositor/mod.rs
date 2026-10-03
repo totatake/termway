@@ -368,15 +368,21 @@ impl TermwayCompositor {
         // focus の Point は「サーフェス原点のコンポジタ座標」。クライアントには
         // (motion.location - 原点) が届く。ウィンドウは全画面 (0,0) 配置なので原点は (0,0)。
         let origin: Point<f64, Logical> = Point::from((0.0_f64, 0.0_f64));
-        let focus = if let Some(window) = self.state.windows.first() {
-            Some((window.wl_surface().clone(), origin))
-        } else if let Some(xwin) = self.state.x11_windows.first() {
-            xwin.wl_surface().map(|s| (s, origin))
-        } else if let Some(surface) = self.state.unassociated_surfaces.first() {
-            Some((surface.clone(), origin))
+        let mut focus = None;
+        if let Some(window) = self.state.windows.first() {
+            focus = Some((window.wl_surface().clone(), origin));
         } else {
-            None
-        };
+            if let Some(xwin) = self.state.x11_windows.first() {
+                if let Some(s) = xwin.wl_surface() {
+                    focus = Some((s, origin));
+                }
+            }
+            if focus.is_none() {
+                if let Some(surface) = self.state.unassociated_surfaces.last() {
+                    focus = Some((surface.clone(), origin));
+                }
+            }
+        }
 
         let pointer = self.state.pointer.clone();
         let keyboard = self.state.keyboard.clone();
@@ -399,13 +405,21 @@ impl TermwayCompositor {
                 pointer.frame(&mut self.state);
 
                 // キーボードフォーカスもポインタと同じ優先順位で選ぶ。
-                let kb_surface = if let Some(window) = self.state.windows.first() {
-                    Some(window.wl_surface().clone())
-                } else if let Some(xwin) = self.state.x11_windows.first() {
-                    xwin.wl_surface()
+                let mut kb_surface = None;
+                if let Some(window) = self.state.windows.first() {
+                    kb_surface = Some(window.wl_surface().clone());
                 } else {
-                    self.state.unassociated_surfaces.first().cloned()
-                };
+                    if let Some(xwin) = self.state.x11_windows.first() {
+                        if let Some(s) = xwin.wl_surface() {
+                            kb_surface = Some(s);
+                        }
+                    }
+                    if kb_surface.is_none() {
+                        if let Some(surface) = self.state.unassociated_surfaces.last() {
+                            kb_surface = Some(surface.clone());
+                        }
+                    }
+                }
                 if let Some(surface) = kb_surface {
                     keyboard.set_focus(&mut self.state, Some(surface), serial);
                 }

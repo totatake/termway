@@ -175,6 +175,13 @@ impl CompositorHandler for TermwayState {
         if !tracked {
             if !self.unassociated_surfaces.iter().any(|s| s == surface) {
                 self.unassociated_surfaces.push(surface.clone());
+                
+                let keyboard = self.keyboard.clone();
+                keyboard.set_focus(
+                    self,
+                    Some(surface.clone()),
+                    smithay::utils::SERIAL_COUNTER.next_serial(),
+                );
             }
         }
     }
@@ -195,6 +202,14 @@ impl XdgShellHandler for TermwayState {
         let wl = surface.wl_surface().clone();
         self.unassociated_surfaces.retain(|s| s != &wl);
         self.windows.push(surface);
+
+        let keyboard = self.keyboard.clone();
+        keyboard.set_focus(
+            self,
+            Some(wl),
+            smithay::utils::SERIAL_COUNTER.next_serial(),
+        );
+
         self.dirty = true;
     }
 

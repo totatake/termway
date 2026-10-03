@@ -35,6 +35,17 @@ impl XwmHandler for TermwayState {
         let _ = window.set_mapped(true);
         // フォーカスを取得してマウス・キーボードイベントがウィンドウへ届くようにする
         let _ = window.set_activated(true);
+
+        let wl_surface = window.wl_surface().or_else(|| self.unassociated_surfaces.last().cloned());
+        if let Some(wl) = wl_surface {
+            let keyboard = self.keyboard.clone();
+            keyboard.set_focus(
+                self,
+                Some(wl),
+                smithay::utils::SERIAL_COUNTER.next_serial(),
+            );
+        }
+
         if !self.x11_windows.iter().any(|w| w == &window) {
             self.x11_windows.push(window);
         }
