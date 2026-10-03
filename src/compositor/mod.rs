@@ -391,19 +391,36 @@ impl TermwayCompositor {
         // 3. その他関連付け前のサーフェス (unassociated_surfaces)
         // focus の Point は「サーフェス原点のコンポジタ座標」。クライアントには
         // (motion.location - 原点) が届く。ウィンドウは全画面 (0,0) 配置なので原点は (0,0)。
-        let origin: Point<f64, Logical> = Point::from((0.0_f64, 0.0_f64));
         let mut focus = None;
         if let Some(window) = self.state.windows.first() {
-            focus = Some((window.wl_surface().clone(), origin));
+            focus = Some((window.wl_surface().clone(), Point::from((0.0, 0.0))));
         } else {
-            if let Some(xwin) = self.state.x11_windows.first() {
-                if let Some(s) = xwin.wl_surface() {
-                    focus = Some((s, origin));
+            for xwin in self.state.x11_windows.iter().rev() {
+                let geo = xwin.geometry();
+                let rect = smithay::utils::Rectangle::<f64, Logical>::new(
+                    smithay::utils::Point::from((geo.loc.x as f64, geo.loc.y as f64)),
+                    smithay::utils::Size::from((geo.size.w as f64, geo.size.h as f64)),
+                );
+                if rect.contains(loc) {
+                    if let Some(s) = xwin.wl_surface() {
+                        let win_origin = smithay::utils::Point::<f64, Logical>::from((geo.loc.x as f64, geo.loc.y as f64));
+                        focus = Some((s, win_origin));
+                        break;
+                    }
+                }
+            }
+            if focus.is_none() {
+                if let Some(xwin) = self.state.x11_windows.first() {
+                    if let Some(s) = xwin.wl_surface() {
+                        let geo = xwin.geometry();
+                        let win_origin = smithay::utils::Point::<f64, Logical>::from((geo.loc.x as f64, geo.loc.y as f64));
+                        focus = Some((s, win_origin));
+                    }
                 }
             }
             if focus.is_none() {
                 if let Some(surface) = self.state.unassociated_surfaces.last() {
-                    focus = Some((surface.clone(), origin));
+                    focus = Some((surface.clone(), Point::from((0.0, 0.0))));
                 }
             }
         }

@@ -57,11 +57,12 @@ impl TermwayRenderer {
         }
 
         for xwindow in &state.x11_windows {
+            let geo = xwindow.geometry();
             if let Some(surface) = xwindow.wl_surface() {
                 let elems = render_elements_from_surface_tree(
                     &mut self.renderer,
                     &surface,
-                    (0, 0),
+                    (geo.loc.x, geo.loc.y),
                     1.0,
                     1.0,
                     Kind::Unspecified,

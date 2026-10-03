@@ -52,7 +52,12 @@ impl XwmHandler for TermwayState {
         self.dirty = true;
     }
 
-    fn mapped_override_redirect_window(&mut self, _xwm: XwmId, _window: X11Surface) {}
+    fn mapped_override_redirect_window(&mut self, _xwm: XwmId, window: X11Surface) {
+        if !self.x11_windows.iter().any(|w| w == &window) {
+            self.x11_windows.push(window);
+        }
+        self.dirty = true;
+    }
 
     fn unmapped_window(&mut self, _xwm: XwmId, window: X11Surface) {
         self.x11_windows.retain(|w| w != &window);
