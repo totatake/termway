@@ -63,8 +63,12 @@ impl XTestInjector {
         }
 
         unsafe {
+            let mut need_shift = false;
             let keysym = match code {
-                KeyCode::Char(c) => c as u64,
+                KeyCode::Char(c) => {
+                    need_shift = c.is_ascii_uppercase() || "!@#$%^&*()_+{}|:\"<>?~".contains(c);
+                    c as u64
+                },
                 KeyCode::Enter => x11::keysym::XK_Return as u64,
                 KeyCode::Backspace => x11::keysym::XK_BackSpace as u64,
                 KeyCode::Tab => x11::keysym::XK_Tab as u64,
@@ -82,11 +86,21 @@ impl XTestInjector {
             };
 
             let keycode = x11::xlib::XKeysymToKeycode(self.display, keysym);
+            let shift_keycode = x11::xlib::XKeysymToKeycode(self.display, x11::keysym::XK_Shift_L as u64);
+
             if keycode != 0 {
+                if need_shift && shift_keycode != 0 {
+                    x11::xtest::XTestFakeKeyEvent(self.display, shift_keycode as c_uint, 1, x11::xlib::CurrentTime);
+                }
+                
                 // Press
                 x11::xtest::XTestFakeKeyEvent(self.display, keycode as c_uint, 1, x11::xlib::CurrentTime);
                 // Release
                 x11::xtest::XTestFakeKeyEvent(self.display, keycode as c_uint, 0, x11::xlib::CurrentTime);
+                
+                if need_shift && shift_keycode != 0 {
+                    x11::xtest::XTestFakeKeyEvent(self.display, shift_keycode as c_uint, 0, x11::xlib::CurrentTime);
+                }
                 x11::xlib::XFlush(self.display);
             }
         }
