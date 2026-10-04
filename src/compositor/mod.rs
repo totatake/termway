@@ -51,6 +51,8 @@ pub struct TermwayCompositor {
     input_buffer: Vec<u8>,
     pending_command: Option<Vec<String>>,
     client_child: Option<Child>,
+    has_opened_windows: bool,
+    spawn_time: Option<std::time::Instant>,
     xwayland_source: Option<smithay::xwayland::XWayland>,
     _xwayland_client: Option<smithay::reexports::wayland_server::Client>,
 }
@@ -172,6 +174,8 @@ impl TermwayCompositor {
             renderer,
             backend,
             client_child: None,
+            has_opened_windows: false,
+            spawn_time: None,
             pending_command,
             xwayland_source,
             _xwayland_client,
@@ -271,6 +275,7 @@ impl TermwayCompositor {
                         Ok(child) => {
                             log_line(format!("[termway] Spawned client: {:?}", cmd_args));
                             self.client_child = Some(child);
+                            self.spawn_time = Some(std::time::Instant::now());
                         }
                         Err(e) => {
                             log_line(format!("[termway] Failed to spawn client {:?}: {}", cmd_args, e));
@@ -279,10 +284,43 @@ impl TermwayCompositor {
                 }
             }
 
-            // A. Check if client process exited
-            if let Some(ref mut child) = self.client_child {
+            // Clean up destroyed windows/surfaces
+            self.state.windows.retain(|w| smithay::reexports::wayland_server::Resource::is_alive(w.wl_surface()));
+            self.state.managed_windows.retain(|w| {
+                w.wl_surface().as_ref().map(|s| smithay::reexports::wayland_server::Resource::is_alive(s)).unwrap_or(true)
+            });
+
+            let active_window_count = self.state.managed_windows.len()
+                + self.state.windows.len()
+                + self.state.x11_windows.len();
+
+            if active_window_count > 0 {
+                self.has_opened_windows = true;
+            }
+
+            // A. Check exit condition based on window lifecycle
+            if self.has_opened_windows {
+                // If windows were opened, exit when all windows are closed
+                if active_window_count == 0 {
+                    log_line("[termway] All windows closed, exiting compositor.");
+                    break;
+                }
+            } else if let Some(ref mut child) = self.client_child {
                 match child.try_wait() {
-                    Ok(Some(_status)) => break,
+                    Ok(Some(status)) => {
+                        if !status.success() {
+                            // If client exited with error before opening any window, exit immediately
+                            log_line(format!("[termway] Client process exited with error ({:?}) before opening any window.", status));
+                            break;
+                        }
+                        // If client exited with success (e.g. gvim fork), wait up to 3s grace period for window to appear
+                        if let Some(st) = self.spawn_time {
+                            if st.elapsed() > std::time::Duration::from_secs(3) {
+                                log_line("[termway] Client exited and grace period expired with no window opened.");
+                                break;
+                            }
+                        }
+                    }
                     Ok(None) => {}
                     Err(_) => break,
                 }

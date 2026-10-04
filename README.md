@@ -125,17 +125,19 @@ cargo run --release -- --sixel --wm --demo
 
 ```bash
 # GUI アプリケーションを起動（デフォルト: Wayland コンポジタ + Kitty/Sixel 自動検出）
-cargo run --release -- gvim -f
+cargo run --release -- gvim
 
 # Sixel プロトコルを明示指定して起動
-cargo run --release -- --sixel -- gvim -f
+cargo run --release -- --sixel -- gvim
 
 # Kitty プロトコルを明示指定して起動
-cargo run --release -- --kitty -- gvim -f
+cargo run --release -- --kitty -- gvim
 
 # レガシーな X11/Xvfb モードで実行する場合
 cargo run --release -- --x11 --wm -- xclock
 ```
+
+> **Note**: `gvim` や `gedit` 等の自動的にバックグラウンド化（fork）するアプリケーションも、`-f` などのオプション不要でそのまま起動できます。ウィンドウが開いている間セッションを維持し、全ウィンドウを閉じた際に自動で終了します。
 
 ### 3. Smithay Wayland コンポジタ（デフォルト）
 
@@ -144,7 +146,7 @@ XWayland も自動で起動されるため、最新の Wayland ネイティブ�
 
 ```bash
 # フォントセルサイズ（幅x高さ）を明示指定してマウス座標精度を最適化
-cargo run --release -- --cell-size 10x22 -- gvim -f
+cargo run --release -- --cell-size 10x22 -- gvim
 ```
 
 ### 4. フォントセルサイズの動的測定と補正 (--cell-size, TERMWAY_CELL_SIZE)
