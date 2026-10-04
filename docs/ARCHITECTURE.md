@@ -87,10 +87,14 @@ $$y_{x11} = \mathrm{clamp}\left(\lfloor \frac{py \times H_{x11}}{H_{term}} \rflo
 `--wayland` モードでは、`TermwayCompositor` がコンポジタ空間のピクセル解像度 $W_{comp}, H_{comp}$ および端末のセル数 $C_{term}, R_{term}$ を保持します（`term_cols: u16`, `term_rows: u16` フィールド）。SGR マウスイベントのセル座標 $(col, row)$（1 始まり）を次の式でコンポジタ空間ピクセル座標へ変換します：
 
 $$cell\_w = W_{comp} / C_{term}, \quad cell\_h = H_{comp} / R_{term}$$
-$$px = (col - 1) \times cell\_w$$
-$$py = (row - 1) \times cell\_h$$
+$$px = (col - 1) \times cell\_w + (cell\_w \times 0.5)$$
+$$py = (row - 1) \times cell\_h + (cell\_h \times 0.5)$$
 
-この変換は `TermwayCompositor` の `term_cols` / `term_rows` フィールドを参照して行います。以前の実装では `state.width` で除算後に再乗算するため座標がほぼ $col - 1$ のままとなる不具合があり、上記の正しい変換式に修正されました。
+##### フォントセル寸法の動的取得とドリフト防止
+Sixel 等のグラフィックス描画時、端末エミュレータ上の物理セルサイズとコンポジタが仮定したセルサイズ（デフォルト 9x18 または 10x20）が乖離していると、右下へ向かうにつれてマウス座標の累積ズレ（Linear Drift）が発生します。これを防ぐため以下の多重機構を備えています：
+1. **動的問い合わせ (`\x1b[16t` / `\x1b[14t`)**: 起動シーケンスで端末にフォントセル解像度およびウィンドウピクセルサイズを問い合わせ、応答（`\x1b[6;h;wt` / `\x1b[4;h;wt`）を受信次第、コンポジタおよびレンダラーの解像度を即時動的リサイズして誤差 0 を達成。
+2. **手動微調整 (`--cell-size`, `TERMWAY_CELL_SIZE`)**: VTE 等の端末が問い合わせを無視する場合、`--cell-size <WxH>` または環境変数 `TERMWAY_CELL_SIZE` で端末フォントの実測サイズ（例: Ubuntu Mono 13pt なら `10x22`）を直接指定可能。
+3. **Sixel 自動スクロール防止 (`\x1b[?7l` & 末尾改行抑止)**: 最終 Sixel バンド末尾での不要な改行シーケンス `-` の抑止および Auto-wrap 無効化（`\x1b[?7l`）により、最下行描画時にターミナル画面がスクロールして上部メニューバーが画面外へ押し出される現象を防止。
 
 ---
 

@@ -129,11 +129,22 @@ XWayland も自動で起動されるため、レガシーな X11 アプリケー
 # Smithay コンポジタモードで xeyes を起動（Sixel 端末の場合）
 cargo run --release -- --wayland -- xeyes
 
-# Kitty 端末では Sixel 自動フォールバックなしで起動
-cargo run --release -- --wayland -- xclock
+# gvim を起動
+cargo run --release -- --wayland -- gvim -f
+
+# フォントセルサイズ（幅x高さ）を明示指定してマウス座標精度を最適化
+cargo run --release -- --wayland --cell-size 10x22 -- gvim -f
 ```
 
-### 4. Sixel 自動フォールバック
+### 4. フォントセルサイズの動的測定と補正 (--cell-size, TERMWAY_CELL_SIZE)
+
+Sixel および SGR マウスプロトコルでのピクセルパーフェクトな追従のため、起動時に `\x1b[16t` (Report font cell size) および `\x1b[14t` (Report text area size) を自動送信してターミナルの物理セル寸法を問い合わせます。
+端末エミュレータ（VTE/GNOME Terminal等）がこれらに応答しない場合、以下の方法でセルサイズを明示的に指定・調整できます：
+
+- CLI オプション: `--cell-size <幅x高さ>` (例: `--cell-size 10x22`)
+- 環境変数: `TERMWAY_CELL_SIZE=<幅x高さ>` (例: `export TERMWAY_CELL_SIZE=10x22`)
+
+### 5. Sixel 自動フォールバック
 
 起動時に `KITTY_WINDOW_ID` 環境変数が存在しない場合（Kitty ターミナル以外の環境）、`--sixel` フラグを明示しなくても自動的に Sixel プロトコルが使用されます。
 GNOME Terminal や xterm など VTE 系端末でも追加オプションなしで動作します。

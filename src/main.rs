@@ -12,6 +12,7 @@ OPTIONS:
     --wayland                 Use native Smithay Wayland Compositor instead of X11/Xvfb
     --width <PIXELS>          Virtual display width (default: auto from terminal)
     --height <PIXELS>         Virtual display height (default: auto from terminal)
+    --cell-size <WxH>         Font cell pixel size (e.g. 10x20, default: auto/env/10x20)
     --fps <FPS>               Target frame rate (default: 30)
     --wm                      Start a lightweight Window Manager (openbox)
     --sixel                   Use Sixel graphics instead of Kitty protocol
@@ -20,7 +21,8 @@ OPTIONS:
 
 EXAMPLES:
     termway --demo
-    termway --wayland -- weston-terminal
+    termway --wayland -- gvim -f
+    termway --wayland --cell-size 10x22 -- gvim -f
     termway --wm -- xclock
 "#
     );
@@ -61,6 +63,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(1);
             }
             config.height = Some(args[i].parse()?);
+        } else if arg == "--cell-size" {
+            i += 1;
+            if i >= args.len() {
+                eprintln!("Error: --cell-size requires a WxH argument (e.g. 10x20)");
+                std::process::exit(1);
+            }
+            let val = &args[i];
+            let parts: Vec<&str> = val.split('x').collect();
+            if parts.len() == 2 {
+                if let (Ok(w), Ok(h)) = (parts[0].parse::<u16>(), parts[1].parse::<u16>()) {
+                    config.cell_size = Some((w, h));
+                } else {
+                    eprintln!("Error: --cell-size format must be WxH (e.g. 10x20)");
+                    std::process::exit(1);
+                }
+            } else {
+                eprintln!("Error: --cell-size format must be WxH (e.g. 10x20)");
+                std::process::exit(1);
+            }
         } else if arg == "--fps" {
             i += 1;
             if i >= args.len() {

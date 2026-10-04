@@ -57,10 +57,11 @@ impl RawModeGuard {
         // \x1b[?1000h: Normal mouse tracking
         // \x1b[?1003h: Any-event mouse tracking (motion even without button pressed)
         // \x1b[?1006h: SGR extended mode
-        // \x1b[2J\x1b[H\x1b[14t: Clear screen and move to home
+        // \x1b[?7l: Disable auto-wrap to prevent scrolling on bottom-right text/images
+        // \x1b[2J\x1b[H\x1b[16t\x1b[14t: Clear screen, home, and query cell/window size
         write!(
             stdout,
-            "\x1b[?1049h\x1b[?25l\x1b[?1000h\x1b[?1003h\x1b[?1006h\x1b[2J\x1b[H\x1b[14t"
+            "\x1b[?1049h\x1b[?25l\x1b[?1000h\x1b[?1003h\x1b[?1006h\x1b[?7l\x1b[2J\x1b[H\x1b[16t\x1b[14t"
         )?;
         stdout.flush()
     }
@@ -73,10 +74,10 @@ impl RawModeGuard {
         self.active = false;
 
         let mut stdout = io::stdout();
-        // Disable SGR mouse tracking, show cursor, leave alternate screen
+        // Disable SGR mouse tracking, enable auto-wrap, show cursor, leave alternate screen
         let _ = write!(
             stdout,
-            "\x1b[?1006l\x1b[?1003l\x1b[?1000l\x1b[?25h\x1b[?1049l"
+            "\x1b[?1006l\x1b[?1003l\x1b[?1000l\x1b[?7h\x1b[?25h\x1b[?1049l"
         );
         let _ = stdout.flush();
 

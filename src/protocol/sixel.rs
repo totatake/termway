@@ -84,7 +84,9 @@ impl SixelEncoder {
                 Self::emit_rle(&mut out, run_char, run_len);
                 out.push(b'$'); // Carriage return to start of band
             }
-            out.push(b'-'); // Line feed to next band
+            if band_y + 6 < height {
+                out.push(b'-'); // Line feed to next band (skip for last band to prevent terminal scrolling)
+            }
         }
 
         // Sixel outro (String Terminator)

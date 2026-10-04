@@ -45,16 +45,29 @@ impl TerminalSize {
         let cols = if ws.ws_col > 0 { ws.ws_col } else { 80 };
         let rows = if ws.ws_row > 0 { ws.ws_row } else { 24 };
 
+        // Parse TERMWAY_CELL_SIZE env var (e.g., "10x20" or "10x22") if present
+        let env_cell_size = std::env::var("TERMWAY_CELL_SIZE").ok().and_then(|s| {
+            let parts: Vec<&str> = s.split('x').collect();
+            if parts.len() == 2 {
+                if let (Ok(w), Ok(h)) = (parts[0].trim().parse::<u16>(), parts[1].trim().parse::<u16>()) {
+                    return Some((w, h));
+                }
+            }
+            None
+        });
+
+        let (def_cell_w, def_cell_h) = env_cell_size.unwrap_or((9, 18));
+
         let cell_width_px = if ws.ws_xpixel > 0 && cols > 0 {
             (ws.ws_xpixel / cols).max(1)
         } else {
-            9 // Typical monospace font width
+            def_cell_w
         };
 
         let cell_height_px = if ws.ws_ypixel > 0 && rows > 0 {
             (ws.ws_ypixel / rows).max(1)
         } else {
-            18 // Typical monospace font height
+            def_cell_h
         };
 
         let width_px = if ws.ws_xpixel > 0 {
@@ -81,8 +94,16 @@ impl TerminalSize {
 
     /// Construct a fallback size with specified columns and rows
     pub fn fallback(cols: u16, rows: u16) -> Self {
-        let cell_width_px = 9;
-        let cell_height_px = 18;
+        let env_cell_size = std::env::var("TERMWAY_CELL_SIZE").ok().and_then(|s| {
+            let parts: Vec<&str> = s.split('x').collect();
+            if parts.len() == 2 {
+                if let (Ok(w), Ok(h)) = (parts[0].trim().parse::<u16>(), parts[1].trim().parse::<u16>()) {
+                    return Some((w, h));
+                }
+            }
+            None
+        });
+        let (cell_width_px, cell_height_px) = env_cell_size.unwrap_or((9, 18));
         Self {
             cols,
             rows,

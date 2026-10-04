@@ -53,7 +53,13 @@ pub struct TermwayCompositor {
 
 impl TermwayCompositor {
     pub fn new(config: EngineConfig) -> Result<Self, Box<dyn std::error::Error>> {
-        let term_size = TerminalSize::query().unwrap_or_else(|_| TerminalSize::fallback(80, 24));
+        let mut term_size = TerminalSize::query().unwrap_or_else(|_| TerminalSize::fallback(80, 24));
+        if let Some((cw, ch)) = config.cell_size {
+            term_size.cell_width_px = cw;
+            term_size.cell_height_px = ch;
+            term_size.width_px = term_size.cols * cw;
+            term_size.height_px = term_size.rows * ch;
+        }
         let width = config.width.unwrap_or(term_size.width_px as u32).max(320);
         let height = config.height.unwrap_or(term_size.height_px as u32).max(240);
 
@@ -358,22 +364,37 @@ impl TermwayCompositor {
             window.send_configure();
         }
 
-        for window in &self.state.x11_windows {
-            if !window.is_override_redirect() {
-                let rect = smithay::utils::Rectangle::new(
-                    (0, 0).into(),
-                    (self.state.width as i32, self.state.height as i32).into(),
-                );
-                let _ = window.configure(rect);
-            }
-        }
-
         self.state.dirty = true;
     }
 
     fn process_terminal_input(&mut self) {
         while !self.input_buffer.is_empty() {
-            // 1. Try parsing window pixel size response (\x1b[4;height;widtht)
+            // 1. Try parsing cell size response (\x1b[6;height;widtht from \x1b[16t)
+            if let Ok(input_str) = std::str::from_utf8(&self.input_buffer) {
+                if let Some(start) = input_str.find("\x1b[6;") {
+                    if let Some(end_offset) = input_str[start..].find('t') {
+                        let inner = &input_str[start + 4..start + end_offset];
+                        let parts: Vec<&str> = inner.split(';').collect();
+                        if parts.len() == 2 {
+                            if let (Ok(h), Ok(w)) = (parts[0].parse::<u16>(), parts[1].parse::<u16>()) {
+                                if w > 0 && h > 0 {
+                                    log_line(format!("[termway] Terminal reported cell size: {}x{}px", w, h));
+                                    let mut new_size = self.backend.term_size();
+                                    new_size.cell_width_px = w;
+                                    new_size.cell_height_px = h;
+                                    new_size.width_px = new_size.cols * w;
+                                    new_size.height_px = new_size.rows * h;
+                                    self.apply_terminal_size(new_size);
+                                }
+                            }
+                        }
+                        self.input_buffer.drain(start..start + end_offset + 1);
+                        continue;
+                    }
+                }
+            }
+
+            // 2. Try parsing window pixel size response (\x1b[4;height;widtht from \x1b[14t)
             if let Ok(input_str) = std::str::from_utf8(&self.input_buffer) {
                 if let Some(start) = input_str.find("\x1b[4;") {
                     if let Some(end_offset) = input_str[start..].find('t') {
@@ -382,6 +403,7 @@ impl TermwayCompositor {
                         if parts.len() == 2 {
                             if let (Ok(h), Ok(w)) = (parts[0].parse::<u16>(), parts[1].parse::<u16>()) {
                                 if w > 0 && h > 0 {
+                                    log_line(format!("[termway] Terminal reported window size: {}x{}px", w, h));
                                     let mut new_size = self.backend.term_size();
                                     new_size.width_px = w;
                                     new_size.height_px = h;
@@ -401,7 +423,7 @@ impl TermwayCompositor {
                 }
             }
 
-            // 2. Try parsing SGR mouse sequence
+            // 3. Try parsing SGR mouse sequence
             if let Ok(input_str) = std::str::from_utf8(&self.input_buffer) {
                 if let Some((mouse_ev, consumed)) = SgrMouseParser::parse(input_str) {
                     self.dispatch_mouse_event(&mouse_ev);
@@ -410,7 +432,7 @@ impl TermwayCompositor {
                 }
             }
 
-            // 3. Try parsing keyboard sequence
+            // 4. Try parsing keyboard sequence
             if let Some((key_ev, consumed)) = KeyboardParser::parse(&self.input_buffer) {
                 if key_ev.code == KeyCode::Ctrl('q') {
                     self.state.running = false;
@@ -441,6 +463,13 @@ impl TermwayCompositor {
         let px = (ev.col.saturating_sub(1)) as f64 * cell_w + (cell_w * 0.5);
         let py = (ev.row.saturating_sub(1)) as f64 * cell_h + (cell_h * 0.5);
         let loc: Point<f64, Logical> = Point::from((px, py));
+
+        if ev.action == MouseAction::Press {
+            log_line(format!(
+                "[mouse] press col={} row={} -> px={:.1} py={:.1} (term_cols={} term_rows={} w={} h={})",
+                ev.col, ev.row, px, py, self.term_cols, self.term_rows, self.renderer.width(), self.renderer.height()
+            ));
+        }
 
         // 優先度：
         // 1. Wayland ネイティブ Toplevel ウィンドウ (Gtkデモなど)

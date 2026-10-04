@@ -33,12 +33,8 @@ impl XwmHandler for TermwayState {
     }
 
     fn map_window_request(&mut self, _xwm: XwmId, window: X11Surface) {
-        crate::compositor::log_line("[xwayland] map_window_request");
-        let rect = Rectangle::new(
-            (0, 0).into(),
-            (self.width as i32, self.height as i32).into(),
-        );
-        let _ = window.configure(rect);
+        crate::compositor::log_line(format!("[xwayland] map_window_request id={:?} geo={:?}", window.window_id(), window.geometry()));
+        // XWayland が自動的にサイズ決定するので、ここで geometry を上書きしない
         let _ = window.set_mapped(true);
         // フォーカスを取得してマウス・キーボードイベントがウィンドウへ届くようにする
         let _ = window.set_activated(true);
@@ -97,6 +93,10 @@ impl XwmHandler for TermwayState {
         h: Option<u32>,
         _reorder: Option<Reorder>,
     ) {
+        crate::compositor::log_line(format!(
+            "[xwayland] configure_request id={:?} req=({:?},{:?},{:?},{:?}) current={:?}",
+            window.window_id(), x, y, w, h, window.geometry()
+        ));
         // アプリが要求したサイズを優先し、指定がなければターミナル全体サイズを使う。
         let rect = Rectangle::new(
             (x.unwrap_or(0), y.unwrap_or(0)).into(),
@@ -109,10 +109,14 @@ impl XwmHandler for TermwayState {
     fn configure_notify(
         &mut self,
         _xwm: XwmId,
-        _window: X11Surface,
-        _geometry: Rectangle<i32, Logical>,
+        window: X11Surface,
+        geometry: Rectangle<i32, Logical>,
         _above: Option<u32>,
     ) {
+        crate::compositor::log_line(format!(
+            "[xwayland] configure_notify id={:?} geo={:?}",
+            window.window_id(), geometry
+        ));
         self.dirty = true;
     }
 

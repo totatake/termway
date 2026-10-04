@@ -11,6 +11,7 @@ use crate::terminal::winsize::WINCH_RECEIVED;
 pub struct EngineConfig {
     pub width: Option<u32>,
     pub height: Option<u32>,
+    pub cell_size: Option<(u16, u16)>,
     pub fps: u32,
     pub enable_wm: bool,
     pub use_sixel: bool,
@@ -22,6 +23,7 @@ impl Default for EngineConfig {
         Self {
             width: None,
             height: None,
+            cell_size: None,
             fps: 30,
             enable_wm: false,
             use_sixel: false,
@@ -58,7 +60,13 @@ impl TermwayEngine {
         }
 
         // 2. Detect terminal size & resolve resolution
-        let term_size = TerminalSize::query().unwrap_or_else(|_| TerminalSize::fallback(80, 24));
+        let mut term_size = TerminalSize::query().unwrap_or_else(|_| TerminalSize::fallback(80, 24));
+        if let Some((cw, ch)) = self.config.cell_size {
+            term_size.cell_width_px = cw;
+            term_size.cell_height_px = ch;
+            term_size.width_px = term_size.cols * cw;
+            term_size.height_px = term_size.rows * ch;
+        }
         let width = self.config.width.unwrap_or(term_size.width_px as u32).max(320);
         let height = self.config.height.unwrap_or(term_size.height_px as u32).max(240);
 
