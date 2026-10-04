@@ -34,7 +34,11 @@ impl XwmHandler for TermwayState {
 
     fn map_window_request(&mut self, _xwm: XwmId, window: X11Surface) {
         crate::compositor::log_line("[xwayland] map_window_request");
-        // XWayland が自動的にサイズ決定するので、ここで geometry を上書きしない
+        let rect = Rectangle::new(
+            (0, 0).into(),
+            (self.width as i32, self.height as i32).into(),
+        );
+        let _ = window.configure(rect);
         let _ = window.set_mapped(true);
         // フォーカスを取得してマウス・キーボードイベントがウィンドウへ届くようにする
         let _ = window.set_activated(true);

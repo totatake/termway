@@ -38,6 +38,17 @@ impl TermwayRenderer {
         })
     }
 
+    pub fn resize(&mut self, width: u32, height: u32) -> Result<(), Box<dyn std::error::Error>> {
+        if self.width == width && self.height == height {
+            return Ok(());
+        }
+        let buffer_size: Size<i32, Buffer> = Size::from((width as i32, height as i32));
+        self.buffer = self.renderer.create_buffer(Fourcc::Abgr8888, buffer_size)?;
+        self.width = width;
+        self.height = height;
+        Ok(())
+    }
+
     pub fn render(&mut self, state: &TermwayState) -> Result<&[u8], Box<dyn std::error::Error>> {
         let phys_size: Size<i32, Physical> = Size::from((self.width as i32, self.height as i32));
         let damage: Rectangle<i32, Physical> = Rectangle::from_size(phys_size);

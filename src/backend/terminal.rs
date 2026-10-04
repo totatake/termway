@@ -21,6 +21,14 @@ impl TerminalBackend {
         }
     }
 
+    pub fn resize(&mut self, term_size: TerminalSize) {
+        self.term_size = term_size;
+    }
+
+    pub fn term_size(&self) -> TerminalSize {
+        self.term_size
+    }
+
     pub fn name(&self) -> &'static str {
         if self.is_wayland {
             if self.use_sixel {

@@ -224,24 +224,7 @@ impl TermwayCompositor {
             
             if WINCH_RECEIVED.swap(false, std::sync::atomic::Ordering::Relaxed) {
                 if let Ok(new_size) = TerminalSize::query() {
-                    self.term_cols = new_size.cols;
-                    self.term_rows = new_size.rows;
-                    self.state.width = new_size.width_px as u32;
-                    self.state.height = new_size.height_px as u32;
-                    
-                    let new_mode = smithay::output::Mode { 
-                        size: (self.state.width as i32, self.state.height as i32).into(), 
-                        refresh: 60000 
-                    };
-                    self.state.output.change_current_state(Some(new_mode), None, None, None);
-                    
-                    for window in &self.state.windows {
-                        window.with_pending_state(|state| {
-                            state.size = Some((self.state.width as i32, self.state.height as i32).into());
-                        });
-                        window.send_configure();
-                    }
-                    self.state.dirty = true;
+                    self.apply_terminal_size(new_size);
                 }
             }
             
@@ -345,9 +328,80 @@ impl TermwayCompositor {
         Ok(())
     }
 
+    fn apply_terminal_size(&mut self, new_size: TerminalSize) {
+        if self.term_cols == new_size.cols
+            && self.term_rows == new_size.rows
+            && self.state.width == new_size.width_px as u32
+            && self.state.height == new_size.height_px as u32
+        {
+            return;
+        }
+
+        self.term_cols = new_size.cols;
+        self.term_rows = new_size.rows;
+        self.state.width = new_size.width_px as u32;
+        self.state.height = new_size.height_px as u32;
+
+        let _ = self.renderer.resize(self.state.width, self.state.height);
+        self.backend.resize(new_size);
+
+        let new_mode = smithay::output::Mode {
+            size: (self.state.width as i32, self.state.height as i32).into(),
+            refresh: 60000,
+        };
+        self.state.output.change_current_state(Some(new_mode), None, None, None);
+
+        for window in &self.state.windows {
+            window.with_pending_state(|state| {
+                state.size = Some((self.state.width as i32, self.state.height as i32).into());
+            });
+            window.send_configure();
+        }
+
+        for window in &self.state.x11_windows {
+            if !window.is_override_redirect() {
+                let rect = smithay::utils::Rectangle::new(
+                    (0, 0).into(),
+                    (self.state.width as i32, self.state.height as i32).into(),
+                );
+                let _ = window.configure(rect);
+            }
+        }
+
+        self.state.dirty = true;
+    }
+
     fn process_terminal_input(&mut self) {
         while !self.input_buffer.is_empty() {
-            // 1. Try parsing SGR mouse sequence
+            // 1. Try parsing window pixel size response (\x1b[4;height;widtht)
+            if let Ok(input_str) = std::str::from_utf8(&self.input_buffer) {
+                if let Some(start) = input_str.find("\x1b[4;") {
+                    if let Some(end_offset) = input_str[start..].find('t') {
+                        let inner = &input_str[start + 4..start + end_offset];
+                        let parts: Vec<&str> = inner.split(';').collect();
+                        if parts.len() == 2 {
+                            if let (Ok(h), Ok(w)) = (parts[0].parse::<u16>(), parts[1].parse::<u16>()) {
+                                if w > 0 && h > 0 {
+                                    let mut new_size = self.backend.term_size();
+                                    new_size.width_px = w;
+                                    new_size.height_px = h;
+                                    if new_size.cols > 0 {
+                                        new_size.cell_width_px = (w / new_size.cols).max(1);
+                                    }
+                                    if new_size.rows > 0 {
+                                        new_size.cell_height_px = (h / new_size.rows).max(1);
+                                    }
+                                    self.apply_terminal_size(new_size);
+                                }
+                            }
+                        }
+                        self.input_buffer.drain(start..start + end_offset + 1);
+                        continue;
+                    }
+                }
+            }
+
+            // 2. Try parsing SGR mouse sequence
             if let Ok(input_str) = std::str::from_utf8(&self.input_buffer) {
                 if let Some((mouse_ev, consumed)) = SgrMouseParser::parse(input_str) {
                     self.dispatch_mouse_event(&mouse_ev);
@@ -356,7 +410,7 @@ impl TermwayCompositor {
                 }
             }
 
-            // 2. Try parsing keyboard sequence
+            // 3. Try parsing keyboard sequence
             if let Some((key_ev, consumed)) = KeyboardParser::parse(&self.input_buffer) {
                 if key_ev.code == KeyCode::Ctrl('q') {
                     self.state.running = false;
