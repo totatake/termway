@@ -78,6 +78,8 @@ impl TermwayCompositor {
             (term_size.height_px as u32).max(240)
         };
 
+        Self::ensure_xdg_runtime_dir();
+
         let display = Display::new()?;
         let dh = display.handle();
 
@@ -258,6 +260,9 @@ impl TermwayCompositor {
                     let mut cmd = Command::new(&cmd_args[0]);
                     if cmd_args.len() > 1 {
                         cmd.args(&cmd_args[1..]);
+                    }
+                    if let Ok(runtime_dir) = std::env::var("XDG_RUNTIME_DIR") {
+                        cmd.env("XDG_RUNTIME_DIR", runtime_dir);
                     }
                     cmd.env("WAYLAND_DISPLAY", &self.socket_name);
                     cmd.env("GDK_BACKEND", "wayland,x11");
@@ -1022,6 +1027,47 @@ impl TermwayCompositor {
                 time,
                 |_, _, _| FilterResult::Forward,
             );
+        }
+    }
+
+    /// Ensures that `XDG_RUNTIME_DIR` is set to an existing, writable directory with 0700 permissions.
+    /// When running under `sudo` or minimal container environments, `XDG_RUNTIME_DIR` is often unset or invalid.
+    pub fn ensure_xdg_runtime_dir() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let needs_fallback = match std::env::var("XDG_RUNTIME_DIR") {
+            Ok(dir) => {
+                let path = std::path::Path::new(&dir);
+                if !path.is_dir() {
+                    true
+                } else {
+                    // Check if writable by creating/checking a test file
+                    let test_file = path.join(".termway_runtime_test");
+                    match std::fs::OpenOptions::new().create(true).write(true).open(&test_file) {
+                        Ok(_) => {
+                            let _ = std::fs::remove_file(test_file);
+                            false
+                        }
+                        Err(_) => true,
+                    }
+                }
+            }
+            Err(_) => true,
+        };
+
+        if needs_fallback {
+            let uid = unsafe { libc::getuid() };
+            let fallback_dir = format!("/tmp/termway-runtime-{}", uid);
+            let path = std::path::Path::new(&fallback_dir);
+            if !path.exists() {
+                if let Err(e) = std::fs::create_dir_all(path) {
+                    log_line(format!("[termway] Warning: Failed to create fallback XDG_RUNTIME_DIR {}: {}", fallback_dir, e));
+                }
+            }
+            // Secure permissions to 0700 (owner read/write/execute only, required by Wayland specs)
+            let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700));
+            std::env::set_var("XDG_RUNTIME_DIR", &fallback_dir);
+            log_line(format!("[termway] Using fallback XDG_RUNTIME_DIR={}", fallback_dir));
         }
     }
 }
