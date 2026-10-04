@@ -869,8 +869,8 @@ impl TermwayCompositor {
         let mut time = self.state.start_time.elapsed().as_millis() as u32;
 
         // Map standard keys to Linux evdev scancodes.
-        // Also determine if Shift modifier is required (e.g. for uppercase letters or symbols).
-        let (evdev_code, need_shift): (u32, bool) = match code {
+        // Also determine if Shift or Ctrl modifier is required.
+        let (evdev_code, need_shift, need_ctrl): (u32, bool, bool) = match code {
             KeyCode::Char(c) => match c {
                 'a'..='z' => {
                     let ev = match c {
@@ -882,7 +882,7 @@ impl TermwayCompositor {
                         'z' => 44,
                         _ => unreachable!(),
                     };
-                    (ev, false)
+                    (ev, false, false)
                 }
                 'A'..='Z' => {
                     let ev = match c.to_ascii_lowercase() {
@@ -894,53 +894,53 @@ impl TermwayCompositor {
                         'z' => 44,
                         _ => unreachable!(),
                     };
-                    (ev, true)
+                    (ev, true, false)
                 }
-                '1' => (2, false), '2' => (3, false), '3' => (4, false),
-                '4' => (5, false), '5' => (6, false), '6' => (7, false),
-                '7' => (8, false), '8' => (9, false), '9' => (10, false),
-                '0' => (11, false),
-                '!' => (2, true), '@' => (3, true), '#' => (4, true),
-                '$' => (5, true), '%' => (6, true), '^' => (7, true),
-                '&' => (8, true), '*' => (9, true), '(' => (10, true),
-                ')' => (11, true),
-                '-' => (12, false), '_' => (12, true),
-                '=' => (13, false), '+' => (13, true),
-                '[' => (26, false), '{' => (26, true),
-                ']' => (27, false), '}' => (27, true),
-                '\\' => (43, false), '|' => (43, true),
-                ';' => (39, false), ':' => (39, true),
-                '\'' => (40, false), '"' => (40, true),
-                '`' => (41, false), '~' => (41, true),
-                ',' => (51, false), '<' => (51, true),
-                '.' => (52, false), '>' => (52, true),
-                '/' => (53, false), '?' => (53, true),
-                ' ' => (57, false),
-                '\n' | '\r' => (28, false),
-                '\t' => (15, false),
+                '1' => (2, false, false), '2' => (3, false, false), '3' => (4, false, false),
+                '4' => (5, false, false), '5' => (6, false, false), '6' => (7, false, false),
+                '7' => (8, false, false), '8' => (9, false, false), '9' => (10, false, false),
+                '0' => (11, false, false),
+                '!' => (2, true, false), '@' => (3, true, false), '#' => (4, true, false),
+                '$' => (5, true, false), '%' => (6, true, false), '^' => (7, true, false),
+                '&' => (8, true, false), '*' => (9, true, false), '(' => (10, true, false),
+                ')' => (11, true, false),
+                '-' => (12, false, false), '_' => (12, true, false),
+                '=' => (13, false, false), '+' => (13, true, false),
+                '[' => (26, false, false), '{' => (26, true, false),
+                ']' => (27, false, false), '}' => (27, true, false),
+                '\\' => (43, false, false), '|' => (43, true, false),
+                ';' => (39, false, false), ':' => (39, true, false),
+                '\'' => (40, false, false), '"' => (40, true, false),
+                '`' => (41, false, false), '~' => (41, true, false),
+                ',' => (51, false, false), '<' => (51, true, false),
+                '.' => (52, false, false), '>' => (52, true, false),
+                '/' => (53, false, false), '?' => (53, true, false),
+                ' ' => (57, false, false),
+                '\n' | '\r' => (28, false, false),
+                '\t' => (15, false, false),
                 _ => return,
             },
-            KeyCode::Enter => (28, false),
-            KeyCode::Backspace => (14, false),
-            KeyCode::Tab => (15, false),
-            KeyCode::Escape => (1, false),
-            KeyCode::Up => (103, false),
-            KeyCode::Down => (108, false),
-            KeyCode::Left => (105, false),
-            KeyCode::Right => (106, false),
-            KeyCode::Home => (102, false),
-            KeyCode::End => (107, false),
-            KeyCode::PageUp => (104, false),
-            KeyCode::PageDown => (109, false),
-            KeyCode::Delete => (111, false),
+            KeyCode::Enter => (28, false, false),
+            KeyCode::Backspace => (14, false, false),
+            KeyCode::Tab => (15, false, false),
+            KeyCode::Escape => (1, false, false),
+            KeyCode::Up => (103, false, false),
+            KeyCode::Down => (108, false, false),
+            KeyCode::Left => (105, false, false),
+            KeyCode::Right => (106, false, false),
+            KeyCode::Home => (102, false, false),
+            KeyCode::End => (107, false, false),
+            KeyCode::PageUp => (104, false, false),
+            KeyCode::PageDown => (109, false, false),
+            KeyCode::Delete => (111, false, false),
             KeyCode::Ctrl(c) => match c.to_ascii_lowercase() {
-                'a' => (30, false), 'b' => (48, false), 'c' => (46, false), 'd' => (32, false),
-                'e' => (18, false), 'f' => (33, false), 'g' => (34, false), 'h' => (35, false),
-                'i' => (23, false), 'j' => (36, false), 'k' => (37, false), 'l' => (38, false),
-                'm' => (50, false), 'n' => (49, false), 'o' => (24, false), 'p' => (25, false),
-                'q' => (16, false), 'r' => (19, false), 's' => (31, false), 't' => (20, false),
-                'u' => (22, false), 'v' => (47, false), 'w' => (17, false), 'x' => (45, false),
-                'y' => (21, false), 'z' => (44, false),
+                'a' => (30, false, true), 'b' => (48, false, true), 'c' => (46, false, true), 'd' => (32, false, true),
+                'e' => (18, false, true), 'f' => (33, false, true), 'g' => (34, false, true), 'h' => (35, false, true),
+                'i' => (23, false, true), 'j' => (36, false, true), 'k' => (37, false, true), 'l' => (38, false, true),
+                'm' => (50, false, true), 'n' => (49, false, true), 'o' => (24, false, true), 'p' => (25, false, true),
+                'q' => (16, false, true), 'r' => (19, false, true), 's' => (31, false, true), 't' => (20, false, true),
+                'u' => (22, false, true), 'v' => (47, false, true), 'w' => (17, false, true), 'x' => (45, false, true),
+                'y' => (21, false, true), 'z' => (44, false, true),
                 _ => return,
             },
         };
@@ -949,6 +949,7 @@ impl TermwayCompositor {
         // (X11/XKB keycodes start at 8, and Smithay subtracts 8 when emitting to Wayland client).
         let key = Keycode::new(evdev_code + 8);
         let shift_key = Keycode::new(42 + 8); // KEY_LEFTSHIFT = 42
+        let ctrl_key = Keycode::new(29 + 8);  // KEY_LEFTCTRL = 29
         let keyboard = self.state.keyboard.clone();
 
         if need_shift {
@@ -958,6 +959,19 @@ impl TermwayCompositor {
                 shift_key,
                 KeyState::Pressed,
                 shift_serial,
+                time,
+                |_, _, _| FilterResult::Forward,
+            );
+            time += 1;
+        }
+
+        if need_ctrl {
+            let ctrl_serial = SERIAL_COUNTER.next_serial();
+            keyboard.input::<(), _>(
+                &mut self.state,
+                ctrl_key,
+                KeyState::Pressed,
+                ctrl_serial,
                 time,
                 |_, _, _| FilterResult::Forward,
             );
@@ -984,6 +998,19 @@ impl TermwayCompositor {
             |_, _, _| FilterResult::Forward,
         );
         time += 1;
+
+        if need_ctrl {
+            let ctrl_release_serial = SERIAL_COUNTER.next_serial();
+            keyboard.input::<(), _>(
+                &mut self.state,
+                ctrl_key,
+                KeyState::Released,
+                ctrl_release_serial,
+                time,
+                |_, _, _| FilterResult::Forward,
+            );
+            time += 1;
+        }
 
         if need_shift {
             let shift_release_serial = SERIAL_COUNTER.next_serial();

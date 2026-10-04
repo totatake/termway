@@ -64,6 +64,7 @@ impl XTestInjector {
 
         unsafe {
             let mut need_shift = false;
+            let mut need_ctrl = false;
             let keysym = match code {
                 KeyCode::Char(c) => {
                     need_shift = c.is_ascii_uppercase() || "!@#$%^&*()_+{}|:\"<>?~".contains(c);
@@ -82,15 +83,22 @@ impl XTestInjector {
                 KeyCode::PageUp => x11::keysym::XK_Page_Up as u64,
                 KeyCode::PageDown => x11::keysym::XK_Page_Down as u64,
                 KeyCode::Delete => x11::keysym::XK_Delete as u64,
-                KeyCode::Ctrl(c) => c as u64,
+                KeyCode::Ctrl(c) => {
+                    need_ctrl = true;
+                    c as u64
+                },
             };
 
             let keycode = x11::xlib::XKeysymToKeycode(self.display, keysym);
             let shift_keycode = x11::xlib::XKeysymToKeycode(self.display, x11::keysym::XK_Shift_L as u64);
+            let ctrl_keycode = x11::xlib::XKeysymToKeycode(self.display, x11::keysym::XK_Control_L as u64);
 
             if keycode != 0 {
                 if need_shift && shift_keycode != 0 {
                     x11::xtest::XTestFakeKeyEvent(self.display, shift_keycode as c_uint, 1, x11::xlib::CurrentTime);
+                }
+                if need_ctrl && ctrl_keycode != 0 {
+                    x11::xtest::XTestFakeKeyEvent(self.display, ctrl_keycode as c_uint, 1, x11::xlib::CurrentTime);
                 }
                 
                 // Press
@@ -98,6 +106,9 @@ impl XTestInjector {
                 // Release
                 x11::xtest::XTestFakeKeyEvent(self.display, keycode as c_uint, 0, x11::xlib::CurrentTime);
                 
+                if need_ctrl && ctrl_keycode != 0 {
+                    x11::xtest::XTestFakeKeyEvent(self.display, ctrl_keycode as c_uint, 0, x11::xlib::CurrentTime);
+                }
                 if need_shift && shift_keycode != 0 {
                     x11::xtest::XTestFakeKeyEvent(self.display, shift_keycode as c_uint, 0, x11::xlib::CurrentTime);
                 }
