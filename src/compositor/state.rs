@@ -32,10 +32,13 @@ use smithay::{
         },
         shell::xdg::{
             PopupSurface, PositionerState, ToplevelSurface, XdgShellHandler, XdgShellState,
+            decoration::{XdgDecorationHandler, XdgDecorationState},
         },
         shm::{ShmHandler, ShmState},
     },
 };
+
+use smithay::reexports::wayland_protocols::xdg::decoration::zv1::server::zxdg_toplevel_decoration_v1::Mode as DecorationMode;
 
 #[derive(Default)]
 pub struct ClientState {
@@ -52,6 +55,7 @@ use super::window::{ManagedWindow, WindowDragState, BORDER_WIDTH, TITLEBAR_HEIGH
 pub struct TermwayState {
     pub compositor_state: CompositorState,
     pub xdg_shell_state: XdgShellState,
+    pub xdg_decoration_state: XdgDecorationState,
     pub shm_state: ShmState,
     pub seat_state: SeatState<Self>,
     pub seat: Seat<Self>,
@@ -82,6 +86,7 @@ impl TermwayState {
     pub fn new(dh: &DisplayHandle, width: u32, height: u32, enable_wm: bool) -> Self {
         let compositor_state = CompositorState::new::<Self>(dh);
         let xdg_shell_state = XdgShellState::new::<Self>(dh);
+        let xdg_decoration_state = XdgDecorationState::new::<Self>(dh);
         let shm_state = ShmState::new::<Self>(dh, vec![]);
         let xwayland_shell_state = smithay::wayland::xwayland_shell::XWaylandShellState::new::<Self>(dh);
         let mut seat_state = SeatState::new();
@@ -114,6 +119,7 @@ impl TermwayState {
         Self {
             compositor_state,
             xdg_shell_state,
+            xdg_decoration_state,
             shm_state,
             seat_state,
             seat,
@@ -243,16 +249,19 @@ impl CompositorHandler for TermwayState {
                 if self.enable_wm {
                     let bbox = smithay::desktop::utils::bbox_from_surface_tree(surface, (0, 0));
                     if bbox.size.w > 0 && bbox.size.h > 0 {
-                        w.size = bbox.size;
-                        // 画面右端・下端からはみ出さないよう位置を調整
-                        let max_x = (self.width as i32 - w.size.w - BORDER_WIDTH).max(BORDER_WIDTH);
-                        let max_y = (self.height as i32 - w.size.h - BORDER_WIDTH).max(TITLEBAR_HEIGHT + BORDER_WIDTH);
-                        if w.loc.x > max_x {
-                            w.loc.x = max_x;
-                        }
-                        if w.loc.y > max_y {
-                            w.loc.y = max_y;
-                        }
+                        let max_allowed_w = (self.width as i32 - BORDER_WIDTH * 2 - 10).max(160);
+                        let max_allowed_h = (self.height as i32 - TITLEBAR_HEIGHT - BORDER_WIDTH * 2 - 10).max(100);
+                        let clamped_w = bbox.size.w.min(max_allowed_w);
+                        let clamped_h = bbox.size.h.min(max_allowed_h);
+                        w.size = (clamped_w, clamped_h).into();
+
+                        // 画面枠内に確実に収まるよう位置を調整
+                        let min_x = BORDER_WIDTH;
+                        let max_x = (self.width as i32 - w.size.w - BORDER_WIDTH).max(min_x);
+                        let min_y = TITLEBAR_HEIGHT + BORDER_WIDTH;
+                        let max_y = (self.height as i32 - w.size.h - BORDER_WIDTH).max(min_y);
+                        w.loc.x = w.loc.x.clamp(min_x, max_x);
+                        w.loc.y = w.loc.y.clamp(min_y, max_y);
                     }
                 }
             }
@@ -310,26 +319,31 @@ impl XdgShellHandler for TermwayState {
         let id = self.next_window_id;
         self.next_window_id += 1;
 
-        let (loc, size) = if self.enable_wm {
+        let (loc, configure_size, init_window_size) = if self.enable_wm {
             let offset = ((self.managed_windows.len() % 8) as i32) * 20;
             let loc_x = (20 + offset).max(BORDER_WIDTH);
             let loc_y = (TITLEBAR_HEIGHT + 10 + offset).max(TITLEBAR_HEIGHT + BORDER_WIDTH);
             let loc = smithay::utils::Point::from((loc_x, loc_y));
 
-            let max_w = (self.width as i32 - loc_x - BORDER_WIDTH * 2 - 20).max(200);
-            let max_h = (self.height as i32 - loc_y - BORDER_WIDTH * 2 - 20).max(150);
+            // Wayland XDG Shell仕様: フローティングウィンドウの初期configureでは size=(0, 0) を送信し、
+            // クライアント自身に希望する自然なサイズ（default_size 等）を選ばせる
+            let configure_size = smithay::utils::Size::from((0, 0));
+            let init_w = (self.width as i32 / 2).clamp(320, 600);
+            let init_h = (self.height as i32 / 2).clamp(240, 450);
+            let init_window_size = smithay::utils::Size::from((init_w, init_h));
 
-            (loc, smithay::utils::Size::from((max_w, max_h)))
+            (loc, configure_size, init_window_size)
         } else {
-            (
-                smithay::utils::Point::from((0, 0)),
-                smithay::utils::Size::from((self.width as i32, self.height as i32)),
-            )
+            let s = smithay::utils::Size::from((self.width as i32, self.height as i32));
+            (smithay::utils::Point::from((0, 0)), s, s)
         };
 
         surface.with_pending_state(|state| {
             state.states.set(xdg_toplevel::State::Activated);
-            state.size = Some(size);
+            if self.enable_wm {
+                state.decoration_mode = Some(DecorationMode::ServerSide);
+            }
+            state.size = Some(configure_size);
         });
         surface.send_configure();
 
@@ -340,7 +354,7 @@ impl XdgShellHandler for TermwayState {
         for w in &mut self.managed_windows {
             w.active = false;
         }
-        let win = ManagedWindow::new_wayland(id, surface, loc, size);
+        let win = ManagedWindow::new_wayland(id, surface, loc, init_window_size);
         self.managed_windows.push(win);
 
         let keyboard = self.keyboard.clone();
@@ -425,3 +439,39 @@ delegate_shm!(TermwayState);
 delegate_seat!(TermwayState);
 delegate_output!(TermwayState);
 delegate_data_device!(TermwayState);
+smithay::delegate_xdg_decoration!(TermwayState);
+
+impl XdgDecorationHandler for TermwayState {
+    fn new_decoration(&mut self, toplevel: ToplevelSurface) {
+        toplevel.with_pending_state(|state| {
+            if self.enable_wm {
+                state.decoration_mode = Some(DecorationMode::ServerSide);
+            } else {
+                state.decoration_mode = Some(DecorationMode::ClientSide);
+            }
+        });
+        toplevel.send_configure();
+    }
+
+    fn request_mode(&mut self, toplevel: ToplevelSurface, mode: DecorationMode) {
+        toplevel.with_pending_state(|state| {
+            if self.enable_wm {
+                state.decoration_mode = Some(DecorationMode::ServerSide);
+            } else {
+                state.decoration_mode = Some(mode);
+            }
+        });
+        toplevel.send_configure();
+    }
+
+    fn unset_mode(&mut self, toplevel: ToplevelSurface) {
+        toplevel.with_pending_state(|state| {
+            if self.enable_wm {
+                state.decoration_mode = Some(DecorationMode::ServerSide);
+            } else {
+                state.decoration_mode = Some(DecorationMode::ClientSide);
+            }
+        });
+        toplevel.send_configure();
+    }
+}

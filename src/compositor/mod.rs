@@ -260,6 +260,10 @@ impl TermwayCompositor {
                     cmd.env("QT_QPA_PLATFORM", "wayland;xcb");
                     cmd.env("CLUTTER_BACKEND", "wayland");
                     cmd.env("SDL_VIDEODRIVER", "wayland,x11");
+                    if self.state.enable_wm {
+                        cmd.env("GTK_CSD", "0");
+                        cmd.env("QT_WAYLAND_DISABLE_WINDOWDECORATION", "1");
+                    }
                     if let Some(ref disp) = self.x11_display {
                         cmd.env("DISPLAY", disp);
                     }
@@ -390,20 +394,21 @@ impl TermwayCompositor {
 
         if self.state.enable_wm {
             for m_win in &mut self.state.managed_windows {
-                let min_x = BORDER_WIDTH;
-                let min_y = TITLEBAR_HEIGHT + BORDER_WIDTH;
-                if m_win.loc.x < min_x {
-                    m_win.loc.x = min_x;
-                }
-                if m_win.loc.y < min_y {
-                    m_win.loc.y = min_y;
-                }
+                let max_w = (self.state.width as i32 - BORDER_WIDTH * 2 - 10).max(160);
+                let max_h = (self.state.height as i32 - TITLEBAR_HEIGHT - BORDER_WIDTH * 2 - 10).max(100);
+                let new_w = m_win.size.w.min(max_w);
+                let new_h = m_win.size.h.min(max_h);
 
-                let max_w = (self.state.width as i32 - m_win.loc.x - BORDER_WIDTH * 2).max(160);
-                let max_h = (self.state.height as i32 - m_win.loc.y - BORDER_WIDTH * 2).max(100);
-                let target_w = m_win.size.w.min(max_w);
-                let target_h = m_win.size.h.min(max_h);
-                m_win.configure_size(target_w, target_h);
+                let min_x = BORDER_WIDTH;
+                let max_x = (self.state.width as i32 - new_w - BORDER_WIDTH).max(min_x);
+                let min_y = TITLEBAR_HEIGHT + BORDER_WIDTH;
+                let max_y = (self.state.height as i32 - new_h - BORDER_WIDTH).max(min_y);
+                m_win.loc.x = m_win.loc.x.clamp(min_x, max_x);
+                m_win.loc.y = m_win.loc.y.clamp(min_y, max_y);
+
+                if new_w != m_win.size.w || new_h != m_win.size.h {
+                    m_win.configure_size(new_w, new_h);
+                }
             }
         } else {
             for window in &self.state.windows {
