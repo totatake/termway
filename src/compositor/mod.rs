@@ -1,6 +1,9 @@
 pub mod state;
 pub mod renderer;
 pub mod xwayland;
+pub mod window;
+pub mod bitmap_font;
+pub mod decoration;
 
 use std::io::{self, Read};
 use std::process::{Child, Command};
@@ -24,6 +27,7 @@ use crate::terminal::{RawModeGuard, TerminalSize};
 
 use self::renderer::TermwayRenderer;
 use self::state::{send_frames_surface_tree, ClientState, TermwayState};
+use self::window::{WindowDragState, WindowSurface, BORDER_WIDTH, TITLEBAR_HEIGHT};
 
 // Raw mode では `\n` だけだと行頭に戻らず表示が崩れるため、CRLF で出力する。
 pub(crate) fn log_line(msg: impl AsRef<str>) {
@@ -95,7 +99,7 @@ impl TermwayCompositor {
         log_line(format!("[termway] Resolution: {}x{}", width, height));
 
         // 2. Initialize Compositor State
-        let state = TermwayState::new(&dh, width, height);
+        let state = TermwayState::new(&dh, width, height, config.enable_wm);
 
         // 3. Initialize Pixman Offscreen Renderer
         let renderer = TermwayRenderer::new(width, height)?;
@@ -324,6 +328,11 @@ impl TermwayCompositor {
 
 
                     let time = self.state.start_time.elapsed().as_millis() as u32;
+                    for window in &self.state.managed_windows {
+                        if let Some(surface) = self.state.surface_for_managed_window(window) {
+                            send_frames_surface_tree(&surface, time);
+                        }
+                    }
                     for window in &self.state.windows {
                         send_frames_surface_tree(window.wl_surface(), time);
                     }
@@ -379,11 +388,37 @@ impl TermwayCompositor {
         };
         self.state.output.change_current_state(Some(new_mode), None, None, None);
 
-        for window in &self.state.windows {
-            window.with_pending_state(|state| {
-                state.size = Some((self.state.width as i32, self.state.height as i32).into());
-            });
-            window.send_configure();
+        if self.state.enable_wm {
+            for m_win in &mut self.state.managed_windows {
+                let min_x = BORDER_WIDTH;
+                let min_y = TITLEBAR_HEIGHT + BORDER_WIDTH;
+                if m_win.loc.x < min_x {
+                    m_win.loc.x = min_x;
+                }
+                if m_win.loc.y < min_y {
+                    m_win.loc.y = min_y;
+                }
+
+                let max_w = (self.state.width as i32 - m_win.loc.x - BORDER_WIDTH * 2).max(160);
+                let max_h = (self.state.height as i32 - m_win.loc.y - BORDER_WIDTH * 2).max(100);
+                let target_w = m_win.size.w.min(max_w);
+                let target_h = m_win.size.h.min(max_h);
+                m_win.configure_size(target_w, target_h);
+            }
+        } else {
+            for window in &self.state.windows {
+                window.with_pending_state(|state| {
+                    state.size = Some((self.state.width as i32, self.state.height as i32).into());
+                });
+                window.send_configure();
+            }
+            for xwin in &self.state.x11_windows {
+                let rect = smithay::utils::Rectangle::new(
+                    (0, 0).into(),
+                    (self.state.width as i32, self.state.height as i32).into(),
+                );
+                let _ = xwin.configure(rect);
+            }
         }
 
         self.state.dirty = true;
@@ -477,7 +512,6 @@ impl TermwayCompositor {
         let serial = SERIAL_COUNTER.next_serial();
         let time = self.state.start_time.elapsed().as_millis() as u32;
 
-        // Sixel の場合は最下行がステータスバーのため、画像は 1..rows-1 行目に描画される
         let avail_rows = if self.backend.is_sixel() {
             self.term_rows.saturating_sub(1).max(1)
         } else {
@@ -488,63 +522,235 @@ impl TermwayCompositor {
         let px = (ev.col.saturating_sub(1)) as f64 * cell_w + (cell_w * 0.5);
         let py = (ev.row.saturating_sub(1)) as f64 * cell_h + (cell_h * 0.5);
         let loc: Point<f64, Logical> = Point::from((px, py));
-
-        if ev.action == MouseAction::Press {
-            log_line(format!(
-                "[mouse] press col={} row={} -> px={:.1} py={:.1} (term_cols={} term_rows={} w={} h={})",
-                ev.col, ev.row, px, py, self.term_cols, self.term_rows, self.renderer.width(), self.renderer.height()
-            ));
-        }
-
-        // 優先度：
-        // 1. Wayland ネイティブ Toplevel ウィンドウ (Gtkデモなど)
-        // 2. X11 関連ウィンドウ (XWayland) - 最前面 (末尾) から順にヒットテスト
-        // 3. その他フォールバック
-        let mut focus = None;
-        if let Some(window) = self.state.windows.first() {
-            focus = Some((window.wl_surface().clone(), Point::from((0.0, 0.0))));
-        } else {
-            for xwin in self.state.x11_windows.iter().rev() {
-                let geo = xwin.geometry();
-                let rect = smithay::utils::Rectangle::<f64, Logical>::new(
-                    smithay::utils::Point::from((geo.loc.x as f64, geo.loc.y as f64)),
-                    smithay::utils::Size::from((geo.size.w as f64, geo.size.h as f64)),
-                );
-                if rect.contains(loc) {
-                    if let Some(s) = self.state.surface_for_x11(xwin) {
-                        let win_origin = smithay::utils::Point::<f64, Logical>::from((geo.loc.x as f64, geo.loc.y as f64));
-                        focus = Some((s, win_origin));
-                        break;
-                    }
-                }
-            }
-            if focus.is_none() {
-                if let Some(xwin) = self.state.x11_windows.first() {
-                    if let Some(s) = self.state.surface_for_x11(xwin) {
-                        let geo = xwin.geometry();
-                        let win_origin = smithay::utils::Point::<f64, Logical>::from((geo.loc.x as f64, geo.loc.y as f64));
-                        focus = Some((s, win_origin));
-                    }
-                }
-            }
-            if focus.is_none() {
-                if let Some(surface) = self.state.unassociated_surfaces.last() {
-                    focus = Some((surface.clone(), Point::from((0.0, 0.0))));
-                }
-            }
-        }
+        let loc_i32 = Point::<i32, Logical>::from((px as i32, py as i32));
 
         let pointer = self.state.pointer.clone();
         let keyboard = self.state.keyboard.clone();
 
-        let motion = MotionEvent { location: loc, serial, time };
-
         match ev.action {
             MouseAction::Move | MouseAction::Drag => {
+                // 1. Process active window dragging (Moving or Resizing)
+                match self.state.drag_state {
+                    WindowDragState::Moving { start_cursor, start_window_pos } => {
+                        let dx = (px - start_cursor.0).round() as i32;
+                        let dy = (py - start_cursor.1).round() as i32;
+                        if let Some(top_win) = self.state.managed_windows.last_mut() {
+                            let min_x = BORDER_WIDTH;
+                            let max_x = (self.renderer.width() as i32 - top_win.size.w - BORDER_WIDTH).max(min_x);
+                            let min_y = TITLEBAR_HEIGHT + BORDER_WIDTH;
+                            let max_y = (self.renderer.height() as i32 - top_win.size.h - BORDER_WIDTH).max(min_y);
+
+                            let new_x = (start_window_pos.0 + dx).clamp(min_x, max_x);
+                            let new_y = (start_window_pos.1 + dy).clamp(min_y, max_y);
+                            top_win.set_loc(Point::from((new_x, new_y)));
+                            self.state.dirty = true;
+                        }
+                        return;
+                    }
+                    WindowDragState::Resizing { start_cursor, start_window_geo } => {
+                        let dw = (px - start_cursor.0).round() as i32;
+                        let dh = (py - start_cursor.1).round() as i32;
+                        if let Some(top_win) = self.state.managed_windows.last_mut() {
+                            let max_w = (self.renderer.width() as i32 - top_win.loc.x - BORDER_WIDTH).max(100);
+                            let max_h = (self.renderer.height() as i32 - top_win.loc.y - BORDER_WIDTH).max(60);
+
+                            let new_w = (start_window_geo.size.w + dw).clamp(100, max_w);
+                            let new_h = (start_window_geo.size.h + dh).clamp(60, max_h);
+                            top_win.configure_size(new_w, new_h);
+                            self.state.dirty = true;
+                        }
+                        return;
+                    }
+                    WindowDragState::None => {}
+                }
+
+                // 2. Normal pointer motion: hit test managed windows (Top to Bottom)
+                let mut focus = None;
+                for win in self.state.managed_windows.iter().rev() {
+                    let content_geo = win.content_geometry();
+                    if content_geo.contains(loc_i32) {
+                        if let Some(surface) = self.state.surface_for_managed_window(win) {
+                            let win_origin = Point::from((win.loc.x as f64, win.loc.y as f64));
+                            focus = Some((surface, win_origin));
+                            break;
+                        }
+                    }
+                }
+                // Check unmanaged X11 popup/override-redirect surfaces
+                if focus.is_none() {
+                    for xwin in self.state.x11_windows.iter().rev() {
+                        let is_managed = self.state.managed_windows.iter().any(|mw| matches!(&mw.surface, WindowSurface::X11(w) if w == xwin));
+                        if !is_managed {
+                            let geo = xwin.geometry();
+                            if geo.contains(loc_i32) {
+                                if let Some(s) = self.state.surface_for_x11(xwin) {
+                                    focus = Some((s, Point::from((geo.loc.x as f64, geo.loc.y as f64))));
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+                if focus.is_none() {
+                    if let Some(surface) = self.state.unassociated_surfaces.last() {
+                        focus = Some((surface.clone(), Point::from((0.0, 0.0))));
+                    }
+                }
+
+                let motion = MotionEvent { location: loc, serial, time };
                 pointer.motion(&mut self.state, focus, &motion);
                 pointer.frame(&mut self.state);
             }
+
             MouseAction::Press => {
+                let is_left = matches!(ev.button, MouseButton::Left);
+
+                // A. Hit test managed windows from front to back
+                let mut hit_window_id = None;
+                let mut clicked_close = false;
+                let mut clicked_titlebar = false;
+                let mut clicked_resize = false;
+                let mut clicked_content = false;
+                let mut win_loc = Point::from((0, 0));
+                let mut win_geo = smithay::utils::Rectangle::new((0, 0).into(), (0, 0).into());
+
+                for win in self.state.managed_windows.iter().rev() {
+                    if self.state.enable_wm {
+                        if is_left && win.close_button_hit_geometry().contains(loc_i32) {
+                            hit_window_id = Some(win.id);
+                            clicked_close = true;
+                            break;
+                        }
+                        if is_left && win.resize_handle_hit_geometry().contains(loc_i32) {
+                            hit_window_id = Some(win.id);
+                            clicked_resize = true;
+                            win_geo = win.content_geometry();
+                            break;
+                        }
+                        if win.titlebar_geometry().contains(loc_i32) {
+                            hit_window_id = Some(win.id);
+                            clicked_titlebar = true;
+                            win_loc = win.loc;
+                            break;
+                        }
+                    }
+                    if win.content_geometry().contains(loc_i32) {
+                        hit_window_id = Some(win.id);
+                        clicked_content = true;
+                        win_loc = win.loc;
+                        break;
+                    }
+                }
+
+                if let Some(id) = hit_window_id {
+                    if clicked_close {
+                        // Close target window
+                        if let Some(pos) = self.state.managed_windows.iter().position(|w| w.id == id) {
+                            let win = self.state.managed_windows.remove(pos);
+                            win.close();
+
+                            // If this was an X11 surface, send SIGTERM to its process if PID is available
+                            if let WindowSurface::X11(ref xwin) = win.surface {
+                                if let Ok(pid) = xwin.get_client_pid() {
+                                    if pid > 0 {
+                                        let _ = nix::sys::signal::kill(
+                                            nix::unistd::Pid::from_raw(pid as i32),
+                                            nix::sys::signal::Signal::SIGTERM,
+                                        );
+                                    }
+                                }
+                            }
+
+                            // If all managed windows closed, terminate compositor or client process
+                            if self.state.managed_windows.is_empty() {
+                                if let Some(ref mut child) = self.client_child {
+                                    let _ = child.kill();
+                                }
+                                self.state.running = false;
+                            } else {
+                                if let Some(top) = self.state.managed_windows.last_mut() {
+                                    top.active = true;
+                                }
+                                if let Some(top) = self.state.managed_windows.last() {
+                                    if let Some(s) = self.state.surface_for_managed_window(top) {
+                                        keyboard.set_focus(&mut self.state, Some(s), serial);
+                                    }
+                                }
+                            }
+                            self.state.dirty = true;
+                        }
+                        return;
+                    }
+
+                    // Raise clicked window to top of Z-order & activate
+                    self.state.raise_window(id);
+
+                    if clicked_titlebar && is_left {
+                        // Begin window drag/move
+                        self.state.drag_state = WindowDragState::Moving {
+                            start_cursor: (px, py),
+                            start_window_pos: (win_loc.x, win_loc.y),
+                        };
+                        self.state.dirty = true;
+                        return;
+                    }
+
+                    if clicked_resize && is_left {
+                        // Begin window resize
+                        self.state.drag_state = WindowDragState::Resizing {
+                            start_cursor: (px, py),
+                            start_window_geo: win_geo,
+                        };
+                        self.state.dirty = true;
+                        return;
+                    }
+
+                    if clicked_content {
+                        // Forward press to client surface
+                        let win = self.state.managed_windows.last().unwrap();
+                        let focus = self.state.surface_for_managed_window(win).map(|s| (s, Point::from((win.loc.x as f64, win.loc.y as f64))));
+
+                        let motion = MotionEvent { location: loc, serial, time };
+                        pointer.motion(&mut self.state, focus.clone(), &motion);
+
+                        let btn = match ev.button {
+                            MouseButton::Left => 0x110,
+                            MouseButton::Middle => 0x112,
+                            MouseButton::Right => 0x111,
+                            _ => 0x110,
+                        };
+                        let btn_ev = ButtonEvent { serial, time, button: btn, state: ButtonState::Pressed };
+                        pointer.button(&mut self.state, &btn_ev);
+                        pointer.frame(&mut self.state);
+
+                        if let Some((s, _)) = focus {
+                            keyboard.set_focus(&mut self.state, Some(s), serial);
+                        }
+                        return;
+                    }
+                }
+
+                // B. Fallback: outside managed windows (unmanaged X11 popups or desktop)
+                let mut focus = None;
+                for xwin in self.state.x11_windows.iter().rev() {
+                    let is_managed = self.state.managed_windows.iter().any(|mw| matches!(&mw.surface, WindowSurface::X11(w) if w == xwin));
+                    if !is_managed {
+                        let geo = xwin.geometry();
+                        if geo.contains(loc_i32) {
+                            if let Some(s) = self.state.surface_for_x11(xwin) {
+                                focus = Some((s, Point::from((geo.loc.x as f64, geo.loc.y as f64))));
+                                break;
+                            }
+                        }
+                    }
+                }
+                if focus.is_none() {
+                    if let Some(surface) = self.state.unassociated_surfaces.last() {
+                        focus = Some((surface.clone(), Point::from((0.0, 0.0))));
+                    }
+                }
+
+                let motion = MotionEvent { location: loc, serial, time };
                 pointer.motion(&mut self.state, focus.clone(), &motion);
                 let btn = match ev.button {
                     MouseButton::Left => 0x110,
@@ -556,22 +762,51 @@ impl TermwayCompositor {
                 pointer.button(&mut self.state, &btn_ev);
                 pointer.frame(&mut self.state);
 
-                // キーボードフォーカスもポインタが当たっているウィンドウに合わせる
-                let mut kb_surface = None;
-                if let Some(window) = self.state.windows.first() {
-                    kb_surface = Some(window.wl_surface().clone());
-                } else if let Some((ref s, _)) = focus {
-                    kb_surface = Some(s.clone());
-                } else if let Some(xwin) = self.state.x11_windows.first() {
-                    kb_surface = self.state.surface_for_x11(xwin);
-                } else if let Some(surface) = self.state.unassociated_surfaces.last() {
-                    kb_surface = Some(surface.clone());
-                }
-                if let Some(surface) = kb_surface {
-                    keyboard.set_focus(&mut self.state, Some(surface), serial);
+                if let Some((s, _)) = focus {
+                    keyboard.set_focus(&mut self.state, Some(s), serial);
                 }
             }
+
             MouseAction::Release => {
+                let was_dragging = !matches!(self.state.drag_state, WindowDragState::None);
+                self.state.drag_state = WindowDragState::None;
+
+                if was_dragging {
+                    self.state.dirty = true;
+                    return;
+                }
+
+                // Forward normal release event
+                let mut focus = None;
+                for win in self.state.managed_windows.iter().rev() {
+                    if win.content_geometry().contains(loc_i32) {
+                        if let Some(surface) = self.state.surface_for_managed_window(win) {
+                            focus = Some((surface, Point::from((win.loc.x as f64, win.loc.y as f64))));
+                            break;
+                        }
+                    }
+                }
+                if focus.is_none() {
+                    for xwin in self.state.x11_windows.iter().rev() {
+                        let is_managed = self.state.managed_windows.iter().any(|mw| matches!(&mw.surface, WindowSurface::X11(w) if w == xwin));
+                        if !is_managed {
+                            let geo = xwin.geometry();
+                            if geo.contains(loc_i32) {
+                                if let Some(s) = self.state.surface_for_x11(xwin) {
+                                    focus = Some((s, Point::from((geo.loc.x as f64, geo.loc.y as f64))));
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+                if focus.is_none() {
+                    if let Some(surface) = self.state.unassociated_surfaces.last() {
+                        focus = Some((surface.clone(), Point::from((0.0, 0.0))));
+                    }
+                }
+
+                let motion = MotionEvent { location: loc, serial, time };
                 pointer.motion(&mut self.state, focus, &motion);
                 let btn = match ev.button {
                     MouseButton::Left => 0x110,

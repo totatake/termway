@@ -130,7 +130,10 @@ flowchart LR
 - `test_compositor_state_init`: Smithay Wayland コンポジタ状態（Compositor, XdgShell, Shm, Seat）初期化検証
 - `test_compositor_renderer_buffer`: Pixman オフスクリーン描画および RGBA カラーチャンネル配置検証
 - `test_xwayland_state_and_shell`: XWayland シェルおよび X11 サーフェス管理状態検証
-- `test_calloop_handle`: イベントループハンドルのライフタイム・クローン安全性検証
+- `test_output_and_data_device`: Smithay 出力およびデータデバイス初期化検証
+- `test_window_geometry_and_decorations`: タイトルバー、閉じるボタン、リサイズハンドルのジオメトリ計算および Pixman 装飾描画検証
+- `test_state_raise_window`: ウィンドウの Z-order 最前面浮上（Raise）およびアクティブ状態切り替え検証
+- `test_window_clamping_logic`: 画面解像度境界に対するウィンドウ位置・フレームのクランプ検証
 
 ---
 

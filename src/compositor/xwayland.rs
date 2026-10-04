@@ -13,6 +13,7 @@ use smithay::{
 };
 
 use super::state::TermwayState;
+use super::window::{ManagedWindow, WindowSurface, BORDER_WIDTH, TITLEBAR_HEIGHT};
 
 impl XWaylandShellHandler for TermwayState {
     fn xwayland_shell_state(&mut self) -> &mut XWaylandShellState {
@@ -34,9 +35,7 @@ impl XwmHandler for TermwayState {
 
     fn map_window_request(&mut self, _xwm: XwmId, window: X11Surface) {
         crate::compositor::log_line(format!("[xwayland] map_window_request id={:?} geo={:?}", window.window_id(), window.geometry()));
-        // XWayland が自動的にサイズ決定するので、ここで geometry を上書きしない
         let _ = window.set_mapped(true);
-        // フォーカスを取得してマウス・キーボードイベントがウィンドウへ届くようにする
         let _ = window.set_activated(true);
 
         let wl_surface = self.surface_for_x11(&window);
@@ -50,8 +49,48 @@ impl XwmHandler for TermwayState {
         }
 
         if !self.x11_windows.iter().any(|w| w == &window) {
-            self.x11_windows.push(window);
+            self.x11_windows.push(window.clone());
         }
+
+        // Manage as Openbox/Fluxbox managed window if not override-redirect
+        if !window.is_override_redirect() {
+            let already_managed = self.managed_windows.iter().any(|w| matches!(&w.surface, WindowSurface::X11(x) if x == &window));
+            if !already_managed {
+                let id = self.next_window_id;
+                self.next_window_id += 1;
+                let geo = window.geometry();
+                let (loc, size) = if self.enable_wm {
+                    let loc = if geo.loc.x == 0 && geo.loc.y == 0 {
+                        let offset = ((self.managed_windows.len() % 8) as i32) * 20;
+                        smithay::utils::Point::from((10 + offset, TITLEBAR_HEIGHT + 6 + offset))
+                    } else {
+                        smithay::utils::Point::from((
+                            geo.loc.x.max(BORDER_WIDTH),
+                            geo.loc.y.max(TITLEBAR_HEIGHT + BORDER_WIDTH),
+                        ))
+                    };
+                    let max_w = (self.width as i32 - loc.x - BORDER_WIDTH * 2 - 20).max(160);
+                    let max_h = (self.height as i32 - loc.y - BORDER_WIDTH * 2 - 20).max(100);
+                    let init_w = if geo.size.w > 0 { (geo.size.w as i32).min(max_w) } else { max_w };
+                    let init_h = if geo.size.h > 0 { (geo.size.h as i32).min(max_h) } else { max_h };
+                    (loc, smithay::utils::Size::from((init_w, init_h)))
+                } else {
+                    (
+                        smithay::utils::Point::from((0, 0)),
+                        smithay::utils::Size::from((self.width as i32, self.height as i32)),
+                    )
+                };
+
+                for w in &mut self.managed_windows {
+                    w.active = false;
+                }
+                let win = ManagedWindow::new_x11(id, window.clone(), loc, size);
+                let rect = Rectangle::new(loc, size);
+                let _ = window.configure(rect);
+                self.managed_windows.push(win);
+            }
+        }
+
         self.dirty = true;
     }
 
@@ -70,6 +109,10 @@ impl XwmHandler for TermwayState {
             self.unassociated_surfaces.retain(|s| s.id().protocol_id() != wid);
         }
         self.x11_windows.retain(|w| w != &window);
+        self.managed_windows.retain(|w| !matches!(&w.surface, WindowSurface::X11(x) if x == &window));
+        if let Some(top) = self.managed_windows.last_mut() {
+            top.active = true;
+        }
         self.dirty = true;
     }
 
@@ -80,6 +123,10 @@ impl XwmHandler for TermwayState {
             self.unassociated_surfaces.retain(|s| s.id().protocol_id() != wid);
         }
         self.x11_windows.retain(|w| w != &window);
+        self.managed_windows.retain(|w| !matches!(&w.surface, WindowSurface::X11(x) if x == &window));
+        if let Some(top) = self.managed_windows.last_mut() {
+            top.active = true;
+        }
         self.dirty = true;
     }
 
@@ -97,12 +144,34 @@ impl XwmHandler for TermwayState {
             "[xwayland] configure_request id={:?} req=({:?},{:?},{:?},{:?}) current={:?}",
             window.window_id(), x, y, w, h, window.geometry()
         ));
-        // アプリが要求したサイズを優先し、指定がなければターミナル全体サイズを使う。
-        let rect = Rectangle::new(
-            (x.unwrap_or(0), y.unwrap_or(0)).into(),
-            (w.unwrap_or(self.width) as i32, h.unwrap_or(self.height) as i32).into(),
-        );
+
+        let rect = if self.enable_wm {
+            let cur_loc = self.managed_windows.iter().find(|mw| matches!(&mw.surface, WindowSurface::X11(ref xwin) if xwin == &window))
+                .map(|mw| mw.loc)
+                .unwrap_or_else(|| {
+                    smithay::utils::Point::from((
+                        x.unwrap_or(BORDER_WIDTH).max(BORDER_WIDTH),
+                        y.unwrap_or(TITLEBAR_HEIGHT + BORDER_WIDTH).max(TITLEBAR_HEIGHT + BORDER_WIDTH),
+                    ))
+                });
+            let max_w = (self.width as i32 - cur_loc.x - BORDER_WIDTH * 2).max(160);
+            let max_h = (self.height as i32 - cur_loc.y - BORDER_WIDTH * 2).max(100);
+            let target_w = w.map(|v| (v as i32).min(max_w)).unwrap_or(max_w);
+            let target_h = h.map(|v| (v as i32).min(max_h)).unwrap_or(max_h);
+            Rectangle::new(cur_loc, (target_w, target_h).into())
+        } else {
+            Rectangle::new(
+                (x.unwrap_or(0), y.unwrap_or(0)).into(),
+                (w.unwrap_or(self.width) as i32, h.unwrap_or(self.height) as i32).into(),
+            )
+        };
+
         let _ = window.configure(rect);
+        for mw in &mut self.managed_windows {
+            if matches!(&mw.surface, WindowSurface::X11(ref xwin) if xwin == &window) {
+                mw.size = rect.size;
+            }
+        }
         self.dirty = true;
     }
 
@@ -117,6 +186,22 @@ impl XwmHandler for TermwayState {
             "[xwayland] configure_notify id={:?} geo={:?}",
             window.window_id(), geometry
         ));
+        for w in &mut self.managed_windows {
+            if matches!(&w.surface, WindowSurface::X11(x) if x == &window) {
+                w.update_title();
+                if self.enable_wm {
+                    let max_w = (self.width as i32 - w.loc.x - BORDER_WIDTH * 2).max(160);
+                    let max_h = (self.height as i32 - w.loc.y - BORDER_WIDTH * 2).max(100);
+                    w.size = (geometry.size.w.min(max_w), geometry.size.h.min(max_h)).into();
+                    let max_x = (self.width as i32 - w.size.w - BORDER_WIDTH).max(BORDER_WIDTH);
+                    let max_y = (self.height as i32 - w.size.h - BORDER_WIDTH).max(TITLEBAR_HEIGHT + BORDER_WIDTH);
+                    if w.loc.x > max_x { w.loc.x = max_x; }
+                    if w.loc.y > max_y { w.loc.y = max_y; }
+                } else {
+                    w.size = geometry.size;
+                }
+            }
+        }
         self.dirty = true;
     }
 

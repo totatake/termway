@@ -14,11 +14,14 @@ use smithay::{
     utils::{Buffer, Physical, Rectangle, Size, Transform},
 };
 
+use super::decoration::DecorationRenderer;
 use super::state::TermwayState;
+use super::window::WindowSurface;
 
 pub struct TermwayRenderer {
     renderer: PixmanRenderer,
     buffer: pixman::Image<'static, 'static>,
+    decoration_renderer: DecorationRenderer,
     width: u32,
     height: u32,
 }
@@ -29,10 +32,12 @@ impl TermwayRenderer {
         let buffer_size: Size<i32, Buffer> = Size::from((width as i32, height as i32));
         // Use Abgr8888 so that in little-endian the bytes in memory are [R, G, B, A]
         let buffer = renderer.create_buffer(Fourcc::Abgr8888, buffer_size)?;
+        let decoration_renderer = DecorationRenderer::new();
 
         Ok(Self {
             renderer,
             buffer,
+            decoration_renderer,
             width,
             height,
         })
@@ -53,31 +58,35 @@ impl TermwayRenderer {
         let phys_size: Size<i32, Physical> = Size::from((self.width as i32, self.height as i32));
         let damage: Rectangle<i32, Physical> = Rectangle::from_size(phys_size);
 
-        // 1. Collect render elements from all toplevel surfaces (Wayland XDG & XWayland)
+        // 1. Collect render elements from surfaces (Front to Back order for draw_render_elements)
         let mut elements: Vec<WaylandSurfaceRenderElement<PixmanRenderer>> = Vec::new();
-        for window in &state.windows {
-            let elems = render_elements_from_surface_tree(
-                &mut self.renderer,
-                window.wl_surface(),
-                (0, 0),
-                1.0,
-                1.0,
-                Kind::Unspecified,
-            );
-            elements.extend(elems);
+
+        // A. Render unmanaged X11 popup/override-redirect surfaces on top
+        for xwindow in state.x11_windows.iter().rev() {
+            let is_managed = state.managed_windows.iter().any(|mw| matches!(&mw.surface, WindowSurface::X11(w) if w == xwindow));
+            if !is_managed {
+                let geo = xwindow.geometry();
+                if let Some(surface) = state.surface_for_x11(xwindow) {
+                    let elems = render_elements_from_surface_tree(
+                        &mut self.renderer,
+                        &surface,
+                        (geo.loc.x, geo.loc.y),
+                        1.0,
+                        1.0,
+                        Kind::Unspecified,
+                    );
+                    elements.extend(elems);
+                }
+            }
         }
 
-        // Smithay の draw_render_elements は elements を「最前面から最奥（Top to Bottom）」
-        // の順序で要求する（不透明領域のオクルージョンカリングを最前面から順に判定するため）。
-        // x11_windows は新しくマップされたウィンドウ（ポップアップメニュー等）が末尾に追加されるため、
-        // 逆順（.iter().rev()）で最前面のウィンドウから先に elements に積む。
-        for xwindow in state.x11_windows.iter().rev() {
-            let geo = xwindow.geometry();
-            if let Some(surface) = state.surface_for_x11(xwindow) {
+        // B. Render managed windows in top-to-bottom order (rev() since managed_windows last is front)
+        for window in state.managed_windows.iter().rev() {
+            if let Some(surface) = state.surface_for_managed_window(window) {
                 let elems = render_elements_from_surface_tree(
                     &mut self.renderer,
                     &surface,
-                    (geo.loc.x, geo.loc.y),
+                    (window.loc.x, window.loc.y),
                     1.0,
                     1.0,
                     Kind::Unspecified,
@@ -86,8 +95,8 @@ impl TermwayRenderer {
             }
         }
 
-        // Fallback: if no X11 windows are tracked yet, render unassociated surfaces at (0, 0)
-        if state.x11_windows.is_empty() {
+        // C. Fallback: if no elements collected from managed or X11 windows, render unassociated surfaces at (0, 0)
+        if elements.is_empty() {
             for surface in &state.unassociated_surfaces {
                 let elems = render_elements_from_surface_tree(
                     &mut self.renderer,
@@ -105,10 +114,22 @@ impl TermwayRenderer {
         let mut target = self.renderer.bind(&mut self.buffer)?;
         let mut frame = self.renderer.render(&mut target, phys_size, Transform::Normal)?;
         
-        // Clear background to dark gray
+        // Clear background to dark gray (#14141a)
         frame.clear(Color32F::new(0.08, 0.08, 0.10, 1.0), &[damage])?;
         draw_render_elements(&mut frame, 1.0, &elements, &[damage]).map_err(|e| format!("{:?}", e))?;
         let _ = frame.finish()?;
+
+        // 3. Draw Openbox/Fluxbox window decorations (Bottom to Top order) if WM is enabled
+        if state.enable_wm {
+            for window in &state.managed_windows {
+                self.decoration_renderer.draw_decorations(
+                    &mut self.buffer,
+                    self.width,
+                    self.height,
+                    window,
+                );
+            }
+        }
 
         // 3. Extract RGBA pixel slice
         let stride = self.buffer.stride();

@@ -47,6 +47,8 @@ impl ClientData for ClientState {
     fn disconnected(&self, _client_id: ClientId, _reason: DisconnectReason) {}
 }
 
+use super::window::{ManagedWindow, WindowDragState, BORDER_WIDTH, TITLEBAR_HEIGHT};
+
 pub struct TermwayState {
     pub compositor_state: CompositorState,
     pub xdg_shell_state: XdgShellState,
@@ -61,6 +63,9 @@ pub struct TermwayState {
 
     pub windows: Vec<ToplevelSurface>,
     pub x11_windows: Vec<smithay::xwayland::X11Surface>,
+    pub managed_windows: Vec<ManagedWindow>,
+    pub drag_state: WindowDragState,
+    pub next_window_id: usize,
     pub unassociated_surfaces: Vec<WlSurface>,
     pub xwayland_shell_state: smithay::wayland::xwayland_shell::XWaylandShellState,
     pub xwm: Option<smithay::xwayland::xwm::X11Wm>,
@@ -69,11 +74,12 @@ pub struct TermwayState {
     pub running: bool,
     pub width: u32,
     pub height: u32,
+    pub enable_wm: bool,
     pub start_time: std::time::Instant,
 }
 
 impl TermwayState {
-    pub fn new(dh: &DisplayHandle, width: u32, height: u32) -> Self {
+    pub fn new(dh: &DisplayHandle, width: u32, height: u32, enable_wm: bool) -> Self {
         let compositor_state = CompositorState::new::<Self>(dh);
         let xdg_shell_state = XdgShellState::new::<Self>(dh);
         let shm_state = ShmState::new::<Self>(dh, vec![]);
@@ -117,6 +123,9 @@ impl TermwayState {
             data_device_state,
             windows: Vec::new(),
             x11_windows: Vec::new(),
+            managed_windows: Vec::new(),
+            drag_state: WindowDragState::None,
+            next_window_id: 1,
             unassociated_surfaces: Vec::new(),
             xwayland_shell_state,
             xwm: None,
@@ -125,9 +134,41 @@ impl TermwayState {
             running: true,
             width,
             height,
+            enable_wm,
             start_time: std::time::Instant::now(),
         }
     }
+
+    pub fn raise_window(&mut self, id: usize) {
+        if let Some(pos) = self.managed_windows.iter().position(|w| w.id == id) {
+            let mut win = self.managed_windows.remove(pos);
+            for w in &mut self.managed_windows {
+                w.active = false;
+            }
+            win.active = true;
+            let wl_surface = self.surface_for_managed_window(&win);
+            self.managed_windows.push(win);
+
+            if let Some(surface) = wl_surface {
+                let keyboard = self.keyboard.clone();
+                keyboard.set_focus(
+                    self,
+                    Some(surface),
+                    smithay::utils::SERIAL_COUNTER.next_serial(),
+                );
+            }
+            self.dirty = true;
+        }
+    }
+
+    pub fn surface_for_managed_window(&self, window: &ManagedWindow) -> Option<WlSurface> {
+        match &window.surface {
+            super::window::WindowSurface::Wayland(w) => Some(w.wl_surface().clone()),
+            super::window::WindowSurface::X11(w) => self.surface_for_x11(w),
+            super::window::WindowSurface::Dummy => None,
+        }
+    }
+
 
     /// Retrieve the corresponding WlSurface for an X11Surface.
     /// Matches by wl_surface(), wl_surface_serial(), or wl_surface_id().
@@ -191,6 +232,31 @@ impl CompositorHandler for TermwayState {
         
         // 破棄済みサーフェスをフォーカス・描画候補から除く
         self.unassociated_surfaces.retain(|s| smithay::reexports::wayland_server::Resource::is_alive(s));
+        self.managed_windows.retain(|w| {
+            w.wl_surface().as_ref().map(|s| smithay::reexports::wayland_server::Resource::is_alive(s)).unwrap_or(true)
+        });
+
+        // タイトルや状態の更新
+        for w in &mut self.managed_windows {
+            if w.wl_surface().as_ref() == Some(surface) {
+                w.update_title();
+                if self.enable_wm {
+                    let bbox = smithay::desktop::utils::bbox_from_surface_tree(surface, (0, 0));
+                    if bbox.size.w > 0 && bbox.size.h > 0 {
+                        w.size = bbox.size;
+                        // 画面右端・下端からはみ出さないよう位置を調整
+                        let max_x = (self.width as i32 - w.size.w - BORDER_WIDTH).max(BORDER_WIDTH);
+                        let max_y = (self.height as i32 - w.size.h - BORDER_WIDTH).max(TITLEBAR_HEIGHT + BORDER_WIDTH);
+                        if w.loc.x > max_x {
+                            w.loc.x = max_x;
+                        }
+                        if w.loc.y > max_y {
+                            w.loc.y = max_y;
+                        }
+                    }
+                }
+            }
+        }
 
         let mut tracked = false;
         for w in &self.windows {
@@ -203,6 +269,11 @@ impl CompositorHandler for TermwayState {
                 if &s == surface {
                     tracked = true; break;
                 }
+            }
+        }
+        for w in &self.managed_windows {
+            if w.wl_surface().as_ref() == Some(surface) {
+                tracked = true; break;
             }
         }
         // サブサーフェス（親あり）とカーソル画像は独立サーフェスとして扱わない
@@ -236,14 +307,41 @@ impl XdgShellHandler for TermwayState {
     }
 
     fn new_toplevel(&mut self, surface: ToplevelSurface) {
+        let id = self.next_window_id;
+        self.next_window_id += 1;
+
+        let (loc, size) = if self.enable_wm {
+            let offset = ((self.managed_windows.len() % 8) as i32) * 20;
+            let loc_x = (20 + offset).max(BORDER_WIDTH);
+            let loc_y = (TITLEBAR_HEIGHT + 10 + offset).max(TITLEBAR_HEIGHT + BORDER_WIDTH);
+            let loc = smithay::utils::Point::from((loc_x, loc_y));
+
+            let max_w = (self.width as i32 - loc_x - BORDER_WIDTH * 2 - 20).max(200);
+            let max_h = (self.height as i32 - loc_y - BORDER_WIDTH * 2 - 20).max(150);
+
+            (loc, smithay::utils::Size::from((max_w, max_h)))
+        } else {
+            (
+                smithay::utils::Point::from((0, 0)),
+                smithay::utils::Size::from((self.width as i32, self.height as i32)),
+            )
+        };
+
         surface.with_pending_state(|state| {
             state.states.set(xdg_toplevel::State::Activated);
-            state.size = Some((self.width as i32, self.height as i32).into());
+            state.size = Some(size);
         });
         surface.send_configure();
+
         let wl = surface.wl_surface().clone();
         self.unassociated_surfaces.retain(|s| s != &wl);
-        self.windows.push(surface);
+        self.windows.push(surface.clone());
+
+        for w in &mut self.managed_windows {
+            w.active = false;
+        }
+        let win = ManagedWindow::new_wayland(id, surface, loc, size);
+        self.managed_windows.push(win);
 
         let keyboard = self.keyboard.clone();
         keyboard.set_focus(
