@@ -330,7 +330,7 @@ impl TermwayCompositor {
                         send_frames_surface_tree(window.wl_surface(), time);
                     }
                     for window in &self.state.x11_windows {
-                        if let Some(surface) = window.wl_surface() {
+                        if let Some(surface) = self.state.surface_for_x11(window) {
                             send_frames_surface_tree(&surface, time);
                         }
                     }
@@ -429,13 +429,15 @@ impl TermwayCompositor {
         let pointer = self.state.pointer.clone();
         let keyboard = self.state.keyboard.clone();
 
+        let motion = MotionEvent { location: loc, serial, time };
+
         match ev.action {
             MouseAction::Move | MouseAction::Drag => {
-                let motion = MotionEvent { location: loc, serial, time };
                 pointer.motion(&mut self.state, focus, &motion);
                 pointer.frame(&mut self.state);
             }
             MouseAction::Press => {
+                pointer.motion(&mut self.state, focus.clone(), &motion);
                 let btn = match ev.button {
                     MouseButton::Left => 0x110,
                     MouseButton::Middle => 0x112,
@@ -462,6 +464,7 @@ impl TermwayCompositor {
                 }
             }
             MouseAction::Release => {
+                pointer.motion(&mut self.state, focus, &motion);
                 let btn = match ev.button {
                     MouseButton::Left => 0x110,
                     MouseButton::Middle => 0x112,

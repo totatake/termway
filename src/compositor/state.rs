@@ -149,7 +149,6 @@ impl TermwayState {
             }
         }
 
-        // If this window does not have an ID/serial yet, find an unclaimed surface from unassociated_surfaces
         let claimed_wids: Vec<u32> = self.x11_windows.iter().filter_map(|w| {
             #[allow(deprecated)]
             w.wl_surface_id()
@@ -215,6 +214,8 @@ impl CompositorHandler for TermwayState {
         }
         if !tracked {
             if !self.unassociated_surfaces.iter().any(|s| s == surface) {
+                use smithay::reexports::wayland_server::Resource;
+                crate::compositor::log_line(format!("[commit] new unassoc surface id={}", surface.id().protocol_id()));
                 self.unassociated_surfaces.push(surface.clone());
                 
                 let keyboard = self.keyboard.clone();
