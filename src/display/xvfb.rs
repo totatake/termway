@@ -108,6 +108,42 @@ impl XvfbServer {
         }
     }
 
+    /// Query the number of mapped client windows on the root window
+    pub fn count_client_windows(&self) -> usize {
+        let mut root_return = 0;
+        let mut parent_return = 0;
+        let mut children_return: *mut x11::xlib::Window = std::ptr::null_mut();
+        let mut nchildren_return: u32 = 0;
+
+        let status = unsafe {
+            x11::xlib::XQueryTree(
+                self.display_ptr,
+                self.root_window,
+                &mut root_return,
+                &mut parent_return,
+                &mut children_return,
+                &mut nchildren_return,
+            )
+        };
+
+        let mut count = 0;
+        if status != 0 && !children_return.is_null() {
+            let slice = unsafe { std::slice::from_raw_parts(children_return, nchildren_return as usize) };
+            for &win in slice {
+                let mut attrs: x11::xlib::XWindowAttributes = unsafe { std::mem::zeroed() };
+                if unsafe { x11::xlib::XGetWindowAttributes(self.display_ptr, win, &mut attrs) } != 0 {
+                    if attrs.map_state == x11::xlib::IsViewable && attrs.override_redirect == 0 && attrs.width > 1 && attrs.height > 1 {
+                        count += 1;
+                    }
+                }
+            }
+            unsafe {
+                x11::xlib::XFree(children_return as *mut std::ffi::c_void);
+            }
+        }
+        count
+    }
+
     fn find_free_display() -> u32 {
         for num in 99..200 {
             let socket_path = format!("/tmp/.X11-unix/X{}", num);

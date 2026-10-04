@@ -132,6 +132,9 @@ impl TermwayEngine {
 
         let mut running = true;
 
+        let mut has_opened_windows = false;
+        let spawn_time = Instant::now();
+
         while running {
             if WINCH_RECEIVED.swap(false, std::sync::atomic::Ordering::Relaxed) {
                 if let Ok(new_size) = TerminalSize::query() {
@@ -141,10 +144,30 @@ impl TermwayEngine {
 
             let frame_start = Instant::now();
 
-            // A. Check if client process exited
-            if let Some(ref mut child) = client_child {
+            let active_windows = xvfb.count_client_windows();
+            if active_windows > 0 {
+                has_opened_windows = true;
+            }
+
+            // A. Check exit condition based on window lifecycle
+            if has_opened_windows {
+                if active_windows == 0 {
+                    eprintln!("[termway] All X11 windows closed, exiting.");
+                    break;
+                }
+            } else if let Some(ref mut child) = client_child {
                 match child.try_wait() {
-                    Ok(Some(_status)) => break,
+                    Ok(Some(status)) => {
+                        if !status.success() {
+                            eprintln!("[termway] Client process exited with error ({:?}) before opening any window.", status);
+                            break;
+                        }
+                        // If parent exited with 0 (e.g. gvim fork), wait up to 3s grace period for window to appear
+                        if spawn_time.elapsed() > Duration::from_secs(3) {
+                            eprintln!("[termway] Client exited and grace period expired with no X11 window opened.");
+                            break;
+                        }
+                    }
                     Ok(None) => {}
                     Err(_) => break,
                 }
