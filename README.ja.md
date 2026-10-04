@@ -1,5 +1,7 @@
 # termway: The Ultimate Terminal GUI Bridge
 
+[English](README.md) | [日本語](README.ja.md)
+
 ターミナル（端末エミュレータ）の画面内に、Wayland および X11 GUI アプリケーションを直接埋め込んで実行・操作できる高速ブリッジツールです。Smithay ベースの自立型ヘッドレスコンポジタと XWayland を内蔵しています。
 
 ---
@@ -88,9 +90,16 @@ flowchart LR
 
 ### サーバー / 実行環境
 - Linux (x86_64)
-- Wayland / XWayland ライブラリ
-- レガシー `--x11` モード使用時のみ: `Xvfb` および `openbox` (推奨ウィンドウマネージャー)
 - Rust ツールチェーン (1.70 以上)
+- 必要なシステムライブラリ:
+
+```bash
+# Ubuntu / Debian
+sudo apt-get install -y build-essential pkg-config libx11-dev libxtst-dev libpixman-1-dev libwayland-dev xwayland
+
+# レガシー --x11 モードを使用する場合のみ追加で必要
+sudo apt-get install -y xvfb openbox
+```
 
 ---
 
@@ -98,7 +107,7 @@ flowchart LR
 
 ```bash
 # リポジトリのクローン
-git clone <repository-url>
+git clone https://github.com/username/termway.git
 cd termway
 
 # ビルド
