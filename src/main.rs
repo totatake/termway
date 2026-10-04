@@ -3,29 +3,30 @@ use termway::engine::{EngineConfig, TermwayEngine};
 
 fn print_help() {
     println!(
-        r#"termway: The Ultimate X11-to-Terminal GUI Bridge
+        r#"termway: The Ultimate Terminal GUI Bridge
 
 USAGE:
     termway [OPTIONS] [--] [COMMAND [ARGS...]]
 
 OPTIONS:
-    --wayland                 Use native Smithay Wayland Compositor instead of X11/Xvfb
+    --x11, --xvfb             Use legacy X11/Xvfb mode instead of native Wayland Compositor
+    --wayland                 Use native Smithay Wayland Compositor (default)
     --width <PIXELS>          Virtual display width (default: auto from terminal)
     --height <PIXELS>         Virtual display height (default: auto from terminal)
     --cell-size <WxH>         Font cell pixel size (e.g. 10x20, default: auto/env/10x20)
     --fps <FPS>               Target frame rate (default: 30)
-    --wm                      Start a lightweight Window Manager (openbox)
+    --wm                      Start a lightweight Window Manager (openbox in X11 mode)
     --sixel                   Force Sixel graphics protocol
     --kitty                   Force Kitty graphics protocol
-    --demo                    Run built-in Tkinter demo GUI application
+    --demo                    Run built-in demo GUI application
     -h, --help                Print this help information
 
 EXAMPLES:
     termway --demo
-    termway --wayland -- gvim -f
-    termway --wayland --kitty -- gvim -f
-    termway --wayland --cell-size 10x22 -- gvim -f
-    termway --wm -- xclock
+    termway -- gvim -f
+    termway --kitty -- gvim -f
+    termway --cell-size 10x22 -- gvim -f
+    termway --x11 --wm -- xclock
 "#
     );
 }
@@ -40,7 +41,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut i = 1;
     let mut run_demo = false;
-    let mut use_wayland = false;
+    let mut use_wayland = true;
 
     while i < args.len() {
         let arg = &args[i];
@@ -89,6 +90,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             config.fps = args[i].parse()?;
         } else if arg == "--wayland" {
             use_wayland = true;
+        } else if arg == "--x11" || arg == "--xvfb" {
+            use_wayland = false;
         } else if arg == "--sixel" {
             explicit_sixel = true;
         } else if arg == "--kitty" {

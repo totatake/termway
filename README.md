@@ -109,34 +109,31 @@ Sixelを使いたい場合は `--sixel` を追加します。ウィンドウの�
 cargo run --release -- --sixel --wm --demo
 ```
 
-### 2. 任意のX11アプリケーションの実行
-`--` の後に実行したいコマンドと引数を指定します：
+### 2. 任意のアプリケーションの実行
+`--` の後に実行したいコマンドと引数を指定します（デフォルトで Wayland コンポジタが立ち上がり、XWayland により X11 アプリもそのまま動作します）：
 
 ```bash
-# マウス追従アプリ（Sixel ＆ ウィンドウマネージャー付き）
-cargo run --release -- --sixel --wm -- xeyes
-
-# 時計アプリ
-cargo run --release -- --sixel --wm -- xclock
-```
-
-### 3. Smithay Wayland コンポジタモードの使用（v2.0 実装済み）
-
-`--wayland` フラグを指定すると、termway 自身が Smithay ベースのヘッドレス Wayland コンポジタとして起動します。
-XWayland も自動で起動されるため、レガシーな X11 アプリケーションもそのまま実行できます。
-
-```bash
-# Smithay コンポジタモードで gvim を起動（端末プロトコルは自動判定）
-cargo run --release -- --wayland -- gvim -f
-
-# Kitty プロトコルを明示指定して起動
-cargo run --release -- --wayland --kitty -- gvim -f
+# GUI アプリケーションを起動（デフォルト: Wayland コンポジタ + Kitty/Sixel 自動検出）
+cargo run --release -- gvim -f
 
 # Sixel プロトコルを明示指定して起動
-cargo run --release -- --wayland --sixel -- gvim -f
+cargo run --release -- --sixel -- gvim -f
 
+# Kitty プロトコルを明示指定して起動
+cargo run --release -- --kitty -- gvim -f
+
+# レガシーな X11/Xvfb モードで実行する場合
+cargo run --release -- --x11 --wm -- xclock
+```
+
+### 3. Smithay Wayland コンポジタ（デフォルト）
+
+termway 自身が Smithay ベースのヘッドレス Wayland コンポジタとして起動します。
+XWayland も自動で起動されるため、最新の Wayland ネイティブアプリだけでなく、レガシーな X11 アプリケーション（xeyes, xclock等）も透過的にそのまま実行できます。
+
+```bash
 # フォントセルサイズ（幅x高さ）を明示指定してマウス座標精度を最適化
-cargo run --release -- --wayland --cell-size 10x22 -- gvim -f
+cargo run --release -- --cell-size 10x22 -- gvim -f
 ```
 
 ### 4. フォントセルサイズの動的測定と補正 (--cell-size, TERMWAY_CELL_SIZE)
@@ -168,8 +165,9 @@ cargo run --release -- --sixel -- gvim -f
 
 | オプション | 引数 | 説明 | デフォルト |
 | :--- | :--- | :--- | :--- |
+| `--wayland` | - | Smithay ベースのヘッドレス Wayland コンポジタモードを使用する（デフォルト） | 有効 |
+| `--x11`, `--xvfb` | - | 従来の X11/Xvfb + XTest 注入モードを使用する | - |
 | `--sixel` | - | Kittyプロトコルの代わりにSixelプロトコルを明示的に使用する（`KITTY_WINDOW_ID` 未設定時は自動有効化） | - |
-| `--wayland` | - | Smithay ベースのヘッドレス Wayland コンポジタモードで起動する（XWayland を自動起動） | - |
 | `--wm` | - | 仮想ディスプレイで軽量ウィンドウマネージャー (Openbox) を起動する | - |
 | `--width` | `<PIXELS>` | 仮想ディスプレイ解像度の幅 | 端末サイズから自動算出 |
 | `--height` | `<PIXELS>` | 仮想ディスプレイ解像度の高さ | 端末サイズから自動算出 |
