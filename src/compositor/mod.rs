@@ -384,8 +384,8 @@ impl TermwayCompositor {
         // これを掛けてコンポジター空間のピクセル座標に変換する。
         let cell_w = self.renderer.width() as f64 / self.term_cols as f64;
         let cell_h = self.renderer.height() as f64 / self.term_rows as f64;
-        let px = (ev.col.saturating_sub(1)) as f64 * cell_w;
-        let py = (ev.row.saturating_sub(1)) as f64 * cell_h;
+        let px = (ev.col.saturating_sub(1)) as f64 * cell_w + (cell_w * 0.5);
+        let py = (ev.row.saturating_sub(1)) as f64 * cell_h + (cell_h * 0.5);
         let loc: Point<f64, Logical> = Point::from((px, py));
 
         // 優先度：

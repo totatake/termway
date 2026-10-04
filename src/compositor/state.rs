@@ -144,7 +144,7 @@ impl TermwayState {
         }
         #[allow(deprecated)]
         if let Some(wid) = xwindow.wl_surface_id() {
-            if let Some(s) = self.unassociated_surfaces.iter().find(|s| s.id().protocol_id() == wid) {
+            if let Some(s) = self.unassociated_surfaces.iter().rfind(|s| s.id().protocol_id() == wid) {
                 return Some(s.clone());
             }
         }
@@ -213,18 +213,18 @@ impl CompositorHandler for TermwayState {
             tracked = true;
         }
         if !tracked {
-            if !self.unassociated_surfaces.iter().any(|s| s == surface) {
-                use smithay::reexports::wayland_server::Resource;
-                crate::compositor::log_line(format!("[commit] new unassoc surface id={}", surface.id().protocol_id()));
-                self.unassociated_surfaces.push(surface.clone());
-                
-                let keyboard = self.keyboard.clone();
-                keyboard.set_focus(
-                    self,
-                    Some(surface.clone()),
-                    smithay::utils::SERIAL_COUNTER.next_serial(),
-                );
-            }
+            use smithay::reexports::wayland_server::Resource;
+            let pid = surface.id().protocol_id();
+            // 同一 ID の古いサーフェスがあれば破棄して最新版に置き換える
+            self.unassociated_surfaces.retain(|s| s.id().protocol_id() != pid);
+            self.unassociated_surfaces.push(surface.clone());
+            
+            let keyboard = self.keyboard.clone();
+            keyboard.set_focus(
+                self,
+                Some(surface.clone()),
+                smithay::utils::SERIAL_COUNTER.next_serial(),
+            );
         }
     }
 }

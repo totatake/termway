@@ -64,11 +64,21 @@ impl XwmHandler for TermwayState {
     }
 
     fn unmapped_window(&mut self, _xwm: XwmId, window: X11Surface) {
+        #[allow(deprecated)]
+        if let Some(wid) = window.wl_surface_id() {
+            use smithay::reexports::wayland_server::Resource;
+            self.unassociated_surfaces.retain(|s| s.id().protocol_id() != wid);
+        }
         self.x11_windows.retain(|w| w != &window);
         self.dirty = true;
     }
 
     fn destroyed_window(&mut self, _xwm: XwmId, window: X11Surface) {
+        #[allow(deprecated)]
+        if let Some(wid) = window.wl_surface_id() {
+            use smithay::reexports::wayland_server::Resource;
+            self.unassociated_surfaces.retain(|s| s.id().protocol_id() != wid);
+        }
         self.x11_windows.retain(|w| w != &window);
         self.dirty = true;
     }
