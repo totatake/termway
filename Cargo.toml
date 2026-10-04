@@ -1,9 +1,13 @@
 [package]
 name = "termway"
-version = "0.1.0"
+version = "2.0.0"
 edition = "2021"
 authors = ["termway developers"]
-description = "In-terminal X11 GUI "
+description = "In-terminal Wayland and X11 GUI bridge powered by Smithay"
+license = "MIT"
+readme = "README.md"
+keywords = ["wayland", "x11", "terminal", "kitty-graphics", "sixel"]
+categories = ["command-line-utilities", "graphics"]
 
 [dependencies]
 base64 = "0.22"
