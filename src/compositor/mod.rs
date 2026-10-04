@@ -366,10 +366,12 @@ impl TermwayCompositor {
         let _ = self.renderer.resize(self.state.width, self.state.height);
         self.backend.resize(new_size);
 
-        // 端末サイズ変更時は画面をクリアしてリサイズ直後の残骸とカーソル位置をリセット
-        let mut stdout = std::io::stdout();
-        let _ = std::io::Write::write_all(&mut stdout, b"\x1b[2J\x1b[H");
-        let _ = std::io::Write::flush(&mut stdout);
+        // 端末サイズ変更時は画面をクリアしてリサイズ直後の残骸とカーソル位置をリセット (Sixelのみ、Kittyは画像を上書きするため不要かつ消去を防ぐ)
+        if self.backend.is_sixel() {
+            let mut stdout = std::io::stdout();
+            let _ = std::io::Write::write_all(&mut stdout, b"\x1b[2J\x1b[H");
+            let _ = std::io::Write::flush(&mut stdout);
+        }
 
         let new_mode = smithay::output::Mode {
             size: (self.state.width as i32, self.state.height as i32).into(),

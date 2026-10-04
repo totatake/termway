@@ -126,11 +126,14 @@ cargo run --release -- --sixel --wm -- xclock
 XWayland も自動で起動されるため、レガシーな X11 アプリケーションもそのまま実行できます。
 
 ```bash
-# Smithay コンポジタモードで xeyes を起動（Sixel 端末の場合）
-cargo run --release -- --wayland -- xeyes
-
-# gvim を起動
+# Smithay コンポジタモードで gvim を起動（端末プロトコルは自動判定）
 cargo run --release -- --wayland -- gvim -f
+
+# Kitty プロトコルを明示指定して起動
+cargo run --release -- --wayland --kitty -- gvim -f
+
+# Sixel プロトコルを明示指定して起動
+cargo run --release -- --wayland --sixel -- gvim -f
 
 # フォントセルサイズ（幅x高さ）を明示指定してマウス座標精度を最適化
 cargo run --release -- --wayland --cell-size 10x22 -- gvim -f
@@ -144,17 +147,21 @@ Sixel および SGR マウスプロトコルでのピクセルパーフェクト
 - CLI オプション: `--cell-size <幅x高さ>` (例: `--cell-size 10x22`)
 - 環境変数: `TERMWAY_CELL_SIZE=<幅x高さ>` (例: `export TERMWAY_CELL_SIZE=10x22`)
 
-### 5. Sixel 自動フォールバック
+### 5. グラフィックスプロトコルの自動検出と明示指定 (--kitty, --sixel)
 
-起動時に `KITTY_WINDOW_ID` 環境変数が存在しない場合（Kitty ターミナル以外の環境）、`--sixel` フラグを明示しなくても自動的に Sixel プロトコルが使用されます。
-GNOME Terminal や xterm など VTE 系端末でも追加オプションなしで動作します。
+termway は起動時に端末エミュレータのプロトコル対応状況を自動検出します：
+- Kitty 対応端末（Kitty, WezTerm, Ghostty 等）: 自動的に Kitty Graphics Protocol を使用
+- Sixel 対応端末（Windows Terminal, iTerm2, Mintty 等）: 自動的に Sixel プロトコルを使用
+- VTE 系端末（GNOME Terminal, xterm 等）: 自動的に Sixel プロトコルへフォールバック
+
+明示的にプロトコルを強制したい場合は `--kitty` または `--sixel` を指定できます：
 
 ```bash
-# GNOME Terminal 等では --sixel なしで自動的に Sixel が使用される
-cargo run --release -- -- xeyes
+# Kitty プロトコルを強制
+cargo run --release -- --kitty -- gvim -f
 
-# 明示的に Sixel を指定することも可能（以前の動作と互換）
-cargo run --release -- --sixel -- xeyes
+# Sixel プロトコルを強制
+cargo run --release -- --sixel -- gvim -f
 ```
 
 ### 5. 主なコマンドラインオプション

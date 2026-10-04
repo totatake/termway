@@ -15,13 +15,15 @@ OPTIONS:
     --cell-size <WxH>         Font cell pixel size (e.g. 10x20, default: auto/env/10x20)
     --fps <FPS>               Target frame rate (default: 30)
     --wm                      Start a lightweight Window Manager (openbox)
-    --sixel                   Use Sixel graphics instead of Kitty protocol
+    --sixel                   Force Sixel graphics protocol
+    --kitty                   Force Kitty graphics protocol
     --demo                    Run built-in Tkinter demo GUI application
     -h, --help                Print this help information
 
 EXAMPLES:
     termway --demo
     termway --wayland -- gvim -f
+    termway --wayland --kitty -- gvim -f
     termway --wayland --cell-size 10x22 -- gvim -f
     termway --wm -- xclock
 "#
@@ -33,12 +35,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
     let mut config = EngineConfig::default();
 
-    // 端末が Kitty かどうかを環境変数で判定する。
-    // KITTY_WINDOW_ID が存在しない場合は Sixel をデフォルトで有効にする。
-    // --sixel フラグで明示的に上書きすることも引き続きできる。
-    if std::env::var_os("KITTY_WINDOW_ID").is_none() {
-        config.use_sixel = true;
-    }
+    let mut explicit_sixel = false;
+    let mut explicit_kitty = false;
 
     let mut i = 1;
     let mut run_demo = false;
@@ -92,7 +90,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         } else if arg == "--wayland" {
             use_wayland = true;
         } else if arg == "--sixel" {
-            config.use_sixel = true;
+            explicit_sixel = true;
+        } else if arg == "--kitty" {
+            explicit_kitty = true;
         } else if arg == "--wm" {
             config.enable_wm = true;
         } else if arg == "--demo" {
@@ -107,6 +107,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             break;
         }
         i += 1;
+    }
+
+    // グラフィックスプロトコルの決定:
+    // 1. --sixel が明示指定された場合 -> Sixel
+    // 2. --kitty が明示指定された場合 -> Kitty
+    // 3. 指定がない場合 -> query_graphics_protocol() で環境変数および実機プローブ判定
+    if explicit_sixel {
+        config.use_sixel = true;
+    } else if explicit_kitty {
+        config.use_sixel = false;
+    } else {
+        use termway::terminal::query::{query_graphics_protocol, GraphicsProtocol};
+        match query_graphics_protocol() {
+            GraphicsProtocol::Kitty => {
+                config.use_sixel = false;
+            }
+            GraphicsProtocol::Sixel | GraphicsProtocol::None => {
+                config.use_sixel = true;
+            }
+        }
     }
 
     if run_demo || config.command.is_empty() {
