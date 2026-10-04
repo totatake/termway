@@ -29,6 +29,10 @@ impl TerminalBackend {
         self.term_size
     }
 
+    pub fn is_sixel(&self) -> bool {
+        self.use_sixel
+    }
+
     pub fn name(&self) -> &'static str {
         if self.is_wayland {
             if self.use_sixel {
@@ -56,7 +60,7 @@ impl TerminalBackend {
         let overlay_text = format!("\x1b[40;37m [{}] [Ctrl-Q: Exit] \x1b[0m", mode_desc);
         let overlay_len = mode_desc.len() + 18;
         let overlay_row = self.term_size.rows;
-        let overlay_col = self.term_size.cols.saturating_sub(overlay_len as u16).max(1);
+        let overlay_col = self.term_size.cols.saturating_sub(overlay_len as u16 + 2).max(1);
         let overlay_seq = format!("\x1b[{};{}H{}", overlay_row, overlay_col, overlay_text);
 
         if self.use_sixel {
@@ -86,7 +90,7 @@ impl TerminalBackend {
         let overlay_text = format!("\x1b[40;37m [{}] [Ctrl-Q: Exit] \x1b[0m", mode_desc);
         let overlay_len = mode_desc.len() + 18;
         let overlay_row = self.term_size.rows;
-        let overlay_col = self.term_size.cols.saturating_sub(overlay_len as u16).max(1);
+        let overlay_col = self.term_size.cols.saturating_sub(overlay_len as u16 + 2).max(1);
         let overlay_seq = format!("\x1b[{};{}H{}", overlay_row, overlay_col, overlay_text);
 
         if self.use_sixel {

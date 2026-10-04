@@ -68,7 +68,15 @@ impl TermwayEngine {
             term_size.height_px = term_size.rows * ch;
         }
         let width = self.config.width.unwrap_or(term_size.width_px as u32).max(320);
-        let height = self.config.height.unwrap_or(term_size.height_px as u32).max(240);
+        let height = if let Some(h) = self.config.height {
+            h.max(240)
+        } else if self.config.use_sixel {
+            let avail_rows = term_size.rows.saturating_sub(1).max(1);
+            let raw_h = avail_rows as u32 * term_size.cell_height_px as u32;
+            (raw_h / 6 * 6).max(240)
+        } else {
+            (term_size.height_px as u32).max(240)
+        };
 
         let backend_name = if self.config.use_sixel { "Terminal (Sixel Graphics + SGR Mouse)" } else { "Terminal (Kitty Graphics + SGR Mouse)" };
         eprintln!("[termway] Active backend: {}", backend_name);

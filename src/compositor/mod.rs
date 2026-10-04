@@ -61,7 +61,16 @@ impl TermwayCompositor {
             term_size.height_px = term_size.rows * ch;
         }
         let width = config.width.unwrap_or(term_size.width_px as u32).max(320);
-        let height = config.height.unwrap_or(term_size.height_px as u32).max(240);
+        let height = if let Some(h) = config.height {
+            h.max(240)
+        } else if config.use_sixel {
+            // Sixel 出力時は最下行（ステータス表示行）を空け、高さを 6 の倍数に切り捨てて端末スクロールを完全に防止
+            let avail_rows = term_size.rows.saturating_sub(1).max(1);
+            let raw_h = avail_rows as u32 * term_size.cell_height_px as u32;
+            (raw_h / 6 * 6).max(240)
+        } else {
+            (term_size.height_px as u32).max(240)
+        };
 
         let display = Display::new()?;
         let dh = display.handle();
@@ -334,7 +343,13 @@ impl TermwayCompositor {
         Ok(())
     }
 
-    fn apply_terminal_size(&mut self, new_size: TerminalSize) {
+    fn apply_terminal_size(&mut self, mut new_size: TerminalSize) {
+        if self.backend.is_sixel() {
+            let avail_rows = new_size.rows.saturating_sub(1).max(1);
+            let raw_h = avail_rows as u32 * new_size.cell_height_px as u32;
+            new_size.height_px = ((raw_h / 6 * 6).max(240)) as u16;
+        }
+
         if self.term_cols == new_size.cols
             && self.term_rows == new_size.rows
             && self.state.width == new_size.width_px as u32
@@ -350,6 +365,11 @@ impl TermwayCompositor {
 
         let _ = self.renderer.resize(self.state.width, self.state.height);
         self.backend.resize(new_size);
+
+        // 端末サイズ変更時は画面をクリアしてリサイズ直後の残骸とカーソル位置をリセット
+        let mut stdout = std::io::stdout();
+        let _ = std::io::Write::write_all(&mut stdout, b"\x1b[2J\x1b[H");
+        let _ = std::io::Write::flush(&mut stdout);
 
         let new_mode = smithay::output::Mode {
             size: (self.state.width as i32, self.state.height as i32).into(),
@@ -455,11 +475,14 @@ impl TermwayCompositor {
         let serial = SERIAL_COUNTER.next_serial();
         let time = self.state.start_time.elapsed().as_millis() as u32;
 
-        // col/row は 1 始まりのターミナルセル座標。
-        // 1 セルのピクセルサイズ = コンポジター解像度 / ターミナルのセル数。
-        // これを掛けてコンポジター空間のピクセル座標に変換する。
+        // Sixel の場合は最下行がステータスバーのため、画像は 1..rows-1 行目に描画される
+        let avail_rows = if self.backend.is_sixel() {
+            self.term_rows.saturating_sub(1).max(1)
+        } else {
+            self.term_rows.max(1)
+        };
         let cell_w = self.renderer.width() as f64 / self.term_cols as f64;
-        let cell_h = self.renderer.height() as f64 / self.term_rows as f64;
+        let cell_h = self.renderer.height() as f64 / avail_rows as f64;
         let px = (ev.col.saturating_sub(1)) as f64 * cell_w + (cell_w * 0.5);
         let py = (ev.row.saturating_sub(1)) as f64 * cell_h + (cell_h * 0.5);
         let loc: Point<f64, Logical> = Point::from((px, py));
