@@ -40,7 +40,7 @@ impl KittyEncoder {
 
             if first {
                 output.push_str(&format!(
-                    "\x1b_Ga=T,q=2,i={},C=1,f=32,s={},v={},c={},r={},m={};",
+                    "\x1b_Ga=T,q=2,i={},C=1,f=32,z=-1,s={},v={},c={},r={},m={};",
                     image_id, width, height, term_cols, term_rows, m_flag
                 ));
                 first = false;

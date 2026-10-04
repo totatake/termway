@@ -50,6 +50,6 @@ fn test_encode_fullscreen_frame() {
     let encoded = KittyEncoder::encode_fullscreen_frame(&rgba, 32, 32, 80, 24, 1);
 
     // Must prepend cursor home sequence to align to top-left of terminal
-    assert!(encoded.starts_with("\x1b[H\x1b_Ga=T,q=2,i=1,C=1,f=32,s=32,v=32,c=80,r=24"));
+    assert!(encoded.starts_with("\x1b[H\x1b_Ga=T,q=2,i=1,C=1,f=32,z=-1,s=32,v=32,c=80,r=24"));
     assert!(encoded.ends_with("\x1b\\"));
 }
