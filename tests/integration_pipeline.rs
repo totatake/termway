@@ -110,16 +110,37 @@ fn test_wayland_compositor_mouse_coordinate_conversion() {
 
 #[test]
 fn test_sixel_auto_fallback_detection() {
-    // KITTY_WINDOW_ID が設定されていない環境では Sixel が有効になるべき
-    // (main.rs の自動検出ロジックと同じ条件)
-    // テスト環境では通常 KITTY_WINDOW_ID は設定されていないので true になるはず
     let should_use_sixel = std::env::var_os("KITTY_WINDOW_ID").is_none();
-    // テスト環境依存だが、論理の正しさを確認する
-    // Kitty 上でこのテストを実行した場合は false になっても問題なし
-    let _ = should_use_sixel; // 実行環境に関わらず panic しないことを確認
+    let _ = should_use_sixel;
 
     // --sixel フラグは明示的な有効化として機能する (上書き)
-    // KITTY_WINDOW_ID があっても --sixel で強制できる
-    let force_sixel = true; // --sixel フラグ相当
+    let force_sixel = true;
     assert!(force_sixel, "explicit --sixel flag should always enable Sixel");
+}
+
+#[test]
+fn test_graphics_protocol_fastpath_detection() {
+    use termway::terminal::query::{query_graphics_protocol, GraphicsProtocol};
+
+    // Test TERM=xterm-kitty
+    std::env::set_var("TERM", "xterm-kitty");
+    assert_eq!(query_graphics_protocol(), GraphicsProtocol::Kitty);
+
+    // Test TERM_PROGRAM=ghostty
+    std::env::set_var("TERM", "xterm-256color");
+    std::env::set_var("TERM_PROGRAM", "ghostty");
+    assert_eq!(query_graphics_protocol(), GraphicsProtocol::Kitty);
+
+    // Test TERM_PROGRAM=WezTerm
+    std::env::set_var("TERM_PROGRAM", "WezTerm");
+    assert_eq!(query_graphics_protocol(), GraphicsProtocol::Kitty);
+
+    // Test WT_SESSION (Windows Terminal)
+    std::env::remove_var("TERM_PROGRAM");
+    std::env::set_var("WT_SESSION", "dummy-session-id");
+    assert_eq!(query_graphics_protocol(), GraphicsProtocol::Sixel);
+
+    // Clean up
+    std::env::remove_var("WT_SESSION");
+    std::env::set_var("TERM", "dumb");
 }
