@@ -1,6 +1,6 @@
-# termway: The Ultimate X11-to-Terminal GUI Bridge
+# termway: The Ultimate Terminal GUI Bridge
 
-ターミナル（端末エミュレータ）の画面内に、X11 GUI アプリケーションを直接埋め込んで実行・操作できる高速ブリッジツールです。
+ターミナル（端末エミュレータ）の画面内に、Wayland および X11 GUI アプリケーションを直接埋め込んで実行・操作できる高速ブリッジツールです。Smithay ベースの自立型ヘッドレスコンポジタと XWayland を内蔵しています。
 
 ---
 
@@ -11,13 +11,11 @@
   - SSH の単一ポート（PTY 1本）のみが通る踏み台環境やクラウド、tmux セッション内でも、追加のポートフォワーディングやクライアント側XサーバーなしでGUIツールが利用可能。
 - **フルマウス＆キーボード対話 (ホバー対応)**:
   - **xterm SGR 1006 マウスプロトコル (Any-event 1003h)** により、クリック、ドラッグ、ホイールスクロールに加えてマウスカーソルの移動（ホバー追従）を完全検知。
-  - 端末起動時に **SGR 14t（Report text area size in pixels）** を自動送信してターミナルの物理フォントピクセルサイズをミリ秒単位で厳密に取得。Sixel時の1:1アスペクト比描画とX11ヒットボックスのピクセルパーフェクトな座標同期（ドリフト防止）を実現！
-  - **XTest** 拡張経由でX11クライアントに合成注入。
+  - 端末起動時に **SGR 14t（Report text area size in pixels）** を自動送信してターミナルの物理フォントピクセルサイズをミリ秒単位で厳密に取得。Sixel時の1:1アスペクト比描画とピクセルパーフェクトな座標同期（ドリフト防止）を実現！
+  - Smithay `Seat` (Pointer / Keyboard) 経由で Wayland および XWayland クライアントへイベントを直接ディスパッチ。
   - 矢印キー、Ctrlキー、Enter/Tab/Backspace 等のキー入力もノンブロッキングで即時転送（1キー遅延なし）。
-- **タイル差分レンダリング (Damage Tracking)**:
-  - 画面をタイル（32x32ピクセル等）に分割し、高速ハッシュ比較により変化があった矩形領域のみを端末へ差分転送。帯域とターミナル負荷を大幅に削減。
-- **軽量Window Managerの統合 (--wm)**:
-  - 実行時に Openbox 等を統合し、通常のデスクトップ環境と同じようにウィンドウ枠、タイトルバー、複数ウィンドウのドラッグ＆ドロップをターミナル内で実現。
+- **イベント駆動・タイル差分レンダリング (Damage Tracking)**:
+  - `wl_surface.commit` やダメージ通知に連動する完全イベント駆動レンダリングにより、省電力・超低遅延化を実現。
 
 ---
 
@@ -25,42 +23,56 @@
 
 ```mermaid
 flowchart LR
-    subgraph ClientTerminal["Client Terminal (Kitty, WezTerm, WinTerminal)"]
-        TermIn["stdin (SGR 1006 / 1003h / 14t)"]
+    subgraph ClientTerminal["Client Terminal (Kitty, WezTerm, WinTerminal, etc.)"]
+        TermIn["stdin (SGR Mouse / Keys / 14t/16t)"]
         TermOut["stdout (Kitty or Sixel Protocol)"]
     end
 
-    subgraph termway["termway Core"]
-        subgraph TerminalLayer["Terminal & Safety"]
-            RawGuard["RawModeGuard (RAII Drop)"]
-            WinSize["TIOCGWINSZ / SGR 14t Cell Parser"]
+    subgraph termway["termway (Smithay Wayland Compositor)"]
+        subgraph TerminalLayer["Terminal Layer"]
+            RawGuard["RawModeGuard (RAII)"]
+            WinSize["TIOCGWINSZ / SGR 14t Parser"]
             Query["Capability Query"]
         end
 
-        subgraph EngineLayer["Event Engine"]
+        subgraph BackendLayer["Terminal Output Backend"]
             TermBackend["TerminalBackend (Non-blocking I/O)"]
+            Encoder["Kitty / Sixel Encoder"]
         end
 
-        subgraph DisplayInput["Display & Input Bridge"]
-            Damage["Tile Damage Tracker / Sixel Encoder"]
-            XTest["XTest Event Injector"]
+        subgraph CompositorCore["Smithay Core Engine"]
+            Seat["Smithay Seat (Pointer & Keyboard)"]
+            Renderer["TermwayRenderer (Pixman Headless)"]
+            Damage["Damage Tracker / Compositing"]
+        end
+
+        subgraph XWaylandBridge["XWayland Integration"]
+            XWayland["XWayland Server (:DISPLAY)"]
+            Xwm["Internal XWM"]
         end
     end
 
-    subgraph X11["X11 Virtual Display"]
-        Xvfb["Xvfb (:99)"]
-        Openbox["Window Manager (optional)"]
-        App["GUI Application (Tkinter, xeyes, xclock, etc.)"]
+    subgraph AppLayer["Client Applications"]
+        WaylandApp["Wayland Native Apps (GTK, Qt, etc.)"]
+        X11App["Legacy X11 Apps (xeyes, Tkinter, etc.)"]
     end
 
+    %% Inputs
     TermIn --> TermBackend
     TermBackend --> WinSize
-    WinSize --> XTest
-    XTest -->|"Fake Events (Keys / Mouse)"| Xvfb
-    Xvfb <-->|"Render / Events"| App
-    Xvfb <-->|"Manage"| Openbox
-    Xvfb -->|"XImage (MIT-SHM)"| Damage
-    Damage --> TermBackend
+    WinSize --> Seat
+    Seat -->|"Wayland Pointer / Key Events"| WaylandApp
+    Seat -->|"Forward via XWM"| XWayland
+    XWayland <-->|"X11 Protocol"| X11App
+
+    %% Outputs & Rendering
+    WaylandApp -->|"wl_surface.commit"| CompositorCore
+    X11App -->|"X11 Render"| XWayland
+    XWayland -->|"wl_surface"| CompositorCore
+    CompositorCore --> Renderer
+    Renderer --> Damage
+    Damage --> Encoder
+    Encoder --> TermBackend
     TermBackend -->|"\\e_Ga=T... or \\eP7;1;q..."| TermOut
 ```
 
@@ -76,9 +88,8 @@ flowchart LR
 
 ### サーバー / 実行環境
 - Linux (x86_64)
-- `Xvfb` (仮想フレームバッファXサーバー)
-- `openbox` (推奨: ウィンドウマネージャー)
-- X11 ライブラリ (`libX11`, `libXtst`, `libXext`)
+- Wayland / XWayland ライブラリ
+- レガシー `--x11` モード使用時のみ: `Xvfb` および `openbox` (推奨ウィンドウマネージャー)
 - Rust ツールチェーン (1.70 以上)
 
 ---
