@@ -56,7 +56,11 @@ impl TermwayRenderer {
             elements.extend(elems);
         }
 
-        for xwindow in &state.x11_windows {
+        // Smithay の draw_render_elements は elements を「最前面から最奥（Top to Bottom）」
+        // の順序で要求する（不透明領域のオクルージョンカリングを最前面から順に判定するため）。
+        // x11_windows は新しくマップされたウィンドウ（ポップアップメニュー等）が末尾に追加されるため、
+        // 逆順（.iter().rev()）で最前面のウィンドウから先に elements に積む。
+        for xwindow in state.x11_windows.iter().rev() {
             let geo = xwindow.geometry();
             if let Some(surface) = state.surface_for_x11(xwindow) {
                 let elems = render_elements_from_surface_tree(
