@@ -231,12 +231,14 @@ v1.0（Xvfb 外部キャプチャ＆ XTest 注入の PoC 構成）から、**Smi
   - `WAYLAND_DISPLAY` と `DISPLAY` (XWayland) を同時に提供し、最新の Wayland アプリと従来の X11 アプリ（xeyes, xclock 等）を混在実行可能。
 - [x] **Smithay `Seat` による入力直接統合**:
   - Wayland ポインタイベント経由で正確なフォーカス・ウィンドウ制御を実現（XTest による外部偽装注入を廃止）。
-- [x] **自律ウィンドウ管理**:
-  - `X11Wm::start_wm()` によるコンポジタ内蔵の X11 ウィンドウマネージャを実装。
+- [x] **XWayland 統合 (X11 アプリケーション互換実行)**:
+  - `X11Wm` ハンドラによる XWayland ライフサイクル管理とサーフェス紐付けを実装。従来の X11 アプリケーション（xeyes, xclock 等）の起動と入力を透過的に仲介。
 
 ### 機能拡張
 - [x] **Sixel プロトコル対応 (Broad Terminal Support)**:
   - Kitty Graphics Protocol に加え、Sixel画像プロトコルに対応完了。SGR 14t ピクセルパースによるピクセルパーフェクトなマウストラッキングを実現しました。
+- [ ] **組み込みウィンドウマネージャ (Window Management / Tiling)**:
+  - 複数ウィンドウ実行時のドラッグ移動・端掴みリサイズ、またはターミナル画面に最適化した自動タイリング配置（tmux/i3風）機能。
 - [ ] **画面リサイズへの動的追従 (Dynamic Resolution Resizing)**:
   - ターミナルウィンドウのサイズ変更（`SIGWINCH`）に連動し、解像度をシームレスに動的追従。
 - [ ] **双方向クリップボードの完全同期 (Bidirectional Clipboard Sync)**:
