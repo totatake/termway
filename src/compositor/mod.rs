@@ -390,25 +390,20 @@ impl TermwayCompositor {
 
         // 優先度：
         // 1. Wayland ネイティブ Toplevel ウィンドウ (Gtkデモなど)
-        // 2. X11 関連ウィンドウ (XWayland)
-        // 3. その他関連付け前のサーフェス (unassociated_surfaces)
-        // focus の Point は「サーフェス原点のコンポジタ座標」。クライアントには
-        // (motion.location - 原点) が届く。ウィンドウは全画面 (0,0) 配置なので原点は (0,0)。
+        // 2. X11 関連ウィンドウ (XWayland) - 最前面 (末尾) から順にヒットテスト
+        // 3. その他フォールバック
         let mut focus = None;
-        let mut unassoc = self.state.unassociated_surfaces.clone();
-        
         if let Some(window) = self.state.windows.first() {
             focus = Some((window.wl_surface().clone(), Point::from((0.0, 0.0))));
         } else {
             for xwin in self.state.x11_windows.iter().rev() {
                 let geo = xwin.geometry();
-                let surface = xwin.wl_surface().or_else(|| unassoc.pop());
                 let rect = smithay::utils::Rectangle::<f64, Logical>::new(
                     smithay::utils::Point::from((geo.loc.x as f64, geo.loc.y as f64)),
                     smithay::utils::Size::from((geo.size.w as f64, geo.size.h as f64)),
                 );
                 if rect.contains(loc) {
-                    if let Some(s) = surface {
+                    if let Some(s) = self.state.surface_for_x11(xwin) {
                         let win_origin = smithay::utils::Point::<f64, Logical>::from((geo.loc.x as f64, geo.loc.y as f64));
                         focus = Some((s, win_origin));
                         break;
@@ -417,7 +412,7 @@ impl TermwayCompositor {
             }
             if focus.is_none() {
                 if let Some(xwin) = self.state.x11_windows.first() {
-                    if let Some(s) = xwin.wl_surface() {
+                    if let Some(s) = self.state.surface_for_x11(xwin) {
                         let geo = xwin.geometry();
                         let win_origin = smithay::utils::Point::<f64, Logical>::from((geo.loc.x as f64, geo.loc.y as f64));
                         focus = Some((s, win_origin));
@@ -451,21 +446,16 @@ impl TermwayCompositor {
                 pointer.button(&mut self.state, &btn_ev);
                 pointer.frame(&mut self.state);
 
-                // キーボードフォーカスもポインタと同じ優先順位で選ぶ。
+                // キーボードフォーカスもポインタが当たっているウィンドウに合わせる
                 let mut kb_surface = None;
                 if let Some(window) = self.state.windows.first() {
                     kb_surface = Some(window.wl_surface().clone());
-                } else {
-                    if let Some(xwin) = self.state.x11_windows.first() {
-                        if let Some(s) = xwin.wl_surface() {
-                            kb_surface = Some(s);
-                        }
-                    }
-                    if kb_surface.is_none() {
-                        if let Some(surface) = self.state.unassociated_surfaces.last() {
-                            kb_surface = Some(surface.clone());
-                        }
-                    }
+                } else if let Some((ref s, _)) = focus {
+                    kb_surface = Some(s.clone());
+                } else if let Some(xwin) = self.state.x11_windows.first() {
+                    kb_surface = self.state.surface_for_x11(xwin);
+                } else if let Some(surface) = self.state.unassociated_surfaces.last() {
+                    kb_surface = Some(surface.clone());
                 }
                 if let Some(surface) = kb_surface {
                     keyboard.set_focus(&mut self.state, Some(surface), serial);

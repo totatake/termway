@@ -39,7 +39,7 @@ impl XwmHandler for TermwayState {
         // フォーカスを取得してマウス・キーボードイベントがウィンドウへ届くようにする
         let _ = window.set_activated(true);
 
-        let wl_surface = window.wl_surface().or_else(|| self.unassociated_surfaces.last().cloned());
+        let wl_surface = self.surface_for_x11(&window);
         if let Some(wl) = wl_surface {
             let keyboard = self.keyboard.clone();
             keyboard.set_focus(
@@ -56,7 +56,7 @@ impl XwmHandler for TermwayState {
     }
 
     fn mapped_override_redirect_window(&mut self, _xwm: XwmId, window: X11Surface) {
-        let _ = window.set_mapped(true);
+        crate::compositor::log_line(format!("[xwayland] mapped_override_redirect_window id={:?} geo={:?}", window.window_id(), window.geometry()));
         if !self.x11_windows.iter().any(|w| w == &window) {
             self.x11_windows.push(window);
         }
@@ -98,7 +98,9 @@ impl XwmHandler for TermwayState {
         _window: X11Surface,
         _geometry: Rectangle<i32, Logical>,
         _above: Option<u32>,
-    ) {}
+    ) {
+        self.dirty = true;
+    }
 
     fn resize_request(&mut self, _xwm: XwmId, _window: X11Surface, _button: u32, _resize_edge: ResizeEdge) {}
     fn move_request(&mut self, _xwm: XwmId, _window: X11Surface, _button: u32) {}

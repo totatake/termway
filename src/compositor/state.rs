@@ -128,6 +128,47 @@ impl TermwayState {
             start_time: std::time::Instant::now(),
         }
     }
+
+    /// Retrieve the corresponding WlSurface for an X11Surface.
+    /// Matches by wl_surface(), wl_surface_serial(), or wl_surface_id().
+    pub fn surface_for_x11(&self, xwindow: &smithay::xwayland::X11Surface) -> Option<WlSurface> {
+        use smithay::reexports::wayland_server::Resource;
+
+        if let Some(s) = xwindow.wl_surface() {
+            return Some(s);
+        }
+        if let Some(serial) = xwindow.wl_surface_serial() {
+            if let Some(s) = self.xwayland_shell_state.surface_for_serial(serial) {
+                return Some(s);
+            }
+        }
+        #[allow(deprecated)]
+        if let Some(wid) = xwindow.wl_surface_id() {
+            if let Some(s) = self.unassociated_surfaces.iter().find(|s| s.id().protocol_id() == wid) {
+                return Some(s.clone());
+            }
+        }
+
+        // If this window does not have an ID/serial yet, find an unclaimed surface from unassociated_surfaces
+        let claimed_wids: Vec<u32> = self.x11_windows.iter().filter_map(|w| {
+            #[allow(deprecated)]
+            w.wl_surface_id()
+        }).collect();
+
+        let unclaimed: Vec<&WlSurface> = self.unassociated_surfaces.iter().filter(|s| {
+            !claimed_wids.contains(&s.id().protocol_id())
+        }).collect();
+
+        if let Some(&s) = unclaimed.last() {
+            return Some(s.clone());
+        }
+
+        if self.x11_windows.len() == 1 {
+            return self.unassociated_surfaces.last().cloned();
+        }
+
+        None
+    }
 }
 
 // 1. BufferHandler

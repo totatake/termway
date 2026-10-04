@@ -5,7 +5,7 @@ pub static WINCH_RECEIVED: AtomicBool = AtomicBool::new(false);
 
 pub fn setup_sigwinch() {
     unsafe {
-        libc::signal(libc::SIGWINCH, handle_sigwinch as usize);
+        libc::signal(libc::SIGWINCH, handle_sigwinch as *const () as usize);
     }
 }
 

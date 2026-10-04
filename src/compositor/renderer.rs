@@ -56,11 +56,9 @@ impl TermwayRenderer {
             elements.extend(elems);
         }
 
-        let mut unassoc = state.unassociated_surfaces.clone();
-
         for xwindow in &state.x11_windows {
             let geo = xwindow.geometry();
-            if let Some(surface) = xwindow.wl_surface().or_else(|| unassoc.pop()) {
+            if let Some(surface) = state.surface_for_x11(xwindow) {
                 let elems = render_elements_from_surface_tree(
                     &mut self.renderer,
                     &surface,
@@ -72,16 +70,20 @@ impl TermwayRenderer {
                 elements.extend(elems);
             }
         }
-        for surface in &unassoc {
-            let elems = render_elements_from_surface_tree(
-                &mut self.renderer,
-                surface,
-                (0, 0),
-                1.0,
-                1.0,
-                Kind::Unspecified,
-            );
-            elements.extend(elems);
+
+        // Fallback: if no X11 windows are tracked yet, render unassociated surfaces at (0, 0)
+        if state.x11_windows.is_empty() {
+            for surface in &state.unassociated_surfaces {
+                let elems = render_elements_from_surface_tree(
+                    &mut self.renderer,
+                    surface,
+                    (0, 0),
+                    1.0,
+                    1.0,
+                    Kind::Unspecified,
+                );
+                elements.extend(elems);
+            }
         }
 
         // 2. Bind and render to offscreen pixman buffer
