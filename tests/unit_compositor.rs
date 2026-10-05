@@ -117,6 +117,50 @@ fn test_window_geometry_and_decorations() {
 }
 
 #[test]
+fn test_csd_window_no_double_decorations() {
+    use smithay::utils::{Point, Size};
+    use termway::compositor::window::ManagedWindow;
+    use termway::compositor::decoration::DecorationRenderer;
+
+    let loc = Point::from((50, 60));
+    let size = Size::from((200, 150));
+
+    let mut csd_window = ManagedWindow::new_dummy(1, "CSD App".into(), loc, size);
+    csd_window.has_ssd = false; // Simulated client with client-side decorations (e.g. gnome-terminal)
+
+    // CSD window frame geometry should match content geometry exactly
+    let fg = csd_window.frame_geometry();
+    let cg = csd_window.content_geometry();
+    assert_eq!(fg.loc.x, cg.loc.x);
+    assert_eq!(fg.loc.y, cg.loc.y);
+    assert_eq!(fg.size.w, cg.size.w);
+    assert_eq!(fg.size.h, cg.size.h);
+
+    // Titlebar, close button, and resize handle should be empty/zero
+    let tb = csd_window.titlebar_geometry();
+    assert_eq!(tb.size.w, 0);
+    assert_eq!(tb.size.h, 0);
+
+    let btn = csd_window.close_button_geometry();
+    assert_eq!(btn.size.w, 0);
+    assert_eq!(btn.size.h, 0);
+
+    let grip = csd_window.resize_handle_geometry();
+    assert_eq!(grip.size.w, 0);
+    assert_eq!(grip.size.h, 0);
+
+    // Drawing decorations on CSD window should be a no-op
+    let mut image = pixman::Image::new(
+        pixman::FormatCode::A8B8G8R8,
+        300,
+        300,
+        true,
+    ).unwrap();
+    let deco = DecorationRenderer::new();
+    deco.draw_decorations(&mut image, 300, 300, &csd_window);
+}
+
+#[test]
 fn test_state_raise_window() {
     use smithay::utils::{Point, Size};
     use termway::compositor::window::ManagedWindow;

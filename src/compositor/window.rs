@@ -34,6 +34,7 @@ pub struct ManagedWindow {
     pub loc: Point<i32, Logical>,
     pub size: Size<i32, Logical>,
     pub active: bool,
+    pub has_ssd: bool,
 }
 
 pub const TITLEBAR_HEIGHT: i32 = 22;
@@ -51,7 +52,13 @@ fn get_wayland_title(surface: &ToplevelSurface) -> Option<String> {
 }
 
 impl ManagedWindow {
-    pub fn new_wayland(id: usize, surface: ToplevelSurface, loc: Point<i32, Logical>, size: Size<i32, Logical>) -> Self {
+    pub fn new_wayland(
+        id: usize,
+        surface: ToplevelSurface,
+        loc: Point<i32, Logical>,
+        size: Size<i32, Logical>,
+        has_ssd: bool,
+    ) -> Self {
         let title = get_wayland_title(&surface).unwrap_or_else(|| "Wayland Application".to_string());
         Self {
             id,
@@ -60,12 +67,14 @@ impl ManagedWindow {
             loc,
             size,
             active: true,
+            has_ssd,
         }
     }
 
     pub fn new_x11(id: usize, surface: X11Surface, loc: Point<i32, Logical>, size: Size<i32, Logical>) -> Self {
         let t = surface.title();
         let title = if t.is_empty() { "X11 Application".to_string() } else { t };
+        let has_ssd = !surface.is_decorated();
         Self {
             id,
             title,
@@ -73,7 +82,12 @@ impl ManagedWindow {
             loc,
             size,
             active: true,
+            has_ssd,
         }
+    }
+
+    pub fn has_ssd(&self) -> bool {
+        self.has_ssd
     }
 
     pub fn is_polkit(&self, polkit_pid: Option<u32>) -> bool {
@@ -110,6 +124,7 @@ impl ManagedWindow {
             loc,
             size,
             active: true,
+            has_ssd: true,
         }
     }
 
@@ -121,15 +136,19 @@ impl ManagedWindow {
         }
     }
 
-    /// Full frame geometry including titlebar and border
+    /// Full frame geometry including titlebar and border (if has_ssd is true)
     pub fn frame_geometry(&self) -> Rectangle<i32, Logical> {
-        Rectangle::new(
-            (self.loc.x - BORDER_WIDTH, self.loc.y - TITLEBAR_HEIGHT - BORDER_WIDTH).into(),
-            (
-                self.size.w + BORDER_WIDTH * 2,
-                self.size.h + TITLEBAR_HEIGHT + BORDER_WIDTH * 2,
-            ).into(),
-        )
+        if self.has_ssd {
+            Rectangle::new(
+                (self.loc.x - BORDER_WIDTH, self.loc.y - TITLEBAR_HEIGHT - BORDER_WIDTH).into(),
+                (
+                    self.size.w + BORDER_WIDTH * 2,
+                    self.size.h + TITLEBAR_HEIGHT + BORDER_WIDTH * 2,
+                ).into(),
+            )
+        } else {
+            Rectangle::new(self.loc, self.size)
+        }
     }
 
     /// Content geometry (the client surface area)
@@ -139,14 +158,21 @@ impl ManagedWindow {
 
     /// Titlebar geometry
     pub fn titlebar_geometry(&self) -> Rectangle<i32, Logical> {
-        Rectangle::new(
-            (self.loc.x - BORDER_WIDTH, self.loc.y - TITLEBAR_HEIGHT - BORDER_WIDTH).into(),
-            (self.size.w + BORDER_WIDTH * 2, TITLEBAR_HEIGHT).into(),
-        )
+        if self.has_ssd {
+            Rectangle::new(
+                (self.loc.x - BORDER_WIDTH, self.loc.y - TITLEBAR_HEIGHT - BORDER_WIDTH).into(),
+                (self.size.w + BORDER_WIDTH * 2, TITLEBAR_HEIGHT).into(),
+            )
+        } else {
+            Rectangle::new((0, 0).into(), (0, 0).into())
+        }
     }
 
     /// Close button geometry located at top-right of titlebar (for visual rendering)
     pub fn close_button_geometry(&self) -> Rectangle<i32, Logical> {
+        if !self.has_ssd {
+            return Rectangle::new((0, 0).into(), (0, 0).into());
+        }
         let tb = self.titlebar_geometry();
         let btn_x = tb.loc.x + tb.size.w - BUTTON_SIZE - 4;
         let btn_y = tb.loc.y + (TITLEBAR_HEIGHT - BUTTON_SIZE) / 2;
@@ -155,6 +181,9 @@ impl ManagedWindow {
 
     /// Expanded hit test area for close button (generous 32px width and full titlebar height for terminal mouse cells)
     pub fn close_button_hit_geometry(&self) -> Rectangle<i32, Logical> {
+        if !self.has_ssd {
+            return Rectangle::new((0, 0).into(), (0, 0).into());
+        }
         let tb = self.titlebar_geometry();
         let hit_w = 32;
         let btn_x = tb.loc.x + tb.size.w - hit_w;
@@ -163,6 +192,9 @@ impl ManagedWindow {
 
     /// Resize handle at bottom-right corner (for visual rendering)
     pub fn resize_handle_geometry(&self) -> Rectangle<i32, Logical> {
+        if !self.has_ssd {
+            return Rectangle::new((0, 0).into(), (0, 0).into());
+        }
         let fg = self.frame_geometry();
         Rectangle::new(
             (fg.loc.x + fg.size.w - 12, fg.loc.y + fg.size.h - 12).into(),
@@ -172,6 +204,9 @@ impl ManagedWindow {
 
     /// Expanded hit test area for resize handle (28x28 corner area for terminal mouse cells)
     pub fn resize_handle_hit_geometry(&self) -> Rectangle<i32, Logical> {
+        if !self.has_ssd {
+            return Rectangle::new((0, 0).into(), (0, 0).into());
+        }
         let fg = self.frame_geometry();
         let hit_size = 28;
         Rectangle::new(

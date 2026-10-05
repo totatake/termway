@@ -48,6 +48,10 @@ impl DecorationRenderer {
         target_h: u32,
         window: &ManagedWindow,
     ) {
+        if !window.has_ssd() {
+            return;
+        }
+
         let stride = target_image.stride() as usize;
         let data = unsafe {
             let ptr = target_image.data() as *mut u8;

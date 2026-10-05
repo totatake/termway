@@ -16,7 +16,10 @@ use smithay::{
         keyboard::FilterResult,
         pointer::{ButtonEvent, MotionEvent},
     },
-    reexports::wayland_server::{Display, ListeningSocket},
+    reexports::{
+        wayland_protocols::xdg::shell::server::xdg_toplevel,
+        wayland_server::{Display, ListeningSocket},
+    },
     utils::{Logical, Point, SERIAL_COUNTER},
 };
 
@@ -556,15 +559,17 @@ impl TermwayCompositor {
 
         if self.state.enable_wm {
             for m_win in &mut self.state.managed_windows {
-                let max_w = (self.state.width as i32 - BORDER_WIDTH * 2 - 10).max(160);
-                let max_h = (self.state.height as i32 - TITLEBAR_HEIGHT - BORDER_WIDTH * 2 - 10).max(100);
+                let top_margin = if m_win.has_ssd { TITLEBAR_HEIGHT + BORDER_WIDTH * 2 } else { 0 };
+                let side_margin = if m_win.has_ssd { BORDER_WIDTH * 2 } else { 0 };
+                let max_w = (self.state.width as i32 - side_margin - 10).max(160);
+                let max_h = (self.state.height as i32 - top_margin - 10).max(100);
                 let new_w = m_win.size.w.min(max_w);
                 let new_h = m_win.size.h.min(max_h);
 
-                let min_x = BORDER_WIDTH;
-                let max_x = (self.state.width as i32 - new_w - BORDER_WIDTH).max(min_x);
-                let min_y = TITLEBAR_HEIGHT + BORDER_WIDTH;
-                let max_y = (self.state.height as i32 - new_h - BORDER_WIDTH).max(min_y);
+                let min_x = if m_win.has_ssd { BORDER_WIDTH } else { 0 };
+                let max_x = (self.state.width as i32 - new_w - min_x).max(min_x);
+                let min_y = if m_win.has_ssd { TITLEBAR_HEIGHT + BORDER_WIDTH } else { 0 };
+                let max_y = (self.state.height as i32 - new_h - min_x).max(min_y);
                 m_win.loc.x = m_win.loc.x.clamp(min_x, max_x);
                 m_win.loc.y = m_win.loc.y.clamp(min_y, max_y);
 
@@ -575,6 +580,8 @@ impl TermwayCompositor {
         } else {
             for window in &self.state.windows {
                 window.with_pending_state(|state| {
+                    state.states.set(xdg_toplevel::State::Activated);
+                    state.states.set(xdg_toplevel::State::Maximized);
                     state.size = Some((self.state.width as i32, self.state.height as i32).into());
                 });
                 window.send_configure();
@@ -585,6 +592,10 @@ impl TermwayCompositor {
                     (self.state.width as i32, self.state.height as i32).into(),
                 );
                 let _ = xwin.configure(rect);
+            }
+            for m_win in &mut self.state.managed_windows {
+                m_win.loc = (0, 0).into();
+                m_win.size = (self.state.width as i32, self.state.height as i32).into();
             }
         }
 
@@ -705,10 +716,10 @@ impl TermwayCompositor {
                         let dx = (px - start_cursor.0).round() as i32;
                         let dy = (py - start_cursor.1).round() as i32;
                         if let Some(top_win) = self.state.managed_windows.last_mut() {
-                            let min_x = BORDER_WIDTH;
-                            let max_x = (self.renderer.width() as i32 - top_win.size.w - BORDER_WIDTH).max(min_x);
-                            let min_y = TITLEBAR_HEIGHT + BORDER_WIDTH;
-                            let max_y = (self.renderer.height() as i32 - top_win.size.h - BORDER_WIDTH).max(min_y);
+                            let min_x = if top_win.has_ssd { BORDER_WIDTH } else { 0 };
+                            let max_x = (self.renderer.width() as i32 - top_win.size.w - min_x).max(min_x);
+                            let min_y = if top_win.has_ssd { TITLEBAR_HEIGHT + BORDER_WIDTH } else { 0 };
+                            let max_y = (self.renderer.height() as i32 - top_win.size.h - min_x).max(min_y);
 
                             let new_x = (start_window_pos.0 + dx).clamp(min_x, max_x);
                             let new_y = (start_window_pos.1 + dy).clamp(min_y, max_y);
@@ -785,7 +796,7 @@ impl TermwayCompositor {
                 let mut win_geo = smithay::utils::Rectangle::new((0, 0).into(), (0, 0).into());
 
                 for win in self.state.managed_windows.iter().rev() {
-                    if self.state.enable_wm {
+                    if self.state.enable_wm && win.has_ssd {
                         if is_left && win.close_button_hit_geometry().contains(loc_i32) {
                             hit_window_id = Some(win.id);
                             clicked_close = true;

@@ -13,7 +13,7 @@ use smithay::{
 };
 
 use super::state::TermwayState;
-use super::window::{ManagedWindow, WindowSurface, BORDER_WIDTH, TITLEBAR_HEIGHT};
+use super::window::{ManagedWindow, WindowDragState, WindowSurface, BORDER_WIDTH, TITLEBAR_HEIGHT};
 
 impl XWaylandShellHandler for TermwayState {
     fn xwayland_shell_state(&mut self) -> &mut XWaylandShellState {
@@ -161,8 +161,8 @@ impl XwmHandler for TermwayState {
             Rectangle::new(cur_loc, (target_w, target_h).into())
         } else {
             Rectangle::new(
-                (x.unwrap_or(0), y.unwrap_or(0)).into(),
-                (w.unwrap_or(self.width) as i32, h.unwrap_or(self.height) as i32).into(),
+                (0, 0).into(),
+                (self.width as i32, self.height as i32).into(),
             )
         };
 
@@ -190,23 +190,62 @@ impl XwmHandler for TermwayState {
             if matches!(&w.surface, WindowSurface::X11(x) if x == &window) {
                 w.update_title();
                 if self.enable_wm {
-                    let max_w = (self.width as i32 - w.loc.x - BORDER_WIDTH * 2).max(160);
-                    let max_h = (self.height as i32 - w.loc.y - BORDER_WIDTH * 2).max(100);
+                    let top_margin = if w.has_ssd { TITLEBAR_HEIGHT + BORDER_WIDTH } else { 0 };
+                    let side_margin = if w.has_ssd { BORDER_WIDTH } else { 0 };
+                    let max_w = (self.width as i32 - w.loc.x - side_margin * 2).max(160);
+                    let max_h = (self.height as i32 - w.loc.y - top_margin - side_margin).max(100);
                     w.size = (geometry.size.w.min(max_w), geometry.size.h.min(max_h)).into();
-                    let max_x = (self.width as i32 - w.size.w - BORDER_WIDTH).max(BORDER_WIDTH);
-                    let max_y = (self.height as i32 - w.size.h - BORDER_WIDTH).max(TITLEBAR_HEIGHT + BORDER_WIDTH);
+                    let max_x = (self.width as i32 - w.size.w - side_margin).max(side_margin);
+                    let max_y = (self.height as i32 - w.size.h - side_margin).max(top_margin);
                     if w.loc.x > max_x { w.loc.x = max_x; }
                     if w.loc.y > max_y { w.loc.y = max_y; }
                 } else {
-                    w.size = geometry.size;
+                    w.loc = (0, 0).into();
+                    w.size = (geometry.size.w.min(self.width as i32), geometry.size.h.min(self.height as i32)).into();
+                    if geometry.size.w > self.width as i32 || geometry.size.h > self.height as i32 {
+                        let rect = Rectangle::new((0, 0).into(), (self.width as i32, self.height as i32).into());
+                        let _ = window.configure(rect);
+                    }
                 }
             }
         }
         self.dirty = true;
     }
 
-    fn resize_request(&mut self, _xwm: XwmId, _window: X11Surface, _button: u32, _resize_edge: ResizeEdge) {}
-    fn move_request(&mut self, _xwm: XwmId, _window: X11Surface, _button: u32) {}
+    fn resize_request(&mut self, _xwm: XwmId, window: X11Surface, _button: u32, _resize_edge: ResizeEdge) {
+        if !self.enable_wm {
+            return;
+        }
+        if let Some(win) = self.managed_windows.iter().find(|w| match &w.surface {
+            WindowSurface::X11(t) => t == &window,
+            _ => false,
+        }) {
+            let cur_loc = self.pointer.current_location();
+            let win_geo = win.content_geometry();
+            self.drag_state = WindowDragState::Resizing {
+                start_cursor: (cur_loc.x, cur_loc.y),
+                start_window_geo: win_geo,
+            };
+        }
+    }
+
+    fn move_request(&mut self, _xwm: XwmId, window: X11Surface, _button: u32) {
+        if !self.enable_wm {
+            return;
+        }
+        if let Some(win) = self.managed_windows.iter().find(|w| match &w.surface {
+            WindowSurface::X11(t) => t == &window,
+            _ => false,
+        }) {
+            let cur_loc = self.pointer.current_location();
+            let win_loc = win.loc;
+            self.drag_state = WindowDragState::Moving {
+                start_cursor: (cur_loc.x, cur_loc.y),
+                start_window_pos: (win_loc.x, win_loc.y),
+            };
+        }
+    }
+
     fn send_selection(&mut self, _xwm: XwmId, _selection: SelectionTarget, _mime_type: String, _fd: OwnedFd) {}
 }
 

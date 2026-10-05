@@ -122,12 +122,14 @@ impl TermwayRenderer {
         // 3. Draw Openbox/Fluxbox window decorations (Bottom to Top order) if WM is enabled
         if state.enable_wm {
             for window in &state.managed_windows {
-                self.decoration_renderer.draw_decorations(
-                    &mut self.buffer,
-                    self.width,
-                    self.height,
-                    window,
-                );
+                if window.has_ssd() {
+                    self.decoration_renderer.draw_decorations(
+                        &mut self.buffer,
+                        self.width,
+                        self.height,
+                        window,
+                    );
+                }
             }
         }
 
