@@ -74,6 +74,7 @@ impl TermwayEngine {
         // 3.5. Start session manager (D-Bus isolation and Polkit authentication agent)
         let mut session = crate::session::SessionManager::new();
         session.start_polkit(None, Some(&display_str));
+        thread::sleep(Duration::from_millis(300));
 
         // 4. Initialize XTest input injector
         let mut injector = XTestInjector::new(xvfb.raw_display());

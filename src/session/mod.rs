@@ -119,11 +119,37 @@ impl PolkitAgent {
             if let Ok(runtime_dir) = std::env::var("XDG_RUNTIME_DIR") {
                 cmd.env("XDG_RUNTIME_DIR", runtime_dir);
             }
-            cmd.stdout(Stdio::null());
-            cmd.stderr(Stdio::null());
+            cmd.env("GDK_BACKEND", "x11,wayland");
+
+            if let Ok(file) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open("/tmp/termway_polkit.log")
+            {
+                if let Ok(err_file) = file.try_clone() {
+                    cmd.stdout(Stdio::from(file));
+                    cmd.stderr(Stdio::from(err_file));
+                } else {
+                    cmd.stdout(Stdio::null());
+                    cmd.stderr(Stdio::null());
+                }
+            } else {
+                cmd.stdout(Stdio::null());
+                cmd.stderr(Stdio::null());
+            }
 
             match cmd.spawn() {
-                Ok(child) => {
+                Ok(mut child) => {
+                    // Give the agent a moment to initialize and verify it didn't immediately crash
+                    std::thread::sleep(std::time::Duration::from_millis(200));
+                    if let Ok(Some(status)) = child.try_wait() {
+                        crate::compositor::log_line(format!(
+                            "[termway] Warning: Polkit agent {} exited immediately with {}",
+                            candidate, status
+                        ));
+                        continue;
+                    }
+
                     return Self {
                         child: Some(child),
                         agent_name: Some(candidate.to_string()),
@@ -206,6 +232,10 @@ impl SessionManager {
             eprintln!("{}", msg);
         }
         self.polkit = Some(agent);
+    }
+
+    pub fn is_polkit_running(&self) -> bool {
+        self.polkit.as_ref().map(|p| p.is_running()).unwrap_or(false)
     }
 }
 
