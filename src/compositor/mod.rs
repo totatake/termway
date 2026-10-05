@@ -56,18 +56,26 @@ pub struct TermwayCompositor {
     xwayland_source: Option<smithay::xwayland::XWayland>,
     _xwayland_client: Option<smithay::reexports::wayland_server::Client>,
     session: crate::session::SessionManager,
+    cell_size_queried: bool,
 }
 
 impl TermwayCompositor {
     pub fn new(config: EngineConfig) -> Result<Self, Box<dyn std::error::Error>> {
         let mut term_size = TerminalSize::query().unwrap_or_else(|_| TerminalSize::fallback(80, 24));
+        let cell_size_queried = config.cell_size.is_some();
         if let Some((cw, ch)) = config.cell_size {
             term_size.cell_width_px = cw;
             term_size.cell_height_px = ch;
             term_size.width_px = term_size.cols * cw;
             term_size.height_px = term_size.rows * ch;
         }
-        let width = config.width.unwrap_or(term_size.width_px as u32).max(320);
+        let max_grid_w = term_size.cols as u32 * term_size.cell_width_px as u32;
+        let effective_w = if max_grid_w > 0 {
+            (term_size.width_px as u32).min(max_grid_w)
+        } else {
+            term_size.width_px as u32
+        };
+        let width = config.width.unwrap_or(effective_w).max(320);
         let height = if let Some(h) = config.height {
             h.max(240)
         } else if config.use_sixel {
@@ -76,7 +84,13 @@ impl TermwayCompositor {
             let raw_h = avail_rows as u32 * term_size.cell_height_px as u32;
             (raw_h / 6 * 6).max(240)
         } else {
-            (term_size.height_px as u32).max(240)
+            let max_grid_h = term_size.rows as u32 * term_size.cell_height_px as u32;
+            let effective_h = if max_grid_h > 0 {
+                (term_size.height_px as u32).min(max_grid_h)
+            } else {
+                term_size.height_px as u32
+            };
+            effective_h.max(240)
         };
 
         Self::ensure_xdg_runtime_dir();
@@ -187,6 +201,7 @@ impl TermwayCompositor {
             socket_name,
             x11_display,
             session,
+            cell_size_queried,
             term_cols: term_size.cols.max(1),
             term_rows: term_size.rows.max(1),
             input_buffer: Vec::with_capacity(1024),
@@ -254,7 +269,14 @@ impl TermwayCompositor {
             let _ = event_loop.dispatch(Some(std::time::Duration::ZERO), &mut self.state);
             
             if WINCH_RECEIVED.swap(false, std::sync::atomic::Ordering::Relaxed) {
-                if let Ok(new_size) = TerminalSize::query() {
+                if let Ok(mut new_size) = TerminalSize::query() {
+                    let old_size = self.backend.term_size();
+                    if self.cell_size_queried {
+                        new_size.cell_width_px = old_size.cell_width_px;
+                        new_size.cell_height_px = old_size.cell_height_px;
+                        new_size.width_px = new_size.cols * old_size.cell_width_px;
+                        new_size.height_px = new_size.rows * old_size.cell_height_px;
+                    }
                     self.apply_terminal_size(new_size);
                 }
             }
@@ -488,10 +510,19 @@ impl TermwayCompositor {
     }
 
     fn apply_terminal_size(&mut self, mut new_size: TerminalSize) {
+        let max_grid_w = new_size.cols as u32 * new_size.cell_width_px as u32;
+        if max_grid_w > 0 {
+            new_size.width_px = (new_size.width_px as u32).min(max_grid_w).max(320) as u16;
+        }
         if self.backend.is_sixel() {
             let avail_rows = new_size.rows.saturating_sub(1).max(1);
             let raw_h = avail_rows as u32 * new_size.cell_height_px as u32;
             new_size.height_px = ((raw_h / 6 * 6).max(240)) as u16;
+        } else {
+            let max_grid_h = new_size.rows as u32 * new_size.cell_height_px as u32;
+            if max_grid_h > 0 {
+                new_size.height_px = (new_size.height_px as u32).min(max_grid_h).max(240) as u16;
+            }
         }
 
         if self.term_cols == new_size.cols
@@ -572,6 +603,7 @@ impl TermwayCompositor {
                             if let (Ok(h), Ok(w)) = (parts[0].parse::<u16>(), parts[1].parse::<u16>()) {
                                 if w > 0 && h > 0 {
                                     log_line(format!("[termway] Terminal reported cell size: {}x{}px", w, h));
+                                    self.cell_size_queried = true;
                                     let mut new_size = self.backend.term_size();
                                     new_size.cell_width_px = w;
                                     new_size.cell_height_px = h;
@@ -597,16 +629,18 @@ impl TermwayCompositor {
                             if let (Ok(h), Ok(w)) = (parts[0].parse::<u16>(), parts[1].parse::<u16>()) {
                                 if w > 0 && h > 0 {
                                     log_line(format!("[termway] Terminal reported window size: {}x{}px", w, h));
-                                    let mut new_size = self.backend.term_size();
-                                    new_size.width_px = w;
-                                    new_size.height_px = h;
-                                    if new_size.cols > 0 {
-                                        new_size.cell_width_px = (w / new_size.cols).max(1);
+                                    if !self.cell_size_queried {
+                                        let mut new_size = self.backend.term_size();
+                                        if new_size.cols > 0 {
+                                            new_size.cell_width_px = (w / new_size.cols).max(1);
+                                        }
+                                        if new_size.rows > 0 {
+                                            new_size.cell_height_px = (h / new_size.rows).max(1);
+                                        }
+                                        new_size.width_px = new_size.cols * new_size.cell_width_px;
+                                        new_size.height_px = new_size.rows * new_size.cell_height_px;
+                                        self.apply_terminal_size(new_size);
                                     }
-                                    if new_size.rows > 0 {
-                                        new_size.cell_height_px = (h / new_size.rows).max(1);
-                                    }
-                                    self.apply_terminal_size(new_size);
                                 }
                             }
                         }

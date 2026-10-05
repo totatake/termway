@@ -262,6 +262,10 @@ impl CompositorHandler for TermwayState {
                         let max_y = (self.height as i32 - w.size.h - BORDER_WIDTH).max(min_y);
                         w.loc.x = w.loc.x.clamp(min_x, max_x);
                         w.loc.y = w.loc.y.clamp(min_y, max_y);
+
+                        if clamped_w != bbox.size.w || clamped_h != bbox.size.h {
+                            w.configure_size(clamped_w, clamped_h);
+                        }
                     }
                 }
             }
@@ -325,12 +329,13 @@ impl XdgShellHandler for TermwayState {
             let loc_y = (TITLEBAR_HEIGHT + 10 + offset).max(TITLEBAR_HEIGHT + BORDER_WIDTH);
             let loc = smithay::utils::Point::from((loc_x, loc_y));
 
-            // Wayland XDG Shell仕様: フローティングウィンドウの初期configureでは size=(0, 0) を送信し、
-            // クライアント自身に希望する自然なサイズ（default_size 等）を選ばせる
-            let configure_size = smithay::utils::Size::from((0, 0));
-            let init_w = (self.width as i32 / 2).clamp(320, 600);
-            let init_h = (self.height as i32 / 2).clamp(240, 450);
-            let init_window_size = smithay::utils::Size::from((init_w, init_h));
+            let max_w = (self.width as i32 - loc_x - BORDER_WIDTH * 2 - 10).max(320);
+            let max_h = (self.height as i32 - loc_y - BORDER_WIDTH * 2 - 10).max(200);
+
+            let init_w = (self.width as i32 * 8 / 10).clamp(320, max_w);
+            let init_h = (self.height as i32 * 8 / 10).clamp(240, max_h);
+            let configure_size = smithay::utils::Size::from((init_w, init_h));
+            let init_window_size = configure_size;
 
             (loc, configure_size, init_window_size)
         } else {
