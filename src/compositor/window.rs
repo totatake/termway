@@ -76,6 +76,31 @@ impl ManagedWindow {
         }
     }
 
+    pub fn is_polkit(&self, polkit_pid: Option<u32>) -> bool {
+        match &self.surface {
+            WindowSurface::X11(xwin) => {
+                if let (Some(ppid), Some(wpid)) = (polkit_pid, xwin.pid()) {
+                    if ppid == wpid {
+                        return true;
+                    }
+                }
+                let title = xwin.title().to_lowercase();
+                let class = xwin.class().to_lowercase();
+                title.contains("authentication")
+                    || title.contains("polkit")
+                    || class.contains("polkit")
+                    || class.contains("policykit")
+            }
+            WindowSurface::Wayland(_) => {
+                let title = self.title.to_lowercase();
+                title.contains("authentication")
+                    || title.contains("polkit")
+                    || title.contains("policykit")
+            }
+            _ => false,
+        }
+    }
+
     #[allow(dead_code)]
     pub fn new_dummy(id: usize, title: String, loc: Point<i32, Logical>, size: Size<i32, Logical>) -> Self {
         Self {

@@ -71,6 +71,14 @@ impl TermwayEngine {
         let display_str = xvfb.display_string();
         eprintln!("[termway] X11 server ready on DISPLAY={}", display_str);
 
+        // Grant root access to local X server for pkexec / gparted
+        let _ = Command::new("xhost")
+            .env("DISPLAY", &display_str)
+            .arg("+si:localuser:root")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+
         // 3.5. Start session manager (D-Bus isolation and Polkit authentication agent)
         let mut session = crate::session::SessionManager::new();
         session.start_polkit(None, Some(&display_str));
@@ -147,6 +155,7 @@ impl TermwayEngine {
         let mut running = true;
 
         let mut has_opened_windows = false;
+        let mut all_windows_closed_time: Option<Instant> = None;
         let spawn_time = Instant::now();
 
         while running {
@@ -163,11 +172,35 @@ impl TermwayEngine {
                 has_opened_windows = true;
             }
 
+            let is_child_alive = if let Some(ref mut child) = client_child {
+                match child.try_wait() {
+                    Ok(None) => true,
+                    _ => false,
+                }
+            } else {
+                false
+            };
+
             // A. Check exit condition based on window lifecycle
             if has_opened_windows {
                 if active_windows == 0 {
-                    eprintln!("[termway] All X11 windows closed, exiting.");
-                    break;
+                    if is_child_alive {
+                        // While the child process is still running, do not exit immediately on 0 windows;
+                        // wait up to 3 seconds grace period in case a new window is about to open.
+                        if let Some(t) = all_windows_closed_time {
+                            if t.elapsed() > Duration::from_millis(3000) {
+                                eprintln!("[termway] All X11 windows closed and grace period expired while client running, exiting.");
+                                break;
+                            }
+                        } else {
+                            all_windows_closed_time = Some(Instant::now());
+                        }
+                    } else {
+                        eprintln!("[termway] All X11 windows closed and client exited, exiting.");
+                        break;
+                    }
+                } else {
+                    all_windows_closed_time = None;
                 }
             } else if let Some(ref mut child) = client_child {
                 match child.try_wait() {

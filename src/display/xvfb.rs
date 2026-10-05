@@ -25,6 +25,7 @@ impl XvfbServer {
             .arg("0")
             .arg(&screen_geom)
             .arg("-nocursor")
+            .arg("-ac")
             .spawn()
             .map_err(|e| format!("Failed to spawn Xvfb: {}", e))?;
 

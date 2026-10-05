@@ -172,6 +172,10 @@ impl PolkitAgent {
     pub fn is_running(&self) -> bool {
         self.child.is_some()
     }
+
+    pub fn pid(&self) -> Option<u32> {
+        self.child.as_ref().map(|c| c.id())
+    }
 }
 
 impl Drop for PolkitAgent {
@@ -236,6 +240,10 @@ impl SessionManager {
 
     pub fn is_polkit_running(&self) -> bool {
         self.polkit.as_ref().map(|p| p.is_running()).unwrap_or(false)
+    }
+
+    pub fn polkit_pid(&self) -> Option<u32> {
+        self.polkit.as_ref().and_then(|p| p.pid())
     }
 }
 

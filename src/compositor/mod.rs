@@ -125,7 +125,7 @@ impl TermwayCompositor {
         let _ = std::fs::create_dir_all(wrap_dir);
         let wrapper_path = format!("{}/Xwayland", wrap_dir);
         let wrapper_script = format!(
-            "#!/bin/bash\nunset WAYLAND_SOCKET\nexport WAYLAND_DISPLAY={}\nexec {} \"$@\"\n",
+            "#!/bin/bash\nunset WAYLAND_SOCKET\nexport WAYLAND_DISPLAY={}\nexec {} -ac \"$@\"\n",
             socket_name, xwayland_real
         );
         std::fs::write(&wrapper_path, wrapper_script).unwrap();
@@ -218,9 +218,16 @@ impl TermwayCompositor {
                 match event {
                     smithay::xwayland::XWaylandEvent::Ready {
                         x11_socket,
-                        display_number: _,
+                        display_number,
                     } => {
-                        log_line("[termway] XWayland ready, starting XWM...");
+                        let disp_str = format!(":{}", display_number);
+                        log_line(format!("[termway] XWayland ready on {}, starting XWM...", disp_str));
+                        let _ = std::process::Command::new("xhost")
+                            .env("DISPLAY", &disp_str)
+                            .arg("+si:localuser:root")
+                            .stdout(std::process::Stdio::null())
+                            .stderr(std::process::Stdio::null())
+                            .status();
                         if let Ok(wm) = smithay::xwayland::xwm::X11Wm::start_wm(
                             handle.clone(),
                             x11_socket,
@@ -245,6 +252,7 @@ impl TermwayCompositor {
         }
 
         let mut loop_count = 0;
+        let mut all_windows_closed_time: Option<std::time::Instant> = None;
         while self.state.running {
             loop_count += 1;
             
@@ -309,20 +317,75 @@ impl TermwayCompositor {
                 w.wl_surface().as_ref().map(|s| smithay::reexports::wayland_server::Resource::is_alive(s)).unwrap_or(true)
             });
 
+            let polkit_pid = self.session.polkit_pid();
+            let is_x11_polkit = |xwin: &smithay::xwayland::xwm::X11Surface| -> bool {
+                if let (Some(ppid), Some(wpid)) = (polkit_pid, xwin.pid()) {
+                    if ppid == wpid {
+                        return true;
+                    }
+                }
+                let title = xwin.title().to_lowercase();
+                let class = xwin.class().to_lowercase();
+                title.contains("authentication")
+                    || title.contains("polkit")
+                    || class.contains("polkit")
+                    || class.contains("policykit")
+            };
+
+            let is_wayland_polkit = |surface: &smithay::wayland::shell::xdg::ToplevelSurface| -> bool {
+                let title = smithay::wayland::compositor::with_states(surface.wl_surface(), |states| {
+                    states
+                        .data_map
+                        .get::<smithay::wayland::shell::xdg::XdgToplevelSurfaceData>()
+                        .and_then(|d| d.lock().ok())
+                        .and_then(|attrs| attrs.title.clone())
+                }).unwrap_or_default().to_lowercase();
+                title.contains("authentication") || title.contains("polkit") || title.contains("policykit")
+            };
+
             let active_window_count = self.state.managed_windows.len()
                 + self.state.windows.len()
                 + self.state.x11_windows.len();
 
-            if active_window_count > 0 {
+            let client_window_count = self.state.managed_windows.iter().filter(|w| !w.is_polkit(polkit_pid)).count()
+                + self.state.windows.iter().filter(|w| !is_wayland_polkit(w)).count()
+                + self.state.x11_windows.iter().filter(|w| !is_x11_polkit(w)).count();
+
+            if client_window_count > 0 {
                 self.has_opened_windows = true;
             }
 
+            // Check if client child process is still running
+            let is_child_alive = if let Some(ref mut child) = self.client_child {
+                match child.try_wait() {
+                    Ok(None) => true,
+                    _ => false,
+                }
+            } else {
+                false
+            };
+
             // A. Check exit condition based on window lifecycle
             if self.has_opened_windows {
-                // If windows were opened, exit when all windows are closed
                 if active_window_count == 0 {
-                    log_line("[termway] All windows closed, exiting compositor.");
-                    break;
+                    if is_child_alive {
+                        // While the child process is still running, do not exit immediately on 0 windows;
+                        // wait up to 3 seconds grace period in case a new window is about to open (e.g. after dialog or splash).
+                        if let Some(t) = all_windows_closed_time {
+                            if t.elapsed() > std::time::Duration::from_millis(3000) {
+                                log_line("[termway] All windows closed and grace period expired while client running, exiting compositor.");
+                                break;
+                            }
+                        } else {
+                            all_windows_closed_time = Some(std::time::Instant::now());
+                        }
+                    } else {
+                        // Client child has finished and all windows are closed
+                        log_line("[termway] All windows closed and client exited, exiting compositor.");
+                        break;
+                    }
+                } else {
+                    all_windows_closed_time = None;
                 }
             } else if let Some(ref mut child) = self.client_child {
                 match child.try_wait() {
