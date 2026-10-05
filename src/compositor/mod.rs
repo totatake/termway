@@ -125,7 +125,7 @@ impl TermwayCompositor {
         let _ = std::fs::create_dir_all(wrap_dir);
         let wrapper_path = format!("{}/Xwayland", wrap_dir);
         let wrapper_script = format!(
-            "#!/bin/bash\nunset WAYLAND_SOCKET\nexport WAYLAND_DISPLAY={}\nexec {} \"$@\"\n",
+            "#!/bin/bash\nunset WAYLAND_SOCKET\nexport WAYLAND_DISPLAY={}\nARGS=()\nfor arg in \"$@\"; do\n    if [ \"$arg\" != \"-terminate\" ]; then\n        ARGS+=(\"$arg\")\n    fi\ndone\nexec {} \"${{ARGS[@]}}\" -ac\n",
             socket_name, xwayland_real
         );
         std::fs::write(&wrapper_path, wrapper_script).unwrap();
@@ -292,6 +292,17 @@ impl TermwayCompositor {
                     if let Some(dbus) = self.session.dbus_address() {
                         cmd.env("DBUS_SESSION_BUS_ADDRESS", dbus);
                     }
+                    if let Ok(file) = std::fs::OpenOptions::new()
+                        .create(true)
+                        .truncate(true)
+                        .write(true)
+                        .open("/tmp/termway_client.log")
+                    {
+                        if let Ok(err_file) = file.try_clone() {
+                            cmd.stdout(file);
+                            cmd.stderr(err_file);
+                        }
+                    }
                     match cmd.spawn() {
                         Ok(child) => {
                             log_line(format!("[termway] Spawned client: {:?}", cmd_args));
@@ -385,8 +396,13 @@ impl TermwayCompositor {
                 match child.try_wait() {
                     Ok(Some(status)) => {
                         if !status.success() {
-                            // If client exited with error before opening any window, exit immediately
-                            log_line(format!("[termway] Client process exited with error ({:?}) before opening any window.", status));
+                            let err_msg = std::fs::read_to_string("/tmp/termway_client.log").unwrap_or_default();
+                            let preview = err_msg.lines().take(5).collect::<Vec<_>>().join(" | ");
+                            log_line(format!(
+                                "[termway] Client process exited with error ({:?}) before opening any window: {}",
+                                status,
+                                if preview.is_empty() { "(no output)" } else { &preview }
+                            ));
                             break;
                         }
                         // If client exited with success (e.g. gvim fork), wait up to 3s grace period for window to appear
