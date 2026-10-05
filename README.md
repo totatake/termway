@@ -114,8 +114,10 @@ flowchart LR
 # Ubuntu / Debian
 sudo apt-get install -y build-essential pkg-config libx11-dev libxtst-dev libpixman-1-dev libwayland-dev xwayland dbus-daemon
 
-# Recommended for running privileged tools (e.g. gparted) with password prompts
-sudo apt-get install -y lxpolkit
+# Recommended for running privileged tools (e.g. gparted) with password prompts (choose one)
+sudo apt-get install -y policykit-1-gnome   # Official GNOME authentication dialog (Recommended)
+# or
+sudo apt-get install -y lxpolkit           # Lightweight authentication dialog
 
 # Required only if using legacy --x11 / --xvfb mode
 sudo apt-get install -y xvfb openbox

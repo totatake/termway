@@ -110,8 +110,10 @@ flowchart LR
 # Ubuntu / Debian
 sudo apt-get install -y build-essential pkg-config libx11-dev libxtst-dev libpixman-1-dev libwayland-dev xwayland dbus-daemon
 
-# gparted 等の管理者権限 GUI ツール（Polkit 認証ダイアログ）を使用する場合に推奨
-sudo apt-get install -y lxpolkit
+# gparted 等の管理者権限 GUI ツール（Polkit 認証ダイアログ）を使用する場合（いずれか1つ）
+sudo apt-get install -y policykit-1-gnome   # Ubuntu 標準の GNOME 認証ダイアログ（推奨）
+# または
+sudo apt-get install -y lxpolkit           # 軽量な認証ダイアログ
 
 # レガシー --x11 モードを使用する場合のみ追加で必要
 sudo apt-get install -y xvfb openbox

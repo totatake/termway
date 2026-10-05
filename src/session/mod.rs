@@ -58,11 +58,12 @@ impl Drop for DbusSession {
 }
 
 /// Known paths for Polkit authentication agents in various Linux distributions.
+/// Prioritizes official GNOME agent (policykit-1-gnome) when present, falling back to lxpolkit and others.
 const KNOWN_POLKIT_AGENTS: &[&str] = &[
-    "lxpolkit",
     "/usr/lib/policykit-1-gnome/polkit-gnome-authentication-agent-1",
     "/usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1",
     "/usr/libexec/polkit-gnome-authentication-agent-1",
+    "lxpolkit",
     "/usr/lib/mate-polkit/polkit-mate-authentication-agent-1",
     "/usr/libexec/polkit-mate-authentication-agent-1",
     "/usr/lib/x86_64-linux-gnu/polkit-mate/polkit-mate-authentication-agent-1",
