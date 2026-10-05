@@ -18,6 +18,9 @@
   - 矢印キー、Ctrlキー、Enter/Tab/Backspace 等のキー入力もノンブロッキングで即時転送（1キー遅延なし）。
 - **イベント駆動・タイル差分レンダリング (Damage Tracking)**:
   - `wl_surface.commit` やダメージ通知に連動する完全イベント駆動レンダリングにより、省電力・超低遅延化を実現。
+- **D-Bus セッション分離と Polkit 認証エージェント連携 (gnome-terminal / gparted 対応)**:
+  - **D-Bus セッション分離**: 独立した D-Bus セッションバスを自動起動して隔離環境を提供。`gnome-terminal` などの Single-Instance デーモン機構を持つアプリがホスト既存のデスクトップ画面（DISPLAY :0 等）に誤って飛んでしまう問題を防止。
+  - **Polkit 認証エージェント自動連携**: `lxpolkit` 等の認証エージェントを自動検知してセッション内に常駐。`gparted` や `pkexec` などの管理者権限アプリの起動時に、ターミナル画面内にパスワード入力ダイアログが正しく表示されます。
 
 ---
 
@@ -31,6 +34,11 @@ flowchart LR
     end
 
     subgraph termway["termway (Smithay Wayland Compositor)"]
+        subgraph SessionLayer["Session Management Layer"]
+            Dbus["D-Bus Session Bus (Isolated)"]
+            Polkit["Polkit Agent (lxpolkit / gnome)"]
+        end
+
         subgraph TerminalLayer["Terminal Layer"]
             RawGuard["RawModeGuard (RAII)"]
             WinSize["TIOCGWINSZ / SGR 14t Parser"]
@@ -57,7 +65,12 @@ flowchart LR
     subgraph AppLayer["Client Applications"]
         WaylandApp["Wayland Native Apps (GTK, Qt, etc.)"]
         X11App["Legacy X11 Apps (xeyes, Tkinter, etc.)"]
+        PrivApp["Privileged Apps (gparted, etc.)"]
     end
+
+    %% Session & IPC
+    Dbus -.->|"DBUS_SESSION_BUS_ADDRESS"| AppLayer
+    Polkit <-->|"Authentication Agent"| PrivApp
 
     %% Inputs
     TermIn --> TermBackend
@@ -95,7 +108,10 @@ flowchart LR
 
 ```bash
 # Ubuntu / Debian
-sudo apt-get install -y build-essential pkg-config libx11-dev libxtst-dev libpixman-1-dev libwayland-dev xwayland
+sudo apt-get install -y build-essential pkg-config libx11-dev libxtst-dev libpixman-1-dev libwayland-dev xwayland dbus-daemon
+
+# gparted 等の管理者権限 GUI ツール（Polkit 認証ダイアログ）を使用する場合に推奨
+sudo apt-get install -y lxpolkit
 
 # レガシー --x11 モードを使用する場合のみ追加で必要
 sudo apt-get install -y xvfb openbox
@@ -144,9 +160,18 @@ cargo run --release -- --kitty -- gvim
 
 # レガシーな X11/Xvfb モードで実行する場合
 cargo run --release -- --x11 --wm -- xclock
+
+# 管理者権限 GUI ツール（Polkit 認証ダイアログがターミナル内に表示されます）
+cargo run --release -- --wm -- gparted
+
+# gnome-terminal (D-Bus セッション分離により Termway 内で確実に起動)
+cargo run --release -- --wm -- gnome-terminal
 ```
 
-> **Note**: `gvim` や `gedit` 等の自動的にバックグラウンド化（fork）するアプリケーションも、`-f` などのオプション不要でそのまま起動できます。ウィンドウが開いている間セッションを維持し、全ウィンドウを閉じた際に自動で終了します。
+> **Note**:
+> - `gvim` や `gedit` 等の自動的にバックグラウンド化（fork）するアプリケーションも、`-f` などのオプション不要でそのまま起動できます。ウィンドウが開いている間セッションを維持し、全ウィンドウを閉じた際に自動で終了します。
+> - `gnome-terminal` などの Single-Instance デーモン機構を持つアプリも、内蔵の独立 D-Bus セッションバスによりリモート画面に飛ぶことなく Termway 内で正常に起動します。
+> - `gparted` や `pkexec` 等の管理者権限ツールは、システムに `lxpolkit` 等の認証エージェントが導入されていれば、Termway 画面内にパスワード入力ダイアログが表示されてスムーズに認証・実行できます。
 
 ### 3. Smithay Wayland コンポジタ（デフォルト）
 

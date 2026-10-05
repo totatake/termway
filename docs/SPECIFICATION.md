@@ -22,6 +22,8 @@ flowchart LR
         FR11["FR-11: 描画最適化 (MIT-SHM)"]
         FR12["FR-12: Sixelプロトコル対応 & ピクセルパーフェクト追従"]
         FR16["FR-16: Smithay Wayland コンポジタ & XWayland 統合"]
+        FR18["FR-18: D-Bus セッション隔離 (Single-Instance 干渉防止)"]
+        FR19["FR-19: Polkit 認証エージェント連携 (特権GUI昇格)"]
     end
 
     subgraph Verification["テスト検証 (Verification)"]
@@ -34,6 +36,7 @@ flowchart LR
         T_Key["unit_keyboard<br/>(単体テスト)"]
         T_Cursor["unit_cursor & pointer<br/>(単体テスト)"]
         T_Comp["unit_compositor<br/>(単体テスト)"]
+        T_Sess["unit_session<br/>(単体テスト)"]
     end
 
     FR1 --> T_Kitty
@@ -55,6 +58,8 @@ flowchart LR
     FR11 --> T_Sys
     FR12 --> T_Term
     FR16 --> T_Comp
+    FR18 --> T_Sess
+    FR19 --> T_Sess
 ```
 
 ---
@@ -79,6 +84,8 @@ flowchart LR
 | **FR-12** | Sixel対応＆ピクセル追従 | Sixelプロトコルでのフォールバック描画をサポート。さらに `\x1b[14t` を用いて端末の正確なピクセル解像度を動的取得し、1:1アスペクト比の維持とマウスクリック（X11ヒットボックス）のピクセルパーフェクトな同期を実現すること。 | `tests/unit_sixel_encoder.rs` | **PASS** |
 | **FR-16** | Smithay Wayland コンポジタ＆XWayland 統合 | `--wayland` フラグ指定時、Smithay ベースのヘッドレス Wayland コンポジタを termway 自身として起動すること。具体的には以下を満たすこと：(1) Wayland ソケット経由でクライアントアプリを受け付けること、(2) XWayland を起動してレガシー X11 アプリ（xeyes, xclock 等）を実行可能にすること、(3) `X11Wm::start_wm()` による X11 ウィンドウマネージャを内蔵すること、(4) XWayland 接続に際し FD クローズ問題を回避するラッパースクリプト（`/tmp/termway_wrap/Xwayland`）を自動生成すること、(5) `X11Surface::wl_surface()` が `None` を返す場合に備え `unassociated_surfaces` リストへのフォールバック描画を行うこと。 | `tests/unit_compositor.rs` | **PASS** |
 | **FR-17** | Sixel 自動フォールバック | 起動時に `KITTY_WINDOW_ID` 環境変数を検査し、存在しない場合（Kitty ターミナル以外の環境）は `--sixel` フラグを明示しなくても自動的に `use_sixel = true` に設定すること。`--sixel` フラグによる明示的な上書きは従来どおり有効であること。これにより GNOME Terminal や VTE 系端末でも追加オプションなしで動作すること。 | `tests/unit_terminal.rs` | **PASS** |
+| **FR-18** | D-Bus セッション分離 | `dbus-daemon --session --print-address` により Termway 専用の独立した D-Bus セッションバスを起動し、専用の `DBUS_SESSION_BUS_ADDRESS` を子プロセスに伝播すること。これにより、`gnome-terminal` などの Single-Instance デーモン機構を持つアプリがホストの既存セッション（DISPLAY :0 等）に誤接続する問題を防止し、Termway 内でウィンドウを正常描画・制御すること。終了時にはプロセスを確実に回収すること。 | `tests/unit_session.rs` | **PASS** |
+| **FR-19** | Polkit 認証エージェント連携 | システム内の Polkit 認証エージェント（`lxpolkit`, `polkit-gnome`, `mate-polkit` 等）を自動検出し、Termway のセッション配下で常駐起動すること。Termway 終了時には確実にプロセスを終了・回収すること。これにより、`gparted` や `pkexec` 等の管理者権限を要求するツールにおいて、Termway 画面内にパスワード入力ダイアログを表示して正常認証・起動できること。 | `tests/unit_session.rs` | **PASS** |
 
 ### 2.2 非機能要件 (Non-Functional Requirements)
 
@@ -135,6 +142,11 @@ flowchart LR
 - `test_state_raise_window`: ウィンドウの Z-order 最前面浮上（Raise）およびアクティブ状態切り替え検証
 - `test_window_clamping_logic`: 画面解像度境界に対するウィンドウ位置・フレームのクランプ検証
 
+#### `tests/unit_session.rs`
+- `test_dbus_session_lifecycle`: `dbus-daemon --session --print-address` による専用 D-Bus セッションバスの起動、アドレス取得、環境変数設定およびライフサイクル検証
+- `test_polkit_agent_lookup_and_lifecycle`: Polkit 認証エージェント（`lxpolkit` 等）の自動探索と非パニック起動・安全終了ライフサイクル検証
+- `test_session_manager_integration`: `SessionManager` による D-Bus 隔離と Polkit 認証エージェント起動の統合管理検証
+
 ---
 
 ### 3.2 結合テスト (Integration Tests)
@@ -163,25 +175,26 @@ flowchart LR
 
 ```bash
 $ cargo test
-   Compiling termway v0.1.0 (/path/to/termway)
+   Compiling termway v2.0.0 (/path/to/termway)
     Finished `test` profile [unoptimized + debuginfo] target(s)
      Running tests/integration_pipeline.rs (2 tests) ... ok
      Running tests/system_e2e_gui.rs (1 test) ... ok
      Running tests/unit_clipboard.rs (1 test) ... ok
-     Running tests/unit_compositor.rs (4 tests) ... ok
+     Running tests/unit_compositor.rs (7 tests) ... ok
      Running tests/unit_cursor.rs (1 test) ... ok
      Running tests/unit_damage_tracker.rs (3 tests) ... ok
      Running tests/unit_keyboard.rs (3 tests) ... ok
      Running tests/unit_kitty_encoder.rs (5 tests) ... ok
      Running tests/unit_pointer.rs (1 test) ... ok
+     Running tests/unit_session.rs (3 tests) ... ok
      Running tests/unit_sgr_mouse.rs (6 tests) ... ok
      Running tests/unit_shm.rs (1 test) ... ok
      Running tests/unit_sixel_encoder.rs (3 tests) ... ok
      Running tests/unit_terminal.rs (4 tests) ... ok
 
-test result: ok. 34 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.65s
+test result: ok. 35 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.65s
 ```
-全 34 テストが 100% 成功し、すべての要件定義項目が検証されました。
+全 35 テストが 100% 成功し、すべての要件定義項目が検証されました。
 
 ---
 

@@ -18,6 +18,9 @@
   - Non-blocking keyboard input forwarding for arrow keys, Ctrl shortcuts (e.g. `Ctrl-U`, `Ctrl-W`), Enter, Tab, and Backspace.
 - **Event-Driven Tile Damage Tracking**:
   - Renders only modified regions on `wl_surface.commit` and damage events, drastically minimizing CPU usage and latency.
+- **D-Bus Session Isolation & Polkit Agent Integration (gnome-terminal & gparted ready)**:
+  - **D-Bus Session Isolation**: Spawns an isolated D-Bus session bus automatically, preventing single-instance daemon applications (e.g. `gnome-terminal`) from mistakenly launching on existing remote desktop displays (such as `DISPLAY :0`).
+  - **Integrated Polkit Authentication Agent**: Automatically discovers and runs background authentication agents (such as `lxpolkit`). Elevation prompts for privileged tools like `gparted` or `pkexec` pop up seamlessly inside your terminal window.
 - **Built-in Floating Window Manager (Openbox / Fluxbox Style)** (`--wm`):
   - Self-contained window management without requiring external window managers.
   - Minimalist, distraction-free decorations: 22px title bar, 1px border, close button `[×]`, bottom-right resize handle, and 8x8 bitmap font window titles.
@@ -35,6 +38,11 @@ flowchart LR
     end
 
     subgraph termway["termway (Smithay Wayland Compositor)"]
+        subgraph SessionLayer["Session Management Layer"]
+            Dbus["D-Bus Session Bus (Isolated)"]
+            Polkit["Polkit Agent (lxpolkit / gnome)"]
+        end
+
         subgraph TerminalLayer["Terminal Layer"]
             RawGuard["RawModeGuard (RAII)"]
             WinSize["TIOCGWINSZ / SGR 14t Parser"]
@@ -61,7 +69,12 @@ flowchart LR
     subgraph AppLayer["Client Applications"]
         WaylandApp["Wayland Native Apps (GTK, Qt, etc.)"]
         X11App["Legacy X11 Apps (xeyes, Tkinter, etc.)"]
+        PrivApp["Privileged Apps (gparted, etc.)"]
     end
+
+    %% Session & IPC
+    Dbus -.->|"DBUS_SESSION_BUS_ADDRESS"| AppLayer
+    Polkit <-->|"Authentication Agent"| PrivApp
 
     %% Inputs
     TermIn --> TermBackend
@@ -99,7 +112,10 @@ flowchart LR
 
 ```bash
 # Ubuntu / Debian
-sudo apt-get install -y build-essential pkg-config libx11-dev libxtst-dev libpixman-1-dev libwayland-dev xwayland
+sudo apt-get install -y build-essential pkg-config libx11-dev libxtst-dev libpixman-1-dev libwayland-dev xwayland dbus-daemon
+
+# Recommended for running privileged tools (e.g. gparted) with password prompts
+sudo apt-get install -y lxpolkit
 
 # Required only if using legacy --x11 / --xvfb mode
 sudo apt-get install -y xvfb openbox
@@ -147,6 +163,12 @@ cargo run --release -- gvim
 # Run with floating window manager (title bar, resize handle, close button)
 cargo run --release -- --wm -- gvim
 
+# Run privileged administrative tools (password dialog prompts inside termway)
+cargo run --release -- --wm -- gparted
+
+# Run gnome-terminal (isolated D-Bus session ensures window opens inside termway)
+cargo run --release -- --wm -- gnome-terminal
+
 # Explicitly force Sixel protocol
 cargo run --release -- --sixel -- gvim
 
@@ -157,7 +179,10 @@ cargo run --release -- --kitty -- gvim
 cargo run --release -- --x11 --wm -- xclock
 ```
 
-> **Note**: GUI applications that automatically fork into the background (such as `gvim` or `gedit`) can be launched without `-f`. `termway` tracks the window lifecycle and automatically terminates when all application windows are closed.
+> **Note**:
+> - GUI applications that automatically fork into the background (such as `gvim` or `gedit`) can be launched without `-f`. `termway` tracks the window lifecycle and automatically terminates when all application windows are closed.
+> - Single-instance daemon applications like `gnome-terminal` work seamlessly inside `termway` thanks to the automated isolated D-Bus session.
+> - Privileged GUI tools like `gparted` or `pkexec` will display their authentication dialog within the terminal when `lxpolkit` is installed.
 
 ### 3. Font Cell Size Optimization (`--cell-size`, `TERMWAY_CELL_SIZE`)
 For pixel-perfect mouse tracking, `termway` automatically sends `\x1b[16t` and `\x1b[14t` on startup. If your terminal emulator does not answer these queries, you can manually specify the font cell dimensions:
