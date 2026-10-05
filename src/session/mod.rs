@@ -187,6 +187,9 @@ impl SessionManager {
     }
 
     pub fn start_polkit(&mut self, wayland_display: Option<&str>, x11_display: Option<&str>) {
+        if self.polkit.is_some() {
+            return;
+        }
         let dbus_addr = self.dbus_address();
         let agent = PolkitAgent::start(wayland_display, x11_display, dbus_addr);
         if let Some(name) = agent.agent_name() {
@@ -195,9 +198,12 @@ impl SessionManager {
                 name
             ));
         } else {
-            crate::compositor::log_line(
-                "[termway] Notice: No Polkit authentication agent found (e.g. lxpolkit, polkit-gnome). Install lxpolkit for root privilege GUI prompts (e.g. gparted).",
-            );
+            let msg = "[termway] Notice: No Polkit authentication agent found (policykit-1-gnome or lxpolkit).\n\
+                       [termway]         To run privileged apps (e.g. gparted) without sudo, install one via:\n\
+                       [termway]         sudo apt install -y policykit-1-gnome (or lxpolkit)\n\
+                       [termway]         Alternatively, run directly with: sudo ./termway --wm <command>";
+            crate::compositor::log_line(msg);
+            eprintln!("{}", msg);
         }
         self.polkit = Some(agent);
     }

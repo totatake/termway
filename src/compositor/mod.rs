@@ -81,7 +81,7 @@ impl TermwayCompositor {
 
         Self::ensure_xdg_runtime_dir();
 
-        let mut session = crate::session::SessionManager::new();
+        let session = crate::session::SessionManager::new();
 
         let display = Display::new()?;
         let dh = display.handle();
@@ -172,9 +172,6 @@ impl TermwayCompositor {
             None => (None, None),
         };
 
-        // 7. Start Polkit Authentication Agent for privilege elevation dialogs
-        session.start_polkit(Some(&socket_name), x11_display.as_deref());
-
         Ok(Self {
             display,
             listener,
@@ -263,6 +260,9 @@ impl TermwayCompositor {
             // Spawn pending command after Wayland globals are advertised and XWayland (if present) is ready
             let xwayland_is_ready = self.state.xwayland_ready || self.x11_display.is_none();
             if loop_count >= 5 && xwayland_is_ready {
+                // Start Polkit Authentication Agent once Wayland and XWayland are fully ready
+                self.session.start_polkit(Some(&self.socket_name), self.x11_display.as_deref());
+
                 if let Some(cmd_args) = self.pending_command.take() {
                     let mut cmd = Command::new(&cmd_args[0]);
                     if cmd_args.len() > 1 {
