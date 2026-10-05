@@ -18,13 +18,13 @@
   - Non-blocking keyboard input forwarding for arrow keys, Ctrl shortcuts (e.g. `Ctrl-U`, `Ctrl-W`), Enter, Tab, and Backspace.
 - **Event-Driven Tile Damage Tracking**:
   - Renders only modified regions on `wl_surface.commit` and damage events, drastically minimizing CPU usage and latency.
-- **D-Bus Session Isolation & Polkit Agent Integration (gnome-terminal & gparted ready)**:
-  - **D-Bus Session Isolation**: Spawns an isolated D-Bus session bus automatically, preventing single-instance daemon applications (e.g. `gnome-terminal`) from mistakenly launching on existing remote desktop displays (such as `DISPLAY :0`).
-  - **Integrated Polkit Authentication Agent**: Automatically discovers and runs background authentication agents (such as `lxpolkit`). Elevation prompts for privileged tools like `gparted` or `pkexec` pop up seamlessly inside your terminal window.
+- **Hybrid D-Bus Session & Snap Support (Firefox, gnome-terminal & gparted ready)**:
+  - **Dual D-Bus Architecture**: Automatically spawns an isolated D-Bus session bus for single-instance applications (e.g. `gnome-terminal`) to guarantee dedicated server instances on Termway's display, while transparently routing the host's ambient `systemd --user` session bus to strictly confined Snap applications (e.g. Ubuntu's Snap-packaged `firefox`) for cgroup scope creation.
+  - **Integrated Polkit Authentication Agent**: Automatically discovers and runs background authentication agents (`policykit-1-gnome` or `lxpolkit`). Elevation prompts for privileged tools like `gparted` or `pkexec` pop up seamlessly inside your terminal window.
 - **Built-in Floating Window Manager (Openbox / Fluxbox Style)** (`--wm`):
   - Self-contained window management without requiring external window managers.
   - Minimalist, distraction-free decorations: 22px title bar, 1px border, close button `[×]`, bottom-right resize handle, and 8x8 bitmap font window titles.
-  - Window clamping mechanism prevents windows from being dragged or resized outside terminal view boundaries.
+  - Screen boundary clamping mechanism prevents windows and Sixel graphics from being clipped at the right or bottom terminal edges.
 
 ---
 
@@ -39,8 +39,8 @@ flowchart LR
 
     subgraph termway["termway (Smithay Wayland Compositor)"]
         subgraph SessionLayer["Session Management Layer"]
-            Dbus["D-Bus Session Bus (Isolated)"]
-            Polkit["Polkit Agent (lxpolkit / gnome)"]
+            Dbus["Hybrid D-Bus Manager (Isolated + Ambient)"]
+            Polkit["Polkit Agent (gnome / lxpolkit)"]
         end
 
         subgraph TerminalLayer["Terminal Layer"]
@@ -67,13 +67,13 @@ flowchart LR
     end
 
     subgraph AppLayer["Client Applications"]
-        WaylandApp["Wayland Native Apps (GTK, Qt, etc.)"]
+        WaylandApp["Wayland Native Apps (GTK, Qt, Firefox, etc.)"]
         X11App["Legacy X11 Apps (xeyes, Tkinter, etc.)"]
-        PrivApp["Privileged Apps (gparted, etc.)"]
+        PrivApp["Privileged Apps (gparted, pkexec, etc.)"]
     end
 
     %% Session & IPC
-    Dbus -.->|"DBUS_SESSION_BUS_ADDRESS"| AppLayer
+    Dbus -.->|"Isolated Bus (gnome-terminal) / Ambient Bus (Snap Firefox)"| AppLayer
     Polkit <-->|"Authentication Agent"| PrivApp
 
     %% Inputs
@@ -162,14 +162,19 @@ Specify the target command and arguments after `--`:
 # Run gvim (Wayland compositor + auto-detected protocol)
 cargo run --release -- gvim
 
-# Run with floating window manager (title bar, resize handle, close button)
-cargo run --release -- --wm -- gvim
-
-# Run privileged administrative tools (password dialog prompts inside termway)
-cargo run --release -- --wm -- gparted
+# Run web browser (supports Ubuntu Snap-packaged Firefox out-of-the-box)
+cargo run --release -- firefox
+# or with floating window manager:
+cargo run --release -- --wm -- firefox
 
 # Run gnome-terminal (isolated D-Bus session ensures window opens inside termway)
 cargo run --release -- --wm -- gnome-terminal
+
+# Run privileged administrative tools (Polkit password dialog prompts inside termway)
+cargo run --release -- --wm -- gparted
+
+# Run with floating window manager (title bar, resize handle, close button)
+cargo run --release -- --wm -- gvim
 
 # Explicitly force Sixel protocol
 cargo run --release -- --sixel -- gvim
@@ -183,8 +188,9 @@ cargo run --release -- --x11 --wm -- xclock
 
 > **Note**:
 > - GUI applications that automatically fork into the background (such as `gvim` or `gedit`) can be launched without `-f`. `termway` tracks the window lifecycle and automatically terminates when all application windows are closed.
+> - Modern web browsers like `firefox` (including default Ubuntu Snap packages) work out-of-the-box thanks to automatic ambient systemd session bus routing.
 > - Single-instance daemon applications like `gnome-terminal` work seamlessly inside `termway` thanks to the automated isolated D-Bus session.
-> - Privileged GUI tools like `gparted` or `pkexec` will display their authentication dialog within the terminal when `lxpolkit` is installed.
+> - Privileged GUI tools like `gparted` or `pkexec` will display their authentication dialog within the terminal when `policykit-1-gnome` or `lxpolkit` is installed.
 
 ### 3. Font Cell Size Optimization (`--cell-size`, `TERMWAY_CELL_SIZE`)
 For pixel-perfect mouse tracking, `termway` automatically sends `\x1b[16t` and `\x1b[14t` on startup. If your terminal emulator does not answer these queries, you can manually specify the font cell dimensions:

@@ -18,9 +18,13 @@
   - 矢印キー、Ctrlキー、Enter/Tab/Backspace 等のキー入力もノンブロッキングで即時転送（1キー遅延なし）。
 - **イベント駆動・タイル差分レンダリング (Damage Tracking)**:
   - `wl_surface.commit` やダメージ通知に連動する完全イベント駆動レンダリングにより、省電力・超低遅延化を実現。
-- **D-Bus セッション分離と Polkit 認証エージェント連携 (gnome-terminal / gparted 対応)**:
-  - **D-Bus セッション分離**: 独立した D-Bus セッションバスを自動起動して隔離環境を提供。`gnome-terminal` などの Single-Instance デーモン機構を持つアプリがホスト既存のデスクトップ画面（DISPLAY :0 等）に誤って飛んでしまう問題を防止。
-  - **Polkit 認証エージェント自動連携**: `lxpolkit` 等の認証エージェントを自動検知してセッション内に常駐。`gparted` や `pkexec` などの管理者権限アプリの起動時に、ターミナル画面内にパスワード入力ダイアログが正しく表示されます。
+- **ハイブリッド D-Bus セッションと Snap アプリ対応 (Firefox / gnome-terminal / gparted 対応)**:
+  - **デュアル D-Bus 管理機構**: `gnome-terminal` などの単一インスタンス型アプリに対しては独立した専用 D-Bus セッションバスを起動し、ホスト側の常駐サーバーとの競合を防いで確実に Termway 内で起動。一方で Ubuntu 標準の Snap 版 `firefox` などの厳格なサンドボックス（`snap-confine`）アプリには、cgroup スコープ生成に必要なホストの `systemd --user` セッションバスを自動でルーティング。
+  - **Polkit 認証エージェント自動連携**: `policykit-1-gnome` または `lxpolkit` などの認証エージェントを自動検知してセッション内に常駐。`gparted` や `pkexec` などの管理者権限アプリの起動時に、ターミナル画面内にパスワード入力ダイアログが正しく表示されます。
+- **組み込みウィンドウマネージャ (Openbox / Fluxbox スタイル)** (`--wm`):
+  - 外部 WM プロセス不要で動作する内蔵フローティングウィンドウマネージャ。
+  - スリムタイトルバー、1px シャープボーダー、閉じるボタン [×]、右下リサイズハンドル、内蔵 8x8 ビットマップフォントによるタイトル描画。
+  - 画面枠クランプ機構により、端末サイズに応じた解像度自動補正とウィンドウはみ出し・右端/下部カットを完全に防止。
 
 ---
 
@@ -35,8 +39,8 @@ flowchart LR
 
     subgraph termway["termway (Smithay Wayland Compositor)"]
         subgraph SessionLayer["Session Management Layer"]
-            Dbus["D-Bus Session Bus (Isolated)"]
-            Polkit["Polkit Agent (lxpolkit / gnome)"]
+            Dbus["Hybrid D-Bus Manager (Isolated + Ambient)"]
+            Polkit["Polkit Agent (gnome / lxpolkit)"]
         end
 
         subgraph TerminalLayer["Terminal Layer"]
@@ -63,13 +67,13 @@ flowchart LR
     end
 
     subgraph AppLayer["Client Applications"]
-        WaylandApp["Wayland Native Apps (GTK, Qt, etc.)"]
-        X11App["Legacy X11 Apps (xeyes, Tkinter, etc.)"]
-        PrivApp["Privileged Apps (gparted, etc.)"]
+        WaylandApp["Wayland Native Apps (GTK, Qt, Firefox等)"]
+        X11App["Legacy X11 Apps (xeyes, Tkinter等)"]
+        PrivApp["Privileged Apps (gparted, pkexec等)"]
     end
 
     %% Session & IPC
-    Dbus -.->|"DBUS_SESSION_BUS_ADDRESS"| AppLayer
+    Dbus -.->|"Isolated Bus (gnome-terminal) / Ambient Bus (Snap Firefox)"| AppLayer
     Polkit <-->|"Authentication Agent"| PrivApp
 
     %% Inputs
@@ -154,6 +158,17 @@ cargo run --release -- --sixel --wm --demo
 # GUI アプリケーションを起動（デフォルト: Wayland コンポジタ + Kitty/Sixel 自動検出）
 cargo run --release -- gvim
 
+# Webブラウザを起動（Ubuntu 標準の Snap 版 Firefox にも完全対応）
+cargo run --release -- firefox
+# ウィンドウ枠をつけて起動:
+cargo run --release -- --wm -- firefox
+
+# gnome-terminal (D-Bus セッション分離により Termway 内で確実に起動)
+cargo run --release -- --wm -- gnome-terminal
+
+# 管理者権限 GUI ツール（Polkit 認証ダイアログがターミナル内に表示されます）
+cargo run --release -- --wm -- gparted
+
 # Sixel プロトコルを明示指定して起動
 cargo run --release -- --sixel -- gvim
 
@@ -162,18 +177,13 @@ cargo run --release -- --kitty -- gvim
 
 # レガシーな X11/Xvfb モードで実行する場合
 cargo run --release -- --x11 --wm -- xclock
-
-# 管理者権限 GUI ツール（Polkit 認証ダイアログがターミナル内に表示されます）
-cargo run --release -- --wm -- gparted
-
-# gnome-terminal (D-Bus セッション分離により Termway 内で確実に起動)
-cargo run --release -- --wm -- gnome-terminal
 ```
 
 > **Note**:
 > - `gvim` や `gedit` 等の自動的にバックグラウンド化（fork）するアプリケーションも、`-f` などのオプション不要でそのまま起動できます。ウィンドウが開いている間セッションを維持し、全ウィンドウを閉じた際に自動で終了します。
+> - `firefox` 等のモダンブラウザ（Ubuntu 標準の Snap パッケージを含む）も、systemd ユーザーセッションバスの自動ルーティングにより設定不要でそのまま動作します。
 > - `gnome-terminal` などの Single-Instance デーモン機構を持つアプリも、内蔵の独立 D-Bus セッションバスによりリモート画面に飛ぶことなく Termway 内で正常に起動します。
-> - `gparted` や `pkexec` 等の管理者権限ツールは、システムに `lxpolkit` 等の認証エージェントが導入されていれば、Termway 画面内にパスワード入力ダイアログが表示されてスムーズに認証・実行できます。
+> - `gparted` や `pkexec` 等の管理者権限ツールは、システムに `policykit-1-gnome` または `lxpolkit` 等の認証エージェントが導入されていれば、Termway 画面内にパスワード入力ダイアログが表示されてスムーズに認証・実行できます。
 
 ### 3. Smithay Wayland コンポジタ（デフォルト）
 
@@ -230,7 +240,7 @@ cargo run --release -- --sixel -- gvim -f
 本プロジェクトは要求仕様からシステム受入テストまでの厳密なトレーサビリティを確保して開発されており、単体テスト・結合テスト・E2Eシステムテストが整備されています。
 
 ```bash
-# 全テスト (単体・結合・E2E: 計32テスト) の実行
+# 全テスト (単体・結合・E2E: 計36テスト) の実行
 cargo test
 ```
 
