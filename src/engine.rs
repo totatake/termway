@@ -71,6 +71,10 @@ impl TermwayEngine {
         let display_str = xvfb.display_string();
         eprintln!("[termway] X11 server ready on DISPLAY={}", display_str);
 
+        // 3.5. Start session manager (D-Bus isolation and Polkit authentication agent)
+        let mut session = crate::session::SessionManager::new();
+        session.start_polkit(None, Some(&display_str));
+
         // 4. Initialize XTest input injector
         let mut injector = XTestInjector::new(xvfb.raw_display());
 
@@ -78,6 +82,9 @@ impl TermwayEngine {
         let wm_child: Option<Child> = if self.config.enable_wm {
             let mut cmd = Command::new("openbox");
             cmd.env("DISPLAY", &display_str);
+            if let Some(dbus) = session.dbus_address() {
+                cmd.env("DBUS_SESSION_BUS_ADDRESS", dbus);
+            }
             cmd.stdout(std::process::Stdio::null());
             cmd.stderr(std::process::Stdio::null());
             
@@ -102,6 +109,12 @@ impl TermwayEngine {
             let mut cmd = Command::new(cmd_name);
             cmd.args(cmd_args);
             cmd.env("DISPLAY", &display_str);
+            if let Some(dbus) = session.dbus_address() {
+                cmd.env("DBUS_SESSION_BUS_ADDRESS", dbus);
+            }
+            if let Ok(runtime_dir) = std::env::var("XDG_RUNTIME_DIR") {
+                cmd.env("XDG_RUNTIME_DIR", runtime_dir);
+            }
             // Redirect child stdout/stderr to our stderr so X11 warnings don't corrupt stdout
             cmd.stdout(std::process::Stdio::null());
 

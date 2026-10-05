@@ -55,6 +55,7 @@ pub struct TermwayCompositor {
     spawn_time: Option<std::time::Instant>,
     xwayland_source: Option<smithay::xwayland::XWayland>,
     _xwayland_client: Option<smithay::reexports::wayland_server::Client>,
+    session: crate::session::SessionManager,
 }
 
 impl TermwayCompositor {
@@ -79,6 +80,8 @@ impl TermwayCompositor {
         };
 
         Self::ensure_xdg_runtime_dir();
+
+        let mut session = crate::session::SessionManager::new();
 
         let display = Display::new()?;
         let dh = display.handle();
@@ -169,6 +172,9 @@ impl TermwayCompositor {
             None => (None, None),
         };
 
+        // 7. Start Polkit Authentication Agent for privilege elevation dialogs
+        session.start_polkit(Some(&socket_name), x11_display.as_deref());
+
         Ok(Self {
             display,
             listener,
@@ -183,6 +189,7 @@ impl TermwayCompositor {
             _xwayland_client,
             socket_name,
             x11_display,
+            session,
             term_cols: term_size.cols.max(1),
             term_rows: term_size.rows.max(1),
             input_buffer: Vec::with_capacity(1024),
@@ -275,6 +282,9 @@ impl TermwayCompositor {
                     }
                     if let Some(ref disp) = self.x11_display {
                         cmd.env("DISPLAY", disp);
+                    }
+                    if let Some(dbus) = self.session.dbus_address() {
+                        cmd.env("DBUS_SESSION_BUS_ADDRESS", dbus);
                     }
                     match cmd.spawn() {
                         Ok(child) => {

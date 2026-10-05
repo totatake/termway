@@ -367,7 +367,17 @@ impl XdgShellHandler for TermwayState {
         self.dirty = true;
     }
 
-    fn new_popup(&mut self, _surface: PopupSurface, _positioner: PositionerState) {}
+    fn new_popup(&mut self, surface: PopupSurface, _positioner: PositionerState) {
+        let _ = surface.send_configure();
+        let wl = surface.wl_surface().clone();
+        let keyboard = self.keyboard.clone();
+        keyboard.set_focus(
+            self,
+            Some(wl),
+            smithay::utils::SERIAL_COUNTER.next_serial(),
+        );
+        self.dirty = true;
+    }
     fn grab(&mut self, _surface: PopupSurface, _seat: wl_seat::WlSeat, _serial: Serial) {}
     fn reposition_request(&mut self, _surface: PopupSurface, _positioner: PositionerState, _token: u32) {}
 }
