@@ -337,6 +337,7 @@ impl TermwayCompositor {
                         }
                         Err(e) => {
                             log_line(format!("[termway] Failed to spawn client {:?}: {}", cmd_args, e));
+                            return Err(format!("Failed to execute client command '{}': {}", cmd_args[0], e).into());
                         }
                     }
                 }
@@ -423,24 +424,36 @@ impl TermwayCompositor {
                     Ok(Some(status)) => {
                         if !status.success() {
                             let err_msg = std::fs::read_to_string("/tmp/termway_client.log").unwrap_or_default();
-                            let preview = err_msg.lines().take(5).collect::<Vec<_>>().join(" | ");
+                            let preview = err_msg.lines().take(5).collect::<Vec<_>>().join("\n  ");
                             log_line(format!(
                                 "[termway] Client process exited with error ({:?}) before opening any window: {}",
                                 status,
                                 if preview.is_empty() { "(no output)" } else { &preview }
                             ));
-                            break;
+                            let msg = if preview.is_empty() {
+                                format!("Client process exited with error ({}) before opening any window.", status)
+                            } else {
+                                format!("Client process exited with error ({}) before opening any window:\n  {}", status, preview)
+                            };
+                            return Err(msg.into());
                         }
                         // If client exited with success (e.g. gvim fork or gnome-terminal launcher), wait up to 6s grace period for window to appear
                         if let Some(st) = self.spawn_time {
                             if st.elapsed() > std::time::Duration::from_secs(6) {
                                 log_line("[termway] Client exited and grace period expired with no window opened.");
-                                break;
+                                let err_msg = std::fs::read_to_string("/tmp/termway_client.log").unwrap_or_default();
+                                let preview = err_msg.lines().take(5).collect::<Vec<_>>().join("\n  ");
+                                let msg = if preview.is_empty() {
+                                    "Client process exited and grace period expired with no window opened.".to_string()
+                                } else {
+                                    format!("Client process exited and no window was opened:\n  {}", preview)
+                                };
+                                return Err(msg.into());
                             }
                         }
                     }
                     Ok(None) => {}
-                    Err(_) => break,
+                    Err(e) => return Err(format!("Error waiting for client process: {}", e).into()),
                 }
             }
 

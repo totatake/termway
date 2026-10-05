@@ -39,3 +39,18 @@ fn test_snap_command_detection() {
     assert!(is_snap_command("/snap/bin/firefox"));
     assert!(!is_snap_command("nonexistent_binary_termway_xyz_123"));
 }
+
+#[test]
+fn test_find_executable() {
+    use termway::session::find_executable;
+    // Standard system binary in PATH
+    assert!(find_executable("ls").is_some());
+    assert!(find_executable("sh").is_some());
+    // Direct absolute path
+    assert!(find_executable("/bin/sh").is_some());
+    // Non-existent command
+    assert!(find_executable("nonexistent_binary_xyz_123").is_none());
+    assert!(find_executable("/bin/nonexistent_binary_xyz_123").is_none());
+    // Empty command
+    assert!(find_executable("").is_none());
+}

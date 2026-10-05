@@ -220,6 +220,38 @@ pub fn is_snap_command(cmd_name: &str) -> bool {
     false
 }
 
+/// Locate an executable binary in the system PATH or direct path.
+/// Returns Some(PathBuf) if the file exists and has executable permissions, or None.
+pub fn find_executable(cmd_name: &str) -> Option<std::path::PathBuf> {
+    if cmd_name.is_empty() {
+        return None;
+    }
+    let p = std::path::Path::new(cmd_name);
+    if cmd_name.contains('/') {
+        if p.is_file() {
+            if let Ok(c_path) = std::ffi::CString::new(cmd_name) {
+                if unsafe { libc::access(c_path.as_ptr(), libc::X_OK) } == 0 {
+                    return Some(p.to_path_buf());
+                }
+            }
+        }
+        return None;
+    }
+
+    let path_env = std::env::var("PATH").unwrap_or_default();
+    for dir in path_env.split(':') {
+        let full = std::path::Path::new(dir).join(cmd_name);
+        if full.is_file() {
+            if let Ok(c_path) = std::ffi::CString::new(full.to_string_lossy().as_bytes()) {
+                if unsafe { libc::access(c_path.as_ptr(), libc::X_OK) } == 0 {
+                    return Some(full);
+                }
+            }
+        }
+    }
+    None
+}
+
 /// Integrated session manager handling D-Bus sessions and Polkit authentication agent.
 ///
 /// Termway maintains an isolated D-Bus session bus to guarantee that single-instance applications

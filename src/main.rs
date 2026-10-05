@@ -204,10 +204,18 @@ root.mainloop()
         }
     }
 
+    if !run_demo && !config.command.is_empty() {
+        let cmd_name = &config.command[0];
+        if termway::session::find_executable(cmd_name).is_none() {
+            eprintln!("Error: Command '{}' not found in PATH.", cmd_name);
+            std::process::exit(127);
+        }
+    }
+
     if use_wayland {
         let mut compositor = termway::compositor::TermwayCompositor::new(config)?;
         if let Err(e) = compositor.run() {
-            eprintln!("Compositor Error: {}", e);
+            eprintln!("Error: {}", e);
             std::process::exit(1);
         }
     } else {

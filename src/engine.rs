@@ -199,17 +199,15 @@ impl TermwayEngine {
                 match child.try_wait() {
                     Ok(Some(status)) => {
                         if !status.success() {
-                            eprintln!("[termway] Client process exited with error ({:?}) before opening any window.", status);
-                            break;
+                            return Err(format!("Client process exited with error ({:?}) before opening any window.", status).into());
                         }
                         // If parent exited with 0 (e.g. gvim fork or gnome-terminal launcher), wait up to 6s grace period for window to appear
                         if spawn_time.elapsed() > Duration::from_secs(6) {
-                            eprintln!("[termway] Client exited and grace period expired with no X11 window opened.");
-                            break;
+                            return Err("Client exited and grace period expired with no X11 window opened.".into());
                         }
                     }
                     Ok(None) => {}
-                    Err(_) => break,
+                    Err(e) => return Err(format!("Error waiting for client process: {}", e).into()),
                 }
             }
 
