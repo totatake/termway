@@ -264,6 +264,7 @@ impl TermwayCompositor {
             if loop_count >= 5 && xwayland_is_ready {
                 // Start Polkit Authentication Agent once Wayland and XWayland are fully ready
                 if !self.session.is_polkit_running() {
+                    self.session.update_activation_environment(Some(&self.socket_name), self.x11_display.as_deref());
                     self.session.start_polkit(Some(&self.socket_name), self.x11_display.as_deref());
                     // Allow the agent to register with D-Bus and polkitd before launching the client
                     std::thread::sleep(std::time::Duration::from_millis(300));
@@ -405,9 +406,9 @@ impl TermwayCompositor {
                             ));
                             break;
                         }
-                        // If client exited with success (e.g. gvim fork), wait up to 3s grace period for window to appear
+                        // If client exited with success (e.g. gvim fork or gnome-terminal launcher), wait up to 6s grace period for window to appear
                         if let Some(st) = self.spawn_time {
-                            if st.elapsed() > std::time::Duration::from_secs(3) {
+                            if st.elapsed() > std::time::Duration::from_secs(6) {
                                 log_line("[termway] Client exited and grace period expired with no window opened.");
                                 break;
                             }

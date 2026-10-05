@@ -73,6 +73,7 @@ impl TermwayEngine {
 
         // 3.5. Start session manager (D-Bus isolation and Polkit authentication agent)
         let mut session = crate::session::SessionManager::new();
+        session.update_activation_environment(None, Some(&display_str));
         session.start_polkit(None, Some(&display_str));
         thread::sleep(Duration::from_millis(300));
 
@@ -201,8 +202,8 @@ impl TermwayEngine {
                             eprintln!("[termway] Client process exited with error ({:?}) before opening any window.", status);
                             break;
                         }
-                        // If parent exited with 0 (e.g. gvim fork), wait up to 3s grace period for window to appear
-                        if spawn_time.elapsed() > Duration::from_secs(3) {
+                        // If parent exited with 0 (e.g. gvim fork or gnome-terminal launcher), wait up to 6s grace period for window to appear
+                        if spawn_time.elapsed() > Duration::from_secs(6) {
                             eprintln!("[termway] Client exited and grace period expired with no X11 window opened.");
                             break;
                         }

@@ -245,6 +245,34 @@ impl SessionManager {
     pub fn polkit_pid(&self) -> Option<u32> {
         self.polkit.as_ref().and_then(|p| p.pid())
     }
+
+    pub fn update_activation_environment(
+        &self,
+        wayland_display: Option<&str>,
+        x11_display: Option<&str>,
+    ) {
+        if let Some(dbus) = self.dbus_address() {
+            let mut cmd = Command::new("dbus-update-activation-environment");
+            cmd.env("DBUS_SESSION_BUS_ADDRESS", dbus);
+            if let Some(wd) = wayland_display {
+                cmd.env("WAYLAND_DISPLAY", wd);
+                cmd.arg(format!("WAYLAND_DISPLAY={}", wd));
+            }
+            if let Some(xd) = x11_display {
+                cmd.env("DISPLAY", xd);
+                cmd.arg(format!("DISPLAY={}", xd));
+            }
+            if let Ok(rt) = std::env::var("XDG_RUNTIME_DIR") {
+                cmd.env("XDG_RUNTIME_DIR", &rt);
+                cmd.arg(format!("XDG_RUNTIME_DIR={}", rt));
+            }
+            cmd.arg(format!("DBUS_SESSION_BUS_ADDRESS={}", dbus));
+            cmd.arg("GDK_BACKEND=wayland,x11");
+            cmd.stdout(Stdio::null());
+            cmd.stderr(Stdio::null());
+            let _ = cmd.status();
+        }
+    }
 }
 
 impl Default for SessionManager {
