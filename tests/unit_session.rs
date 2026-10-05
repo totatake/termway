@@ -31,3 +31,11 @@ fn test_session_manager_integration() {
     // Starting polkit should not panic
     manager.start_polkit(Some("wayland-1"), Some(":1"));
 }
+
+#[test]
+fn test_snap_command_detection() {
+    use termway::session::is_snap_command;
+    assert!(is_snap_command("snap"));
+    assert!(is_snap_command("/snap/bin/firefox"));
+    assert!(!is_snap_command("nonexistent_binary_termway_xyz_123"));
+}

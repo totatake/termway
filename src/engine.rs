@@ -111,7 +111,7 @@ impl TermwayEngine {
             let mut cmd = Command::new(cmd_name);
             cmd.args(cmd_args);
             cmd.env("DISPLAY", &display_str);
-            if let Some(dbus) = session.dbus_address() {
+            if let Some(dbus) = session.dbus_address_for_client(cmd_name) {
                 cmd.env("DBUS_SESSION_BUS_ADDRESS", dbus);
             }
             if let Ok(runtime_dir) = std::env::var("XDG_RUNTIME_DIR") {

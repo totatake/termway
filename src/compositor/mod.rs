@@ -312,7 +312,7 @@ impl TermwayCompositor {
                     if let Some(ref disp) = self.x11_display {
                         cmd.env("DISPLAY", disp);
                     }
-                    if let Some(dbus) = self.session.dbus_address() {
+                    if let Some(dbus) = self.session.dbus_address_for_client(&cmd_args[0]) {
                         cmd.env("DBUS_SESSION_BUS_ADDRESS", dbus);
                     }
                     if let Ok(file) = std::fs::OpenOptions::new()

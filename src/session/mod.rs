@@ -187,23 +187,56 @@ impl Drop for PolkitAgent {
     }
 }
 
-/// Integrated session manager handling both D-Bus session and Polkit authentication agent.
+/// Check if a command is packaged as an Ubuntu/Linux Snap application.
+/// Snap applications are strictly confined by `snap-confine` and require access to the
+/// host's `systemd --user` session bus (`/run/user/<uid>/bus`) to register transient cgroup scopes.
+pub fn is_snap_command(cmd_name: &str) -> bool {
+    if cmd_name == "snap" || cmd_name.starts_with("/snap/") {
+        return true;
+    }
+    if std::path::Path::new(&format!("/snap/bin/{}", cmd_name)).exists() {
+        return true;
+    }
+    let path_env = std::env::var("PATH").unwrap_or_default();
+    for dir in path_env.split(':') {
+        let full_path = std::path::Path::new(dir).join(cmd_name);
+        if full_path.exists() {
+            let path_str = full_path.to_string_lossy();
+            if path_str.contains("/snap/") {
+                return true;
+            }
+            if let Ok(target) = std::fs::read_link(&full_path) {
+                if target.to_string_lossy().contains("snap") {
+                    return true;
+                }
+            }
+            if let Ok(content) = std::fs::read_to_string(&full_path) {
+                if content.contains("snap run") || content.contains("/usr/bin/snap") {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Integrated session manager handling D-Bus sessions and Polkit authentication agent.
+///
+/// Termway maintains an isolated D-Bus session bus to guarantee that single-instance applications
+/// like `gnome-terminal` spawn dedicated server processes on Termway's display, while retaining
+/// access to the host's ambient `systemd --user` session bus for Snap applications like `firefox`.
 pub struct SessionManager {
-    dbus: Option<DbusSession>,
+    isolated_dbus: Option<DbusSession>,
     ambient_dbus_address: Option<String>,
     polkit: Option<PolkitAgent>,
 }
 
 impl SessionManager {
     pub fn new() -> Self {
-        // Check if an existing system or user session bus is already available.
-        // On modern Linux (systemd-based distributions like Ubuntu), the user session bus
-        // at `/run/user/<uid>/bus` is integrated with systemd --user and snapd.
-        // Overwriting this with an isolated dbus-daemon breaks Snap confinement (e.g. Snap Firefox)
-        // because snap-confine cannot register transient cgroups with systemd.
+        // 1. Capture host's ambient systemd user session bus if available
         let uid = unsafe { libc::getuid() };
         let run_user_bus = format!("/run/user/{}/bus", uid);
-        let existing_bus = std::env::var("DBUS_SESSION_BUS_ADDRESS")
+        let ambient_dbus_address = std::env::var("DBUS_SESSION_BUS_ADDRESS")
             .ok()
             .filter(|s| !s.is_empty())
             .or_else(|| {
@@ -214,35 +247,49 @@ impl SessionManager {
                 }
             });
 
-        let (dbus, ambient_dbus_address) = if let Some(addr) = existing_bus {
-            std::env::set_var("DBUS_SESSION_BUS_ADDRESS", &addr);
-            (None, Some(addr))
-        } else {
-            let s = match DbusSession::start() {
-                Ok(s) => Some(s),
-                Err(e) => {
-                    crate::compositor::log_line(format!(
-                        "[termway] Notice: Isolated D-Bus session not started ({}). Using system/ambient session.",
-                        e
-                    ));
-                    None
-                }
-            };
-            (s, None)
+        // 2. Start an isolated D-Bus session for Termway
+        // This ensures single-instance applications (e.g. gnome-terminal) do not attach to an
+        // already-running background server on the host, which would fail to open windows on Termway.
+        let isolated_dbus = match DbusSession::start() {
+            Ok(s) => Some(s),
+            Err(e) => {
+                crate::compositor::log_line(format!(
+                    "[termway] Notice: Isolated D-Bus session not started ({}). Using ambient session.",
+                    e
+                ));
+                None
+            }
         };
 
         Self {
-            dbus,
+            isolated_dbus,
             ambient_dbus_address,
             polkit: None,
         }
     }
 
+    /// Primary D-Bus address used by Termway and isolated clients (e.g. gnome-terminal, polkit).
     pub fn dbus_address(&self) -> Option<&str> {
-        self.dbus
+        self.isolated_dbus
             .as_ref()
             .map(|d| d.address())
             .or(self.ambient_dbus_address.as_deref())
+    }
+
+    /// Ambient systemd user D-Bus address (used for Snap apps that require systemd cgroup interaction).
+    pub fn ambient_dbus_address(&self) -> Option<&str> {
+        self.ambient_dbus_address.as_deref()
+    }
+
+    /// Determine the appropriate D-Bus address for a client command.
+    /// Snap applications require the ambient systemd user bus; all other apps use the isolated bus.
+    pub fn dbus_address_for_client(&self, cmd_name: &str) -> Option<&str> {
+        if is_snap_command(cmd_name) {
+            if let Some(ambient) = self.ambient_dbus_address() {
+                return Some(ambient);
+            }
+        }
+        self.dbus_address()
     }
 
     pub fn start_polkit(&mut self, wayland_display: Option<&str>, x11_display: Option<&str>) {
@@ -280,30 +327,46 @@ impl SessionManager {
         wayland_display: Option<&str>,
         x11_display: Option<&str>,
     ) {
-        if let Some(dbus) = self.dbus_address() {
-            let mut cmd = Command::new("dbus-update-activation-environment");
-            if std::path::Path::new("/run/systemd/system").exists() {
-                cmd.arg("--systemd");
-            }
-            cmd.env("DBUS_SESSION_BUS_ADDRESS", dbus);
-            if let Some(wd) = wayland_display {
-                cmd.env("WAYLAND_DISPLAY", wd);
-                cmd.arg(format!("WAYLAND_DISPLAY={}", wd));
-            }
-            if let Some(xd) = x11_display {
-                cmd.env("DISPLAY", xd);
-                cmd.arg(format!("DISPLAY={}", xd));
-            }
-            if let Ok(rt) = std::env::var("XDG_RUNTIME_DIR") {
-                cmd.env("XDG_RUNTIME_DIR", &rt);
-                cmd.arg(format!("XDG_RUNTIME_DIR={}", rt));
-            }
-            cmd.arg(format!("DBUS_SESSION_BUS_ADDRESS={}", dbus));
-            cmd.arg("GDK_BACKEND=wayland,x11");
-            cmd.stdout(Stdio::null());
-            cmd.stderr(Stdio::null());
-            let _ = cmd.status();
+        // 1. Update isolated D-Bus session if present
+        if let Some(dbus) = self.isolated_dbus.as_ref().map(|d| d.address()) {
+            Self::run_update_activation_env(dbus, false, wayland_display, x11_display);
         }
+
+        // 2. Also update ambient systemd user session if present (with --systemd for Snap / portals)
+        if let Some(ambient) = self.ambient_dbus_address() {
+            let use_systemd = std::path::Path::new("/run/systemd/system").exists();
+            Self::run_update_activation_env(ambient, use_systemd, wayland_display, x11_display);
+        }
+    }
+
+    fn run_update_activation_env(
+        dbus_addr: &str,
+        use_systemd: bool,
+        wayland_display: Option<&str>,
+        x11_display: Option<&str>,
+    ) {
+        let mut cmd = Command::new("dbus-update-activation-environment");
+        if use_systemd {
+            cmd.arg("--systemd");
+        }
+        cmd.env("DBUS_SESSION_BUS_ADDRESS", dbus_addr);
+        if let Some(wd) = wayland_display {
+            cmd.env("WAYLAND_DISPLAY", wd);
+            cmd.arg(format!("WAYLAND_DISPLAY={}", wd));
+        }
+        if let Some(xd) = x11_display {
+            cmd.env("DISPLAY", xd);
+            cmd.arg(format!("DISPLAY={}", xd));
+        }
+        if let Ok(rt) = std::env::var("XDG_RUNTIME_DIR") {
+            cmd.env("XDG_RUNTIME_DIR", &rt);
+            cmd.arg(format!("XDG_RUNTIME_DIR={}", rt));
+        }
+        cmd.arg(format!("DBUS_SESSION_BUS_ADDRESS={}", dbus_addr));
+        cmd.arg("GDK_BACKEND=wayland,x11");
+        cmd.stdout(Stdio::null());
+        cmd.stderr(Stdio::null());
+        let _ = cmd.status();
     }
 }
 
