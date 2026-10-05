@@ -125,7 +125,7 @@ impl TermwayCompositor {
         let _ = std::fs::create_dir_all(wrap_dir);
         let wrapper_path = format!("{}/Xwayland", wrap_dir);
         let wrapper_script = format!(
-            "#!/bin/bash\nunset WAYLAND_SOCKET\nexport WAYLAND_DISPLAY={}\nexec {} -ac \"$@\"\n",
+            "#!/bin/bash\nunset WAYLAND_SOCKET\nexport WAYLAND_DISPLAY={}\nexec {} \"$@\"\n",
             socket_name, xwayland_real
         );
         std::fs::write(&wrapper_path, wrapper_script).unwrap();
@@ -222,12 +222,6 @@ impl TermwayCompositor {
                     } => {
                         let disp_str = format!(":{}", display_number);
                         log_line(format!("[termway] XWayland ready on {}, starting XWM...", disp_str));
-                        let _ = std::process::Command::new("xhost")
-                            .env("DISPLAY", &disp_str)
-                            .arg("+si:localuser:root")
-                            .stdout(std::process::Stdio::null())
-                            .stderr(std::process::Stdio::null())
-                            .status();
                         if let Ok(wm) = smithay::xwayland::xwm::X11Wm::start_wm(
                             handle.clone(),
                             x11_socket,

@@ -71,14 +71,6 @@ impl TermwayEngine {
         let display_str = xvfb.display_string();
         eprintln!("[termway] X11 server ready on DISPLAY={}", display_str);
 
-        // Grant root access to local X server for pkexec / gparted
-        let _ = Command::new("xhost")
-            .env("DISPLAY", &display_str)
-            .arg("+si:localuser:root")
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status();
-
         // 3.5. Start session manager (D-Bus isolation and Polkit authentication agent)
         let mut session = crate::session::SessionManager::new();
         session.start_polkit(None, Some(&display_str));
