@@ -187,33 +187,62 @@ impl Drop for PolkitAgent {
     }
 }
 
-/// Integrated session manager handling both D-Bus isolation and Polkit authentication agent.
+/// Integrated session manager handling both D-Bus session and Polkit authentication agent.
 pub struct SessionManager {
     dbus: Option<DbusSession>,
+    ambient_dbus_address: Option<String>,
     polkit: Option<PolkitAgent>,
 }
 
 impl SessionManager {
     pub fn new() -> Self {
-        let dbus = match DbusSession::start() {
-            Ok(s) => Some(s),
-            Err(e) => {
-                crate::compositor::log_line(format!(
-                    "[termway] Notice: Isolated D-Bus session not started ({}). Using system/ambient session.",
-                    e
-                ));
-                None
-            }
+        // Check if an existing system or user session bus is already available.
+        // On modern Linux (systemd-based distributions like Ubuntu), the user session bus
+        // at `/run/user/<uid>/bus` is integrated with systemd --user and snapd.
+        // Overwriting this with an isolated dbus-daemon breaks Snap confinement (e.g. Snap Firefox)
+        // because snap-confine cannot register transient cgroups with systemd.
+        let uid = unsafe { libc::getuid() };
+        let run_user_bus = format!("/run/user/{}/bus", uid);
+        let existing_bus = std::env::var("DBUS_SESSION_BUS_ADDRESS")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .or_else(|| {
+                if std::path::Path::new(&run_user_bus).exists() {
+                    Some(format!("unix:path={}", run_user_bus))
+                } else {
+                    None
+                }
+            });
+
+        let (dbus, ambient_dbus_address) = if let Some(addr) = existing_bus {
+            std::env::set_var("DBUS_SESSION_BUS_ADDRESS", &addr);
+            (None, Some(addr))
+        } else {
+            let s = match DbusSession::start() {
+                Ok(s) => Some(s),
+                Err(e) => {
+                    crate::compositor::log_line(format!(
+                        "[termway] Notice: Isolated D-Bus session not started ({}). Using system/ambient session.",
+                        e
+                    ));
+                    None
+                }
+            };
+            (s, None)
         };
 
         Self {
             dbus,
+            ambient_dbus_address,
             polkit: None,
         }
     }
 
     pub fn dbus_address(&self) -> Option<&str> {
-        self.dbus.as_ref().map(|d| d.address())
+        self.dbus
+            .as_ref()
+            .map(|d| d.address())
+            .or(self.ambient_dbus_address.as_deref())
     }
 
     pub fn start_polkit(&mut self, wayland_display: Option<&str>, x11_display: Option<&str>) {
@@ -253,6 +282,9 @@ impl SessionManager {
     ) {
         if let Some(dbus) = self.dbus_address() {
             let mut cmd = Command::new("dbus-update-activation-environment");
+            if std::path::Path::new("/run/systemd/system").exists() {
+                cmd.arg("--systemd");
+            }
             cmd.env("DBUS_SESSION_BUS_ADDRESS", dbus);
             if let Some(wd) = wayland_display {
                 cmd.env("WAYLAND_DISPLAY", wd);
