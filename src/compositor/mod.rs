@@ -1053,7 +1053,6 @@ impl TermwayCompositor {
     }
 
     fn dispatch_key_event(&mut self, code: KeyCode) {
-        let serial = SERIAL_COUNTER.next_serial();
         let mut time = self.state.start_time.elapsed().as_millis() as u32;
 
         // Map standard keys to Linux evdev scancodes.
@@ -1190,11 +1189,12 @@ impl TermwayCompositor {
         }
 
         // Send Press then Release
+        let press_serial = SERIAL_COUNTER.next_serial();
         keyboard.input::<(), _>(
             &mut self.state,
             key,
             KeyState::Pressed,
-            serial,
+            press_serial,
             time,
             |_, _, _| FilterResult::Forward,
         );
