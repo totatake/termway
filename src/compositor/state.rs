@@ -16,7 +16,7 @@ use smithay::{
             wl_seat,
             wl_surface::WlSurface,
         },
-        Client, DisplayHandle,
+        Client, DisplayHandle, Resource,
     },
     utils::{Serial, Transform},
     wayland::{
@@ -53,6 +53,7 @@ impl ClientData for ClientState {
 use super::window::{ManagedWindow, WindowDragState, WindowSurface, BORDER_WIDTH, TITLEBAR_HEIGHT};
 
 pub struct TermwayState {
+    pub dh: DisplayHandle,
     pub compositor_state: CompositorState,
     pub xdg_shell_state: XdgShellState,
     pub xdg_decoration_state: XdgDecorationState,
@@ -118,6 +119,7 @@ impl TermwayState {
         let data_device_state = DataDeviceState::new::<Self>(dh);
 
         Self {
+            dh: dh.clone(),
             compositor_state,
             xdg_shell_state,
             xdg_decoration_state,
@@ -478,7 +480,10 @@ impl SeatHandler for TermwayState {
         &mut self.seat_state
     }
 
-    fn focus_changed(&mut self, _seat: &Seat<Self>, _focused: Option<&WlSurface>) {}
+    fn focus_changed(&mut self, seat: &Seat<Self>, focused: Option<&WlSurface>) {
+        let client = focused.and_then(|s| self.dh.get_client(s.id()).ok());
+        smithay::wayland::selection::data_device::set_data_device_focus(&self.dh, seat, client);
+    }
     fn cursor_image(&mut self, _seat: &Seat<Self>, _image: smithay::input::pointer::CursorImageStatus) {}
 }
 
