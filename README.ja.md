@@ -154,13 +154,15 @@ cargo build --release
 
 ## 使い方
 
+以下の手順では、ビルド済みバイナリ `./target/release/termway`（または `PATH` に通した `termway`）を実行する例を記載しています。
+
 ### 1. 内蔵デモGUIの起動
 ```bash
-cargo run -- --demo
+./target/release/termway --demo
 ```
 Sixelを使いたい場合は `--sixel` を追加します。ウィンドウの枠が欲しい場合は `--wm` を追加します。
 ```bash
-cargo run --release -- --sixel --wm --demo
+./target/release/termway --sixel --wm --demo
 ```
 
 ### 2. 任意のアプリケーションの実行
@@ -168,27 +170,27 @@ cargo run --release -- --sixel --wm --demo
 
 ```bash
 # GUI アプリケーションを起動（デフォルト: Wayland コンポジタ + Kitty/Sixel 自動検出）
-cargo run --release -- gvim
+./target/release/termway -- gvim
 
 # Webブラウザを起動（Ubuntu 標準の Snap 版 Firefox にも完全対応）
-cargo run --release -- firefox
+./target/release/termway -- firefox
 # ウィンドウ枠をつけて起動:
-cargo run --release -- --wm -- firefox
+./target/release/termway --wm -- firefox
 
 # gnome-terminal (D-Bus セッション分離により Termway 内で確実に起動)
-cargo run --release -- --wm -- gnome-terminal
+./target/release/termway --wm -- gnome-terminal
 
 # 管理者権限 GUI ツール（Polkit 認証ダイアログがターミナル内に表示されます）
-cargo run --release -- --wm -- gparted
+./target/release/termway --wm -- gparted
 
 # Sixel プロトコルを明示指定して起動
-cargo run --release -- --sixel -- gvim
+./target/release/termway --sixel -- gvim
 
 # Kitty プロトコルを明示指定して起動
-cargo run --release -- --kitty -- gvim
+./target/release/termway --kitty -- gvim
 
 # レガシーな X11/Xvfb モードで実行する場合
-cargo run --release -- --x11 --wm -- xclock
+./target/release/termway --x11 --wm -- xclock
 ```
 
 > **Note**:
@@ -206,7 +208,7 @@ XWayland も自動で起動されるため、最新の Wayland ネイティブ�
 
 ```bash
 # フォントセルサイズ（幅x高さ）を明示指定してマウス座標精度を最適化
-cargo run --release -- --cell-size 10x22 -- gvim
+./target/release/termway --cell-size 10x22 -- gvim
 ```
 
 ### 4. フォントセルサイズの動的測定と補正 (--cell-size, TERMWAY_CELL_SIZE)
@@ -228,10 +230,10 @@ termway は起動時に端末エミュレータのプロトコル対応状況を
 
 ```bash
 # Kitty プロトコルを強制
-cargo run --release -- --kitty -- gvim -f
+./target/release/termway --kitty -- gvim -f
 
 # Sixel プロトコルを強制
-cargo run --release -- --sixel -- gvim -f
+./target/release/termway --sixel -- gvim -f
 ```
 
 ### 5. 主なコマンドラインオプション

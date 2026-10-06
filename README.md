@@ -154,17 +154,19 @@ The compiled binary will be placed at `target/release/termway`.
 
 ## Usage
 
+The examples below use the compiled binary `./target/release/termway` (or `termway` if added to your `PATH`).
+
 ### 1. Launch Built-in Demo GUI
 ```bash
-cargo run --release -- --demo
+./target/release/termway --demo
 ```
 To enable the built-in window manager with title bars and borders:
 ```bash
-cargo run --release -- --wm --demo
+./target/release/termway --wm --demo
 ```
 To force Sixel graphics mode:
 ```bash
-cargo run --release -- --sixel --wm --demo
+./target/release/termway --sixel --wm --demo
 ```
 
 ### 2. Run Any GUI Application
@@ -172,30 +174,30 @@ Specify the target command and arguments after `--`:
 
 ```bash
 # Run gvim (Wayland compositor + auto-detected protocol)
-cargo run --release -- gvim
+./target/release/termway -- gvim
 
 # Run web browser (supports Ubuntu Snap-packaged Firefox out-of-the-box)
-cargo run --release -- firefox
+./target/release/termway -- firefox
 # or with floating window manager:
-cargo run --release -- --wm -- firefox
+./target/release/termway --wm -- firefox
 
 # Run gnome-terminal (isolated D-Bus session ensures window opens inside termway)
-cargo run --release -- --wm -- gnome-terminal
+./target/release/termway --wm -- gnome-terminal
 
 # Run privileged administrative tools (Polkit password dialog prompts inside termway)
-cargo run --release -- --wm -- gparted
+./target/release/termway --wm -- gparted
 
 # Run with floating window manager (title bar, resize handle, close button)
-cargo run --release -- --wm -- gvim
+./target/release/termway --wm -- gvim
 
 # Explicitly force Sixel protocol
-cargo run --release -- --sixel -- gvim
+./target/release/termway --sixel -- gvim
 
 # Explicitly force Kitty protocol
-cargo run --release -- --kitty -- gvim
+./target/release/termway --kitty -- gvim
 
 # Run in legacy X11 / Xvfb mode
-cargo run --release -- --x11 --wm -- xclock
+./target/release/termway --x11 --wm -- xclock
 ```
 
 > **Note**:
@@ -211,11 +213,11 @@ For pixel-perfect mouse tracking, `termway` automatically sends `\x1b[16t` and `
 
 ```bash
 # CLI option: width x height
-cargo run --release -- --cell-size 10x22 -- gvim
+./target/release/termway --cell-size 10x22 -- gvim
 
 # Or via environment variable
 export TERMWAY_CELL_SIZE=10x22
-cargo run --release -- gvim
+./target/release/termway -- gvim
 ```
 
 ### 4. Command Line Options
