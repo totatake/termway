@@ -99,11 +99,23 @@ flowchart LR
 
 ## Prerequisites
 
-### Client Terminal
-- **Kitty Graphics Protocol** compatible:
-  - Kitty, WezTerm, Ghostty, Foot, etc.
-- or **Sixel Graphics Protocol** compatible:
-  - Windows Terminal (Preview), iTerm2, xterm, mlterm, mintty, etc.
+### Supported Terminal Emulators
+
+termway supports both high-speed inline graphics protocols (**Kitty** & **Sixel**), automatically detecting or enabling them based on terminal capabilities:
+
+| Protocol | Terminal Emulator | Supported OS | Notes |
+| :--- | :--- | :--- | :--- |
+| **Kitty Graphics** | **Kitty** | Linux, macOS | Native reference implementation |
+| | **Ghostty** | Linux, macOS | Full support with GPU acceleration |
+| | **WezTerm** | Windows, Linux, macOS | Full Kitty graphics support |
+| | **Foot** | Linux (Wayland) | High performance Wayland terminal |
+| **Sixel Graphics** | **Windows Terminal** | Windows | Supported in Windows Terminal Preview (`--sixel`) |
+| | **WezTerm** | Windows, Linux, macOS | Supports both Kitty & Sixel |
+| | **Foot** | Linux (Wayland) | Supports both Kitty & Sixel |
+| | **iTerm2** | macOS | Full Sixel & 24-bit TrueColor support |
+| | **mlterm** | Linux, Windows, macOS | Native Sixel reference terminal |
+| | **RLogin** | Windows | Popular Windows SSH client with Sixel support |
+| | **Alacritty** (with sixel patch) / **xterm** | Linux, macOS | `xterm -ti vt340` |
 
 ### Host / Server Environment
 - Linux (x86_64)

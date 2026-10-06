@@ -99,11 +99,23 @@ flowchart LR
 
 ## 必要条件・環境
 
-### クライアント端末
-- **Kitty Graphics Protocol** 対応ターミナル:
-  - Kitty, WezTerm, Ghostty, Foot 等
-- または **Sixel Graphics Protocol** 対応ターミナル:
-  - Windows Terminal (Preview), iTerm2, xterm, mlterm, mintty 等
+### 対応ターミナルエミュレータ
+ 
+termway は高速グラフィックスプロトコル（**Kitty** および **Sixel**）の双方に対応しており、端末の応答に応じて自動判別またはオプション指定で描画を行います。
+ 
+| グラフィックス方式 | ターミナルエミュレータ | 対応 OS | 備考 |
+| :--- | :--- | :--- | :--- |
+| **Kitty Graphics** | **Kitty** | Linux, macOS | 本家リファレンス実装 |
+| | **Ghostty** | Linux, macOS | GPU 加速による超高速描画 |
+| | **WezTerm** | Windows, Linux, macOS | Kitty グラフィックス完全対応 |
+| | **Foot** | Linux (Wayland) | 高速 Wayland ネイティブ端末 |
+| **Sixel Graphics** | **Windows Terminal** | Windows | Windows Terminal Preview で対応 (`--sixel`) |
+| | **WezTerm** | Windows, Linux, macOS | Kitty / Sixel 両対応 |
+| | **Foot** | Linux (Wayland) | Kitty / Sixel 両対応 |
+| | **iTerm2** | macOS | Sixel 24-bit TrueColor フル対応 |
+| | **mlterm** | Linux, Windows, macOS | Sixel リファレンスターミナル |
+| | **RLogin** | Windows | 日本で広く使われている Sixel 対応 SSH クライアント |
+| | **Alacritty** (Sixelパッチ版) / **xterm** | Linux, macOS | `xterm -ti vt340` モード |
 
 ### サーバー / 実行環境
 - Linux (x86_64)
