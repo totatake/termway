@@ -204,6 +204,7 @@ cargo run --release -- --x11 --wm -- xclock
 > - Single-instance daemon applications like `gnome-terminal` work seamlessly inside `termway` thanks to the automated isolated D-Bus session.
 > - Privileged GUI tools like `gparted` or `pkexec` will display their authentication dialog within the terminal when `policykit-1-gnome` or `lxpolkit` is installed.
 > - Running legacy X11 applications requires write permissions to `/tmp/.X11-unix`. If `/tmp/.X11-unix` is read-only (such as in restricted container environments), `termway` proactively detects this and terminates with a descriptive error, preventing applications from unexpectedly escaping to the host desktop display.
+> - **Clipboard Support**: Text selection (`Shift + Arrows`) and pasting (`Ctrl-V` / terminal paste `Ctrl+Shift+V`) are supported. In the default Wayland mode, copying selected text via `Ctrl-C` is currently a known issue under investigation; if copy-and-paste functionality via `Ctrl-C` / `Ctrl-V` is needed, please use legacy X11 mode (`--x11`), where it works seamlessly.
 
 ### 3. Font Cell Size Optimization (`--cell-size`, `TERMWAY_CELL_SIZE`)
 For pixel-perfect mouse tracking, `termway` automatically sends `\x1b[16t` and `\x1b[14t` on startup. If your terminal emulator does not answer these queries, you can manually specify the font cell dimensions:
