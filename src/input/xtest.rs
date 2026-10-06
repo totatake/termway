@@ -87,6 +87,29 @@ impl XTestInjector {
                     need_ctrl = true;
                     c as u64
                 },
+                KeyCode::ShiftUp => { need_shift = true; x11::keysym::XK_Up as u64 },
+                KeyCode::ShiftDown => { need_shift = true; x11::keysym::XK_Down as u64 },
+                KeyCode::ShiftRight => { need_shift = true; x11::keysym::XK_Right as u64 },
+                KeyCode::ShiftLeft => { need_shift = true; x11::keysym::XK_Left as u64 },
+                KeyCode::ShiftHome => { need_shift = true; x11::keysym::XK_Home as u64 },
+                KeyCode::ShiftEnd => { need_shift = true; x11::keysym::XK_End as u64 },
+                KeyCode::ShiftPageUp => { need_shift = true; x11::keysym::XK_Page_Up as u64 },
+                KeyCode::ShiftPageDown => { need_shift = true; x11::keysym::XK_Page_Down as u64 },
+                KeyCode::ShiftDelete => { need_shift = true; x11::keysym::XK_Delete as u64 },
+                KeyCode::ShiftTab => { need_shift = true; x11::keysym::XK_Tab as u64 },
+                KeyCode::CtrlUp => { need_ctrl = true; x11::keysym::XK_Up as u64 },
+                KeyCode::CtrlDown => { need_ctrl = true; x11::keysym::XK_Down as u64 },
+                KeyCode::CtrlRight => { need_ctrl = true; x11::keysym::XK_Right as u64 },
+                KeyCode::CtrlLeft => { need_ctrl = true; x11::keysym::XK_Left as u64 },
+                KeyCode::CtrlHome => { need_ctrl = true; x11::keysym::XK_Home as u64 },
+                KeyCode::CtrlEnd => { need_ctrl = true; x11::keysym::XK_End as u64 },
+                KeyCode::CtrlShiftUp => { need_ctrl = true; need_shift = true; x11::keysym::XK_Up as u64 },
+                KeyCode::CtrlShiftDown => { need_ctrl = true; need_shift = true; x11::keysym::XK_Down as u64 },
+                KeyCode::CtrlShiftRight => { need_ctrl = true; need_shift = true; x11::keysym::XK_Right as u64 },
+                KeyCode::CtrlShiftLeft => { need_ctrl = true; need_shift = true; x11::keysym::XK_Left as u64 },
+                KeyCode::CtrlShiftHome => { need_ctrl = true; need_shift = true; x11::keysym::XK_Home as u64 },
+                KeyCode::CtrlShiftEnd => { need_ctrl = true; need_shift = true; x11::keysym::XK_End as u64 },
+                KeyCode::Ignore => return,
             };
 
             let keycode = x11::xlib::XKeysymToKeycode(self.display, keysym);

@@ -167,6 +167,7 @@ entry.set_text("Type here...")
 box.pack_start(entry, True, True, 10)
 
 win.show_all()
+entry.grab_focus()
 Gtk.main()
 "#.to_string(),
             ];
@@ -197,6 +198,7 @@ btn.pack(pady=10)
 entry = tk.Entry(root, font=("Helvetica", 12))
 entry.insert(0, "Type here...")
 entry.pack(pady=10)
+entry.focus_set()
 
 root.mainloop()
 "#.to_string(),

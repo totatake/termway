@@ -43,4 +43,91 @@ fn test_keyboard_special_keys() {
     let (ev, len) = KeyboardParser::parse(&[0x03]).expect("parse Ctrl+C");
     assert_eq!(len, 1);
     assert_eq!(ev.code, KeyCode::Ctrl('c'));
+
+    let (ev, len) = KeyboardParser::parse(&[0x16]).expect("parse Ctrl+V");
+    assert_eq!(len, 1);
+    assert_eq!(ev.code, KeyCode::Ctrl('v'));
 }
+
+#[test]
+fn test_keyboard_modified_arrow_and_selection_keys() {
+    // Shift + Arrows (xterm CSI 1;2<A/B/C/D>)
+    let (ev, len) = KeyboardParser::parse(b"\x1b[1;2A").expect("parse Shift+Up");
+    assert_eq!(len, 6);
+    assert_eq!(ev.code, KeyCode::ShiftUp);
+
+    let (ev, len) = KeyboardParser::parse(b"\x1b[1;2B").expect("parse Shift+Down");
+    assert_eq!(len, 6);
+    assert_eq!(ev.code, KeyCode::ShiftDown);
+
+    let (ev, len) = KeyboardParser::parse(b"\x1b[1;2C").expect("parse Shift+Right");
+    assert_eq!(len, 6);
+    assert_eq!(ev.code, KeyCode::ShiftRight);
+
+    let (ev, len) = KeyboardParser::parse(b"\x1b[1;2D").expect("parse Shift+Left");
+    assert_eq!(len, 6);
+    assert_eq!(ev.code, KeyCode::ShiftLeft);
+
+    // Shift + Home / End
+    let (ev, len) = KeyboardParser::parse(b"\x1b[1;2H").expect("parse Shift+Home");
+    assert_eq!(len, 6);
+    assert_eq!(ev.code, KeyCode::ShiftHome);
+
+    let (ev, len) = KeyboardParser::parse(b"\x1b[1;2F").expect("parse Shift+End");
+    assert_eq!(len, 6);
+    assert_eq!(ev.code, KeyCode::ShiftEnd);
+
+    // Shift + Tab (BackTab: \x1b[Z)
+    let (ev, len) = KeyboardParser::parse(b"\x1b[Z").expect("parse Shift+Tab");
+    assert_eq!(len, 3);
+    assert_eq!(ev.code, KeyCode::ShiftTab);
+
+    // Ctrl + Arrows (xterm CSI 1;5<A/B/C/D>)
+    let (ev, len) = KeyboardParser::parse(b"\x1b[1;5C").expect("parse Ctrl+Right");
+    assert_eq!(len, 6);
+    assert_eq!(ev.code, KeyCode::CtrlRight);
+
+    let (ev, len) = KeyboardParser::parse(b"\x1b[1;5D").expect("parse Ctrl+Left");
+    assert_eq!(len, 6);
+    assert_eq!(ev.code, KeyCode::CtrlLeft);
+
+    // Ctrl + Shift + Arrows (xterm CSI 1;6<A/B/C/D>)
+    let (ev, len) = KeyboardParser::parse(b"\x1b[1;6C").expect("parse Ctrl+Shift+Right");
+    assert_eq!(len, 6);
+    assert_eq!(ev.code, KeyCode::CtrlShiftRight);
+
+    let (ev, len) = KeyboardParser::parse(b"\x1b[1;6D").expect("parse Ctrl+Shift+Left");
+    assert_eq!(len, 6);
+    assert_eq!(ev.code, KeyCode::CtrlShiftLeft);
+
+    // Shift modified tilde keys
+    let (ev, len) = KeyboardParser::parse(b"\x1b[3;2~").expect("parse Shift+Delete");
+    assert_eq!(len, 6);
+    assert_eq!(ev.code, KeyCode::ShiftDelete);
+
+    let (ev, len) = KeyboardParser::parse(b"\x1b[5;2~").expect("parse Shift+PageUp");
+    assert_eq!(len, 6);
+    assert_eq!(ev.code, KeyCode::ShiftPageUp);
+
+    let (ev, len) = KeyboardParser::parse(b"\x1b[6;2~").expect("parse Shift+PageDown");
+    assert_eq!(len, 6);
+    assert_eq!(ev.code, KeyCode::ShiftPageDown);
+
+    // rxvt shifted arrow keys
+    let (ev, len) = KeyboardParser::parse(b"\x1b[a").expect("parse rxvt Shift+Up");
+    assert_eq!(len, 3);
+    assert_eq!(ev.code, KeyCode::ShiftUp);
+
+    let (ev, len) = KeyboardParser::parse(b"\x1b[d").expect("parse rxvt Shift+Left");
+    assert_eq!(len, 3);
+    assert_eq!(ev.code, KeyCode::ShiftLeft);
+
+    // Unrecognized CSI sequence consumed gracefully without residue
+    let (ev, len) = KeyboardParser::parse(b"\x1b[?2004h").expect("parse unrecognized CSI");
+    assert_eq!(len, 8);
+    assert_eq!(ev.code, KeyCode::Ignore);
+
+    // Incomplete escape sequence waits for more bytes
+    assert!(KeyboardParser::parse(b"\x1b[1;").is_none());
+}
+
