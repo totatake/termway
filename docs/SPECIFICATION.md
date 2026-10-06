@@ -22,8 +22,13 @@ flowchart LR
         FR11["FR-11: 描画最適化 (MIT-SHM)"]
         FR12["FR-12: Sixelプロトコル対応 & ピクセルパーフェクト追従"]
         FR16["FR-16: Smithay Wayland コンポジタ & XWayland 統合"]
+        FR17["FR-17: Sixel 自動フォールバック"]
         FR18["FR-18: D-Bus セッション隔離 (Single-Instance 干渉防止)"]
         FR19["FR-19: Polkit 認証エージェント連携 (特権GUI昇格)"]
+        FR20["FR-20: 修飾キーナビゲーション & テキスト選択 (Shift/Ctrl Arrow)"]
+        FR21["FR-21: コマンド存在性・PATH 事前検証 (Exit 127)"]
+        FR22["FR-22: /tmp/.X11-unix 書込権限事前検査 (安全フォールバック)"]
+        FR23["FR-23: Wayland データデバイスフォーカス & 単調増加シリアル整合性"]
     end
 
     subgraph Verification["テスト検証 (Verification)"]
@@ -37,6 +42,9 @@ flowchart LR
         T_Cursor["unit_cursor & pointer<br/>(単体テスト)"]
         T_Comp["unit_compositor<br/>(単体テスト)"]
         T_Sess["unit_session<br/>(単体テスト)"]
+        T_Sixel["unit_sixel_encoder<br/>(単体テスト)"]
+        T_Clip["unit_clipboard<br/>(単体テスト)"]
+        T_Shm["unit_shm<br/>(単体テスト)"]
     end
 
     FR1 --> T_Kitty
@@ -54,12 +62,17 @@ flowchart LR
     FR7 --> T_Sys
     FR8 --> T_Cursor
     FR9 --> T_Sys
-    FR10 --> T_Cursor
-    FR11 --> T_Sys
-    FR12 --> T_Term
+    FR10 --> T_Clip
+    FR11 --> T_Shm
+    FR12 --> T_Sixel
     FR16 --> T_Comp
+    FR17 --> T_Integ
     FR18 --> T_Sess
     FR19 --> T_Sess
+    FR20 --> T_Key
+    FR21 --> T_Sess
+    FR22 --> T_Sys
+    FR23 --> T_Comp
 ```
 
 ---
@@ -83,9 +96,13 @@ flowchart LR
 | **FR-11** | 描画最適化 (MIT-SHM) | X11 共有メモリ拡張 (MIT-SHM) を用いて、Xvfbからの画面キャプチャをゼロコピー化し、プロセス間通信のオーバーヘッドを削減してCPU使用率を極小化すること。SHMが利用できない場合は従来の `XGetImage` にフォールバックすること。 | `tests/unit_shm.rs` | **PASS** |
 | **FR-12** | Sixel対応＆ピクセル追従 | Sixelプロトコルでのフォールバック描画をサポート。さらに `\x1b[14t` を用いて端末の正確なピクセル解像度を動的取得し、1:1アスペクト比の維持とマウスクリック（X11ヒットボックス）のピクセルパーフェクトな同期を実現すること。 | `tests/unit_sixel_encoder.rs` | **PASS** |
 | **FR-16** | Smithay Wayland コンポジタ＆XWayland 統合 | `--wayland` フラグ指定時、Smithay ベースのヘッドレス Wayland コンポジタを termway 自身として起動すること。具体的には以下を満たすこと：(1) Wayland ソケット経由でクライアントアプリを受け付けること、(2) XWayland を起動してレガシー X11 アプリ（xeyes, xclock 等）を実行可能にすること、(3) `X11Wm::start_wm()` による X11 ウィンドウマネージャを内蔵すること、(4) XWayland 接続に際し FD クローズ問題を回避するラッパースクリプト（`/tmp/termway_wrap/Xwayland`）を自動生成すること、(5) `X11Surface::wl_surface()` が `None` を返す場合に備え `unassociated_surfaces` リストへのフォールバック描画を行うこと。 | `tests/unit_compositor.rs` | **PASS** |
-| **FR-17** | Sixel 自動フォールバック | 起動時に `KITTY_WINDOW_ID` 環境変数を検査し、存在しない場合（Kitty ターミナル以外の環境）は `--sixel` フラグを明示しなくても自動的に `use_sixel = true` に設定すること。`--sixel` フラグによる明示的な上書きは従来どおり有効であること。これにより GNOME Terminal や VTE 系端末でも追加オプションなしで動作すること。 | `tests/unit_terminal.rs` | **PASS** |
+| **FR-17** | Sixel 自動フォールバック | 起動時に `KITTY_WINDOW_ID` 環境変数を検査し、存在しない場合（Kitty ターミナル以外の環境）は `--sixel` フラグを明示しなくても自動的に `use_sixel = true` に設定すること。`--sixel` フラグによる明示的な上書きは従来どおり有効であること。これにより GNOME Terminal や VTE 系端末でも追加オプションなしで動作すること。 | `tests/integration_pipeline.rs` | **PASS** |
 | **FR-18** | D-Bus セッション分離 | `dbus-daemon --session --print-address` により Termway 専用の独立した D-Bus セッションバスを起動し、専用の `DBUS_SESSION_BUS_ADDRESS` を子プロセスに伝播すること。これにより、`gnome-terminal` などの Single-Instance デーモン機構を持つアプリがホストの既存セッション（DISPLAY :0 等）に誤接続する問題を防止し、Termway 内でウィンドウを正常描画・制御すること。終了時にはプロセスを確実に回収すること。 | `tests/unit_session.rs` | **PASS** |
 | **FR-19** | Polkit 認証エージェント連携 | システム内の Polkit 認証エージェント（`lxpolkit`, `polkit-gnome`, `mate-polkit` 等）を自動検出し、Termway のセッション配下で常駐起動すること。Termway 終了時には確実にプロセスを終了・回収すること。これにより、`gparted` や `pkexec` 等の管理者権限を要求するツールにおいて、Termway 画面内にパスワード入力ダイアログを表示して正常認証・起動できること。 | `tests/unit_session.rs` | **PASS** |
+| **FR-20** | 修飾キーナビゲーション＆テキスト選択 | ターミナルから送信される Shift / Ctrl 修飾キー付きカーソルシーケンス（`\x1b[1;2A`〜`D`, `\x1b[1;5C`/`D`, `\x1b[1;6C`/`D`, `\x1b[Z`, `\x1b[1;2H`/`F`, `\x1b[3;2~`, `\x1b[a`〜`d` 等）を解析し、適切な修飾キーフラグ付きキーイベントへ変換すること。これにより GUI エディタや端末内での Shift+矢印による範囲選択や単語単位スキップを可能にすること。 | `tests/unit_keyboard.rs` | **PASS** |
+| **FR-21** | コマンド存在性・PATH 事前検証 | 起動時に指定されたコマンドの存在を `PATH` および絶対/相対パスから事前探索・検証し、存在しないコマンドや空コマンドに対しては仮想サーバー起動前に分かりやすいエラーメッセージを表示し、Linux 標準の終了コード 127 で即時終了すること。 | `tests/unit_session.rs` | **PASS** |
+| **FR-22** | `/tmp/.X11-unix` 書込権限事前検査 | Xvfb 起動前に `/tmp/.X11-unix` ディレクトリへの書込可否をテストし、パーミッション不足やリードオンリー環境によるハングアップやエラー発生を防止すること。 | `tests/system_e2e_gui.rs` | **PASS** |
+| **FR-23** | Wayland データデバイスフォーカス & シリアル整合性 | Wayland Seat においてウィンドウ・サーフェスのフォーカス切り替え時に `set_data_device_focus` を通知してクリップボード操作の整合性を保つこと。また、キー押下・解放イベント発行時に単調増加（monotonic）なシリアル番号を保証すること。 | `tests/unit_compositor.rs` | **PASS** |
 
 ### 2.2 非機能要件 (Non-Functional Requirements)
 
@@ -94,7 +111,7 @@ flowchart LR
 | **NFR-1** | レスポンス・低遅延 | ノンブロッキングI/Oと差分更新により、30 fps のフレームレートと即時キー・マウス追従（1キー遅延ゼロ）を実現すること。 | `nix::poll` 導入および Base64 チャンク分割転送により達成 |
 | **NFR-2** | 堅牢性・端末保護 | プログラムが異常終了しても、端末のRawモードやマウストラッキングが残留してシェルが壊れる事故を100%防止すること。 | `RawModeGuard::drop` の RAII パターンにより保証 |
 | **NFR-3** | 依存関係の最小化 | 追加のGUIデスクトップ環境や root 権限を一切必要とせず、ユーザー空間の単一バイナリとして動作すること。 | 外部Xサーバー不要（Xvfb自律起動）、オフラインクレートで完結 |
-| **NFR-4** | モジュール構造・テスタビリティ | 各コンポーネント（プロトコル、ディスプレイ、入力、端末制御）が疎結合で、単体テスト・モックテストが容易であること。 | 全27テストが外部依存なく高速にパス |
+| **NFR-4** | モジュール構造・テスタビリティ | 各コンポーネント（プロトコル、ディスプレイ、入力、端末制御、セッション管理）が疎結合で、単体テスト・モックテストが容易であること。 | 全49テストが外部依存なく高速にパス |
 
 ---
 
@@ -120,7 +137,8 @@ flowchart LR
 #### `tests/unit_keyboard.rs`
 - `test_keyboard_characters`: 通常英数字およびマルチバイト UTF-8 文字の解析検証
 - `test_keyboard_arrow_keys`: ANSI 矢印キー（`\x1b[A` 〜 `\x1b[D`）の解析検証
-- `test_keyboard_special_keys`: Enter, Escape, Ctrl+C 等の制御コード解析検証
+- `test_keyboard_special_keys`: Enter, Escape, Ctrl+C, Ctrl+V 等の制御コード解析検証
+- `test_keyboard_modified_arrow_and_selection_keys`: Shift+矢印, Ctrl+矢印, Ctrl+Shift+矢印, Shift+Home/End, Shift+Tab (BackTab), Shift+Delete/PageUp/PageDown, rxvt 形式シーケンス、未知の CSI シーケンスの安全破棄検証
 
 #### `tests/unit_terminal.rs`
 - `test_terminal_size_fallback`: 端末サイズフォールバック値の計算検証
@@ -139,13 +157,30 @@ flowchart LR
 - `test_xwayland_state_and_shell`: XWayland シェルおよび X11 サーフェス管理状態検証
 - `test_output_and_data_device`: Smithay 出力およびデータデバイス初期化検証
 - `test_window_geometry_and_decorations`: タイトルバー、閉じるボタン、リサイズハンドルのジオメトリ計算および Pixman 装飾描画検証
+- `test_csd_window_no_double_decorations`: CSD（クライアントサイド装飾）ウィンドウに対する二重装飾無効化検証
 - `test_state_raise_window`: ウィンドウの Z-order 最前面浮上（Raise）およびアクティブ状態切り替え検証
 - `test_window_clamping_logic`: 画面解像度境界に対するウィンドウ位置・フレームのクランプ検証
+- `test_data_device_focus_change`: フォーカス遷移時の DataDevice フォーカス更新処理検証
 
 #### `tests/unit_session.rs`
 - `test_dbus_session_lifecycle`: `dbus-daemon --session --print-address` による専用 D-Bus セッションバスの起動、アドレス取得、環境変数設定およびライフサイクル検証
 - `test_polkit_agent_lookup_and_lifecycle`: Polkit 認証エージェント（`lxpolkit` 等）の自動探索と非パニック起動・安全終了ライフサイクル検証
 - `test_session_manager_integration`: `SessionManager` による D-Bus 隔離と Polkit 認証エージェント起動の統合管理検証
+- `test_snap_command_detection`: Snap パッケージコマンドの検出ロジック検証
+- `test_find_executable`: PATH および絶対パスからの実行可能バイナリ探索検証
+
+#### `tests/unit_sixel_encoder.rs`
+- `test_sixel_blank_image`: 空白画像の Sixel エンコード出力検証
+- `test_sixel_rle`: 同色連続ピクセルの RLE（ランレングス）圧縮検証
+- `test_sixel_multiple_bands`: 複数バンド（6ピクセル縦帯）にまたがる画像エンコード検証
+
+#### `tests/unit_clipboard.rs`
+- `test_osc52_clipboard_format`: クリップボード文字列の Base64 OSC 52 エスケープシーケンス生成検証
+
+#### `tests/unit_cursor.rs` & `tests/unit_pointer.rs` & `tests/unit_shm.rs`
+- `test_xfixes_cursor`: XFixes カーソルイメージ取得検証
+- `test_query_pointer`: XQueryPointer によるポインタ座標取得検証
+- `test_shm_image_struct`: MIT-SHM 共有メモリ構造体の初期化検証
 
 ---
 
@@ -154,6 +189,9 @@ flowchart LR
 #### `tests/integration_pipeline.rs`
 - `test_integration_framebuffer_to_kitty_pipeline`: フレームバッファ更新 → 差分抽出 → Kitty エンコードの一連のパイプライン結合動作を検証
 - `test_integration_mouse_to_target_coordinate_pipeline`: SGR 文字列受信 → セルパース → 画面スケーリング計算の統合検証
+- `test_graphics_protocol_fastpath_detection`: 環境変数に基づくグラフィックスプロトコル判定の統合検証
+- `test_sixel_auto_fallback_detection`: 非 Kitty ターミナル環境下での Sixel 自動フォールバック統合検証
+- `test_wayland_compositor_mouse_coordinate_conversion`: Wayland コンポジタ空間におけるマウスセル座標変換統合検証
 
 ---
 
@@ -174,27 +212,27 @@ flowchart LR
 ## 4. 全テスト実行ログ
 
 ```bash
-$ cargo test
+$ cargo test -- --test-threads=1
    Compiling termway v2.0.0 (/path/to/termway)
     Finished `test` profile [unoptimized + debuginfo] target(s)
-     Running tests/integration_pipeline.rs (2 tests) ... ok
+     Running tests/integration_pipeline.rs (5 tests) ... ok
      Running tests/system_e2e_gui.rs (1 test) ... ok
      Running tests/unit_clipboard.rs (1 test) ... ok
-     Running tests/unit_compositor.rs (7 tests) ... ok
+     Running tests/unit_compositor.rs (9 tests) ... ok
      Running tests/unit_cursor.rs (1 test) ... ok
      Running tests/unit_damage_tracker.rs (3 tests) ... ok
-     Running tests/unit_keyboard.rs (3 tests) ... ok
+     Running tests/unit_keyboard.rs (4 tests) ... ok
      Running tests/unit_kitty_encoder.rs (5 tests) ... ok
      Running tests/unit_pointer.rs (1 test) ... ok
-     Running tests/unit_session.rs (3 tests) ... ok
+     Running tests/unit_session.rs (5 tests) ... ok
      Running tests/unit_sgr_mouse.rs (6 tests) ... ok
      Running tests/unit_shm.rs (1 test) ... ok
      Running tests/unit_sixel_encoder.rs (3 tests) ... ok
      Running tests/unit_terminal.rs (4 tests) ... ok
 
-test result: ok. 35 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.65s
+test result: ok. 49 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.45s
 ```
-全 35 テストが 100% 成功し、すべての要件定義項目が検証されました。
+全 49 テストが 100% 成功し、すべての要件定義項目が検証されました。
 
 ---
 

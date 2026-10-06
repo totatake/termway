@@ -1,4 +1,3 @@
-use std::ptr;
 use termway::display::XvfbServer;
 
 #[test]

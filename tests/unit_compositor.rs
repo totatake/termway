@@ -238,5 +238,16 @@ fn test_window_clamping_logic() {
     assert!(fg.loc.y + fg.size.h <= screen_h);
 }
 
+#[test]
+fn test_data_device_focus_change() {
+    use smithay::input::SeatHandler;
 
+    let display = Display::<TermwayState>::new().expect("Failed to create Wayland Display");
+    let dh = display.handle();
 
+    let mut state = TermwayState::new(&dh, 800, 600, true);
+    let seat = state.seat.clone();
+
+    // Focus change to None (unfocus) should complete cleanly without panicking
+    state.focus_changed(&seat, None);
+}
