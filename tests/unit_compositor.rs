@@ -46,11 +46,17 @@ fn test_xwayland_state_and_shell() {
     let display = Display::<TermwayState>::new().expect("Failed to create Wayland Display");
     let dh = display.handle();
 
-    let state = TermwayState::new(&dh, 640, 480, true);
+    let mut state = TermwayState::new(&dh, 640, 480, true);
     assert!(state.x11_windows.is_empty());
     assert!(state.xwm.is_none());
+    assert!(!state.xwayland_ready);
+    assert!(state.xwayland_error.is_none());
     // unassociated_surfaces は commit フックで収集される XWayland サーフェスのフォールバック用
     assert!(state.unassociated_surfaces.is_empty());
+
+    // Verify error state tracking
+    state.xwayland_error = Some("XWayland failed to start".into());
+    assert!(state.xwayland_error.is_some());
 }
 
 

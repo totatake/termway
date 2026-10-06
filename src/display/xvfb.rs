@@ -15,6 +15,16 @@ pub struct XvfbServer {
 impl XvfbServer {
     /// Spawn an Xvfb instance on an available display number.
     pub fn spawn(width: u32, height: u32) -> Result<Self, String> {
+        let x11_dir = std::path::Path::new("/tmp/.X11-unix");
+        if x11_dir.exists() {
+            let test_file = format!("/tmp/.X11-unix/.termway_test_{}", std::process::id());
+            if let Err(e) = std::fs::OpenOptions::new().write(true).create_new(true).open(&test_file) {
+                return Err(format!("Cannot write to /tmp/.X11-unix ({}). Xvfb will not work: {}", e.kind(), e));
+            } else {
+                let _ = std::fs::remove_file(&test_file);
+            }
+        }
+
         let display_num = Self::find_free_display();
         let display_str = format!(":{}", display_num);
         let screen_geom = format!("{}x{}x24", width, height);

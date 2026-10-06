@@ -131,6 +131,38 @@ impl TermwayCompositor {
         // 4. Initialize Terminal Output Backend
         let backend = TerminalBackend::new(term_size, config.use_sixel, true);
 
+        // Check writability of /tmp/.X11-unix so X11 apps don't fail mysteriously or fall back
+        let x11_dir = std::path::Path::new("/tmp/.X11-unix");
+        if x11_dir.exists() {
+            // Check if directory is writable by attempting to create a test file in it
+            let test_file = format!("/tmp/.X11-unix/.termway_test_{}", std::process::id());
+            match std::fs::OpenOptions::new().write(true).create_new(true).open(&test_file) {
+                Ok(_) => {
+                    let _ = std::fs::remove_file(&test_file);
+                }
+                Err(e) => {
+                    return Err(format!(
+                        "Cannot write to /tmp/.X11-unix: {}. XWayland / X11 applications will not work.",
+                        e
+                    ).into());
+                }
+            }
+        } else {
+            // If /tmp/.X11-unix does not exist, check if /tmp itself is writable
+            let test_file = format!("/tmp/.termway_test_{}", std::process::id());
+            match std::fs::OpenOptions::new().write(true).create_new(true).open(&test_file) {
+                Ok(_) => {
+                    let _ = std::fs::remove_file(&test_file);
+                }
+                Err(e) => {
+                    return Err(format!(
+                        "Cannot write to /tmp: {}. XWayland / X11 applications will not work.",
+                        e
+                    ).into());
+                }
+            }
+        }
+
         // 5. Try starting XWayland for legacy X11 compatibility
         // Workaround for environments where WAYLAND_SOCKET FD gets closed (e.g. by security wrappers):
         // We create a wrapper script that unsets WAYLAND_SOCKET and uses WAYLAND_DISPLAY instead.
@@ -151,6 +183,7 @@ impl TermwayCompositor {
         let old_path = std::env::var("PATH").unwrap_or_default();
         std::env::set_var("PATH", format!("{}:{}", wrap_dir, old_path));
 
+        let mut state = state;
         let (xwayland, x11_display) = match smithay::xwayland::XWayland::spawn(
             &dh,
             None,
@@ -169,10 +202,7 @@ impl TermwayCompositor {
             }
             Err(e) => {
                 log_line(format!("[termway] XWayland not available: {}.", e));
-                log_line("[termway] Note: Running in native Wayland mode. Wayland applications will run natively.");
-                log_line("[termway]       Pure X11 applications (e.g. xeyes, xclock) require an X server.");
-                log_line("[termway]       To run pure X11 apps in this environment, run without '--wayland':");
-                log_line(format!("[termway]           termway -- {}", config.command.first().map(|s| s.as_str()).unwrap_or("xeyes")));
+                state.xwayland_error = Some(format!("XWayland server could not be started: {}", e));
                 (None, None)
             }
         };
@@ -254,7 +284,8 @@ impl TermwayCompositor {
                         }
                     }
                     smithay::xwayland::XWaylandEvent::Error => {
-                        state.xwayland_ready = true;
+                        state.xwayland_ready = false;
+                        state.xwayland_error = Some("XWayland failed to start (check permissions on /tmp/.X11-unix)".to_string());
                         log_line("[termway] XWayland encountered an error.");
                     }
                 }
@@ -284,6 +315,10 @@ impl TermwayCompositor {
                 }
             }
             
+            if let Some(ref err) = self.state.xwayland_error {
+                return Err(format!("XWayland failed to start: {}", err).into());
+            }
+
             // Spawn pending command after Wayland globals are advertised and XWayland (if present) is ready
             let xwayland_is_ready = self.state.xwayland_ready || self.x11_display.is_none();
             if loop_count >= 5 && xwayland_is_ready {
@@ -314,6 +349,8 @@ impl TermwayCompositor {
                     }
                     if let Some(ref disp) = self.x11_display {
                         cmd.env("DISPLAY", disp);
+                    } else {
+                        cmd.env_remove("DISPLAY");
                     }
                     if let Some(dbus) = self.session.dbus_address_for_client(&cmd_args[0]) {
                         cmd.env("DBUS_SESSION_BUS_ADDRESS", dbus);
