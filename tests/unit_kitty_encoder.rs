@@ -25,7 +25,7 @@ fn test_encode_rgba_subimage() {
     // 4x4 image
     let mut full = vec![0u8; 4 * 4 * 4];
     // Fill pixel (1, 1) with green
-    let idx = (1 * 4 + 1) * 4;
+    let idx = (4 + 1) * 4;
     full[idx + 1] = 255;
     full[idx + 3] = 255;
 

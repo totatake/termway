@@ -111,7 +111,7 @@ flowchart LR
 | **NFR-1** | レスポンス・低遅延 | ノンブロッキングI/Oと差分更新により、30 fps のフレームレートと即時キー・マウス追従（1キー遅延ゼロ）を実現すること。 | `nix::poll` 導入および Base64 チャンク分割転送により達成 |
 | **NFR-2** | 堅牢性・端末保護 | プログラムが異常終了しても、端末のRawモードやマウストラッキングが残留してシェルが壊れる事故を100%防止すること。 | `RawModeGuard::drop` の RAII パターンにより保証 |
 | **NFR-3** | 依存関係の最小化 | 追加のGUIデスクトップ環境や root 権限を一切必要とせず、ユーザー空間の単一バイナリとして動作すること。 | 外部Xサーバー不要（Xvfb自律起動）、オフラインクレートで完結 |
-| **NFR-4** | モジュール構造・テスタビリティ | 各コンポーネント（プロトコル、ディスプレイ、入力、端末制御、セッション管理）が疎結合で、単体テスト・モックテストが容易であること。 | 全49テストが外部依存なく高速にパス |
+| **NFR-4** | モジュール構造・テスタビリティ | 各コンポーネント（プロトコル、ディスプレイ、入力、端末制御、セッション管理）が疎結合で、単体テスト・モックテストが容易であること。 | 全50テストが外部依存なく高速にパス |
 
 ---
 
@@ -168,6 +168,7 @@ flowchart LR
 - `test_session_manager_integration`: `SessionManager` による D-Bus 隔離と Polkit 認証エージェント起動の統合管理検証
 - `test_snap_command_detection`: Snap パッケージコマンドの検出ロジック検証
 - `test_find_executable`: PATH および絶対パスからの実行可能バイナリ探索検証
+- `test_check_x11_unix_writability`: `/tmp/.X11-unix` ディレクトリの書き込み権限検査およびリードオンリー検出検証
 
 #### `tests/unit_sixel_encoder.rs`
 - `test_sixel_blank_image`: 空白画像の Sixel エンコード出力検証
@@ -224,15 +225,15 @@ $ cargo test -- --test-threads=1
      Running tests/unit_keyboard.rs (4 tests) ... ok
      Running tests/unit_kitty_encoder.rs (5 tests) ... ok
      Running tests/unit_pointer.rs (1 test) ... ok
-     Running tests/unit_session.rs (5 tests) ... ok
+     Running tests/unit_session.rs (6 tests) ... ok
      Running tests/unit_sgr_mouse.rs (6 tests) ... ok
      Running tests/unit_shm.rs (1 test) ... ok
      Running tests/unit_sixel_encoder.rs (3 tests) ... ok
      Running tests/unit_terminal.rs (4 tests) ... ok
 
-test result: ok. 49 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.45s
+test result: ok. 50 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.45s
 ```
-全 49 テストが 100% 成功し、すべての要件定義項目が検証されました。
+全 50 テストが 100% 成功し、すべての要件定義項目が検証されました。
 
 ---
 

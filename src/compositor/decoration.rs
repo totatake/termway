@@ -1,5 +1,5 @@
 use pixman::Image;
-use super::bitmap_font::render_text;
+use super::bitmap_font::BitmapCanvas;
 use super::window::{ManagedWindow, BORDER_WIDTH, BUTTON_SIZE, TITLEBAR_HEIGHT};
 
 pub struct WindowTheme {
@@ -34,6 +34,12 @@ pub struct DecorationRenderer {
     theme: WindowTheme,
 }
 
+impl Default for DecorationRenderer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DecorationRenderer {
     pub fn new() -> Self {
         Self {
@@ -52,11 +58,13 @@ impl DecorationRenderer {
             return;
         }
 
-        let stride = target_image.stride() as usize;
+        let stride = target_image.stride();
         let data = unsafe {
             let ptr = target_image.data() as *mut u8;
             std::slice::from_raw_parts_mut(ptr, (target_h as usize) * stride)
         };
+
+        let mut canvas = DecorationCanvas::new(data, stride, target_w as i32, target_h as i32);
 
         let frame = window.frame_geometry();
         let titlebar = window.titlebar_geometry();
@@ -75,11 +83,7 @@ impl DecorationRenderer {
         };
 
         // 1. Draw border outline
-        Self::draw_rect_outline(
-            data,
-            target_w as i32,
-            target_h as i32,
-            stride,
+        canvas.draw_rect_outline(
             frame.loc.x,
             frame.loc.y,
             frame.size.w,
@@ -88,11 +92,7 @@ impl DecorationRenderer {
         );
 
         // 2. Draw titlebar background
-        Self::fill_rect(
-            data,
-            target_w as i32,
-            target_h as i32,
-            stride,
+        canvas.fill_rect(
             titlebar.loc.x + BORDER_WIDTH,
             titlebar.loc.y + BORDER_WIDTH,
             titlebar.size.w - BORDER_WIDTH * 2,
@@ -102,11 +102,7 @@ impl DecorationRenderer {
 
         // 3. Draw close button [X]
         let close_btn = window.close_button_geometry();
-        Self::fill_rect(
-            data,
-            target_w as i32,
-            target_h as i32,
-            stride,
+        canvas.fill_rect(
             close_btn.loc.x,
             close_btn.loc.y,
             close_btn.size.w,
@@ -115,11 +111,7 @@ impl DecorationRenderer {
         );
 
         // Draw 'X' inside close button
-        Self::draw_cross(
-            data,
-            target_w as i32,
-            target_h as i32,
-            stride,
+        canvas.draw_cross(
             close_btn.loc.x + 3,
             close_btn.loc.y + 3,
             close_btn.size.w - 6,
@@ -128,11 +120,7 @@ impl DecorationRenderer {
 
         // 4. Draw resize grip handle at bottom-right corner
         let grip = window.resize_handle_geometry();
-        Self::draw_resize_grip(
-            data,
-            target_w as i32,
-            target_h as i32,
-            stride,
+        canvas.draw_resize_grip(
             grip.loc.x,
             grip.loc.y,
             grip.size.w,
@@ -146,11 +134,7 @@ impl DecorationRenderer {
             self.theme.inactive_text_color
         };
         let max_chars = ((titlebar.size.w - BUTTON_SIZE - 20).max(0) / 8) as usize;
-        render_text(
-            data,
-            stride,
-            target_w as i32,
-            target_h as i32,
+        canvas.inner.render_text(
             titlebar.loc.x + 8,
             titlebar.loc.y + (TITLEBAR_HEIGHT - 8) / 2,
             &window.title,
@@ -158,116 +142,97 @@ impl DecorationRenderer {
             max_chars,
         );
     }
+}
 
-    #[inline]
-    fn set_pixel(data: &mut [u8], stride: usize, x: i32, y: i32, color: [u8; 4]) {
-        let offset = y as usize * stride + x as usize * 4;
-        data[offset] = color[0];
-        data[offset + 1] = color[1];
-        data[offset + 2] = color[2];
-        data[offset + 3] = color[3];
+/// Helper canvas for drawing window decoration shapes.
+struct DecorationCanvas<'a> {
+    inner: BitmapCanvas<'a>,
+}
+
+impl<'a> DecorationCanvas<'a> {
+    fn new(data: &'a mut [u8], stride: usize, width: i32, height: i32) -> Self {
+        Self {
+            inner: BitmapCanvas::new(data, stride, width, height),
+        }
     }
 
-    fn fill_rect(
-        data: &mut [u8],
-        target_w: i32,
-        target_h: i32,
-        stride: usize,
-        rx: i32,
-        ry: i32,
-        rw: i32,
-        rh: i32,
-        color: [u8; 4],
-    ) {
+    #[inline]
+    fn set_pixel(&mut self, x: i32, y: i32, color: [u8; 4]) {
+        let offset = y as usize * self.inner.stride + x as usize * 4;
+        self.inner.data[offset] = color[0];
+        self.inner.data[offset + 1] = color[1];
+        self.inner.data[offset + 2] = color[2];
+        self.inner.data[offset + 3] = color[3];
+    }
+
+    fn fill_rect(&mut self, rx: i32, ry: i32, rw: i32, rh: i32, color: [u8; 4]) {
         let x0 = rx.max(0);
         let y0 = ry.max(0);
-        let x1 = (rx + rw).min(target_w);
-        let y1 = (ry + rh).min(target_h);
+        let x1 = (rx + rw).min(self.inner.width);
+        let y1 = (ry + rh).min(self.inner.height);
 
         for y in y0..y1 {
-            let row_offset = y as usize * stride;
+            let row_offset = y as usize * self.inner.stride;
             for x in x0..x1 {
                 let off = row_offset + (x as usize * 4);
-                data[off..off + 4].copy_from_slice(&color);
+                self.inner.data[off..off + 4].copy_from_slice(&color);
             }
         }
     }
 
-    fn draw_rect_outline(
-        data: &mut [u8],
-        target_w: i32,
-        target_h: i32,
-        stride: usize,
-        rx: i32,
-        ry: i32,
-        rw: i32,
-        rh: i32,
-        color: [u8; 4],
-    ) {
+    fn draw_rect_outline(&mut self, rx: i32, ry: i32, rw: i32, rh: i32, color: [u8; 4]) {
+        let w = self.inner.width;
+        let h = self.inner.height;
         // Top and bottom horizontal lines
         for x in rx..(rx + rw) {
-            if x >= 0 && x < target_w {
-                if ry >= 0 && ry < target_h {
-                    Self::set_pixel(data, stride, x, ry, color);
+            if x >= 0 && x < w {
+                if ry >= 0 && ry < h {
+                    self.set_pixel(x, ry, color);
                 }
-                if (ry + rh - 1) >= 0 && (ry + rh - 1) < target_h {
-                    Self::set_pixel(data, stride, x, ry + rh - 1, color);
+                if (ry + rh - 1) >= 0 && (ry + rh - 1) < h {
+                    self.set_pixel(x, ry + rh - 1, color);
                 }
             }
         }
         // Left and right vertical lines
         for y in ry..(ry + rh) {
-            if y >= 0 && y < target_h {
-                if rx >= 0 && rx < target_w {
-                    Self::set_pixel(data, stride, rx, y, color);
+            if y >= 0 && y < h {
+                if rx >= 0 && rx < w {
+                    self.set_pixel(rx, y, color);
                 }
-                if (rx + rw - 1) >= 0 && (rx + rw - 1) < target_w {
-                    Self::set_pixel(data, stride, rx + rw - 1, y, color);
+                if (rx + rw - 1) >= 0 && (rx + rw - 1) < w {
+                    self.set_pixel(rx + rw - 1, y, color);
                 }
             }
         }
     }
 
-    fn draw_cross(
-        data: &mut [u8],
-        target_w: i32,
-        target_h: i32,
-        stride: usize,
-        x: i32,
-        y: i32,
-        size: i32,
-        color: [u8; 4],
-    ) {
+    fn draw_cross(&mut self, x: i32, y: i32, size: i32, color: [u8; 4]) {
+        let w = self.inner.width;
+        let h = self.inner.height;
         for i in 0..size {
             let p1x = x + i;
             let p1y = y + i;
             let p2x = x + size - 1 - i;
             let p2y = y + i;
-            if p1x >= 0 && p1x < target_w && p1y >= 0 && p1y < target_h {
-                Self::set_pixel(data, stride, p1x, p1y, color);
+            if p1x >= 0 && p1x < w && p1y >= 0 && p1y < h {
+                self.set_pixel(p1x, p1y, color);
             }
-            if p2x >= 0 && p2x < target_w && p2y >= 0 && p2y < target_h {
-                Self::set_pixel(data, stride, p2x, p2y, color);
+            if p2x >= 0 && p2x < w && p2y >= 0 && p2y < h {
+                self.set_pixel(p2x, p2y, color);
             }
         }
     }
 
-    fn draw_resize_grip(
-        data: &mut [u8],
-        target_w: i32,
-        target_h: i32,
-        stride: usize,
-        x: i32,
-        y: i32,
-        size: i32,
-        color: [u8; 4],
-    ) {
+    fn draw_resize_grip(&mut self, x: i32, y: i32, size: i32, color: [u8; 4]) {
+        let w = self.inner.width;
+        let h = self.inner.height;
         for d in [3, 6, 9] {
             for i in 0..d {
                 let px = x + size - d + i;
                 let py = y + size - 1 - i;
-                if px >= 0 && px < target_w && py >= 0 && py < target_h {
-                    Self::set_pixel(data, stride, px, py, color);
+                if px >= 0 && px < w && py >= 0 && py < h {
+                    self.set_pixel(px, py, color);
                 }
             }
         }

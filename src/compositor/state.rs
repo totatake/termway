@@ -241,9 +241,9 @@ impl CompositorHandler for TermwayState {
         self.dirty = true;
         
         // 破棄済みサーフェスをフォーカス・描画候補から除く
-        self.unassociated_surfaces.retain(|s| smithay::reexports::wayland_server::Resource::is_alive(s));
+        self.unassociated_surfaces.retain(smithay::reexports::wayland_server::Resource::is_alive);
         self.managed_windows.retain(|w| {
-            w.wl_surface().as_ref().map(|s| smithay::reexports::wayland_server::Resource::is_alive(s)).unwrap_or(true)
+            w.wl_surface().as_ref().map(smithay::reexports::wayland_server::Resource::is_alive).unwrap_or(true)
         });
 
         // タイトルや状態の更新

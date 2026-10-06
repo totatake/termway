@@ -126,7 +126,7 @@ impl TerminalBackend {
         )];
 
         let poll_res = nix::poll::poll(&mut poll_fds, nix::poll::PollTimeout::ZERO)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            .map_err(io::Error::other)?;
 
         if poll_res > 0 {
             if let Some(revents) = poll_fds[0].revents() {
@@ -156,11 +156,11 @@ impl TerminalBackend {
                             if let (Ok(h), Ok(w)) = (parts[0].parse::<u16>(), parts[1].parse::<u16>()) {
                                 self.term_size.width_px = w;
                                 self.term_size.height_px = h;
-                                if self.term_size.cols > 0 {
-                                    self.term_size.cell_width_px = (w / self.term_size.cols).max(1);
+                                if let Some(res) = w.checked_div(self.term_size.cols) {
+                                    self.term_size.cell_width_px = res.max(1);
                                 }
-                                if self.term_size.rows > 0 {
-                                    self.term_size.cell_height_px = (h / self.term_size.rows).max(1);
+                                if let Some(res) = h.checked_div(self.term_size.rows) {
+                                    self.term_size.cell_height_px = res.max(1);
                                 }
                             }
                         }

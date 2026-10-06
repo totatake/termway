@@ -78,7 +78,7 @@ impl TermwayEngine {
         thread::sleep(Duration::from_millis(300));
 
         // 4. Initialize XTest input injector
-        let mut injector = XTestInjector::new(xvfb.raw_display());
+        let mut injector = unsafe { XTestInjector::new(xvfb.raw_display()) };
 
         // 5. Spawn Window Manager if enabled
         let wm_child: Option<Child> = if self.config.enable_wm {
@@ -142,8 +142,8 @@ impl TermwayEngine {
         let frame_interval = Duration::from_millis(1000 / self.config.fps.max(1) as u64);
         let mut fb = Framebuffer::new(width, height);
         let mut damage_tracker = DamageTracker::new(width, height, 32);
-        let mut clipboard = crate::display::clipboard::ClipboardBridge::new(xvfb.raw_display());
-        let mut shm_image = crate::display::shm::ShmImage::new(xvfb.raw_display(), width, height);
+        let mut clipboard = unsafe { crate::display::clipboard::ClipboardBridge::new(xvfb.raw_display()) };
+        let mut shm_image = unsafe { crate::display::shm::ShmImage::new(xvfb.raw_display(), width, height) };
 
         let mut running = true;
 
@@ -165,14 +165,10 @@ impl TermwayEngine {
                 has_opened_windows = true;
             }
 
-            let is_child_alive = if let Some(ref mut child) = client_child {
-                match child.try_wait() {
-                    Ok(None) => true,
-                    _ => false,
-                }
-            } else {
-                false
-            };
+            let is_child_alive = client_child
+                .as_mut()
+                .map(|child| matches!(child.try_wait(), Ok(None)))
+                .unwrap_or(false);
 
             // A. Check exit condition based on window lifecycle
             if has_opened_windows {
@@ -248,18 +244,16 @@ impl TermwayEngine {
             if got_frame {
 
                 // Composite hardware cursor
-                if let Some((mx, my)) = crate::display::cursor::query_pointer(xvfb.raw_display()) {
-                    if let Some(cursor) = crate::display::cursor::HardwareCursor::query(xvfb.raw_display()) {
+                if let Some((mx, my)) = unsafe { crate::display::cursor::query_pointer(xvfb.raw_display()) } {
+                    if let Some(cursor) = unsafe { crate::display::cursor::HardwareCursor::query(xvfb.raw_display()) } {
                         cursor.composite(&mut fb, mx, my);
                     }
                 }
 
                 // D. Track damage and render
                 let damage = damage_tracker.track_damage(&fb.pixels);
-                if !damage.is_empty() {
-                    if let Err(_) = backend.render_damage(&fb, &damage) {
-                        break;
-                    }
+                if !damage.is_empty() && backend.render_damage(&fb, &damage).is_err() {
+                    break;
                 }
             }
 

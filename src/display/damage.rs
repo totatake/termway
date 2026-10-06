@@ -22,8 +22,8 @@ pub struct DamageTracker {
 impl DamageTracker {
     pub fn new(width: u32, height: u32, tile_size: u32) -> Self {
         let tile_size = tile_size.max(8);
-        let tiles_x = (width + tile_size - 1) / tile_size;
-        let tiles_y = (height + tile_size - 1) / tile_size;
+        let tiles_x = width.div_ceil(tile_size);
+        let tiles_y = height.div_ceil(tile_size);
         let num_tiles = (tiles_x * tiles_y) as usize;
 
         Self {

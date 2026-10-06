@@ -12,40 +12,41 @@ pub struct HardwareCursor {
 
 impl HardwareCursor {
     /// Query the current hardware cursor image from the X11 server
-    pub fn query(display: *mut Display) -> Option<Self> {
+    ///
+    /// # Safety
+    /// Caller must ensure `display` is a valid pointer to an open X11 `Display`.
+    pub unsafe fn query(display: *mut Display) -> Option<Self> {
         if display.is_null() {
             return None;
         }
 
-        unsafe {
-            let cursor_ptr = XFixesGetCursorImage(display);
-            if cursor_ptr.is_null() {
-                return None;
-            }
-
-            let img = &*cursor_ptr;
-            let width = img.width as u32;
-            let height = img.height as u32;
-            let len = (width * height) as usize;
-
-            let mut pixels = Vec::with_capacity(len);
-            let src_pixels = std::slice::from_raw_parts(img.pixels, len);
-            
-            for &p in src_pixels {
-                pixels.push(p as u32); // Take lower 32 bits which are ARGB
-            }
-
-            let cursor = Self {
-                width,
-                height,
-                xhot: img.xhot as u32,
-                yhot: img.yhot as u32,
-                pixels,
-            };
-
-            XFree(cursor_ptr as *mut _);
-            Some(cursor)
+        let cursor_ptr = XFixesGetCursorImage(display);
+        if cursor_ptr.is_null() {
+            return None;
         }
+
+        let img = &*cursor_ptr;
+        let width = img.width as u32;
+        let height = img.height as u32;
+        let len = (width * height) as usize;
+
+        let mut pixels = Vec::with_capacity(len);
+        let src_pixels = std::slice::from_raw_parts(img.pixels, len);
+        
+        for &p in src_pixels {
+            pixels.push(p as u32); // Take lower 32 bits which are ARGB
+        }
+
+        let cursor = Self {
+            width,
+            height,
+            xhot: img.xhot as u32,
+            yhot: img.yhot as u32,
+            pixels,
+        };
+
+        XFree(cursor_ptr as *mut _);
+        Some(cursor)
     }
 
     /// Alpha-composite the cursor onto the framebuffer at the given absolute mouse coordinates
@@ -100,7 +101,10 @@ impl HardwareCursor {
 }
 
 /// Query the absolute pointer coordinates (root_x, root_y) from the X server
-pub fn query_pointer(display: *mut Display) -> Option<(u32, u32)> {
+///
+/// # Safety
+/// Caller must ensure `display` is a valid pointer to an open X11 `Display`.
+pub unsafe fn query_pointer(display: *mut Display) -> Option<(u32, u32)> {
     if display.is_null() {
         return None;
     }

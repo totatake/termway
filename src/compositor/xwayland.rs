@@ -71,8 +71,8 @@ impl XwmHandler for TermwayState {
                     };
                     let max_w = (self.width as i32 - loc.x - BORDER_WIDTH * 2 - 20).max(160);
                     let max_h = (self.height as i32 - loc.y - BORDER_WIDTH * 2 - 20).max(100);
-                    let init_w = if geo.size.w > 0 { (geo.size.w as i32).min(max_w) } else { max_w };
-                    let init_h = if geo.size.h > 0 { (geo.size.h as i32).min(max_h) } else { max_h };
+                    let init_w = if geo.size.w > 0 { geo.size.w.min(max_w) } else { max_w };
+                    let init_h = if geo.size.h > 0 { geo.size.h.min(max_h) } else { max_h };
                     (loc, smithay::utils::Size::from((init_w, init_h)))
                 } else {
                     (

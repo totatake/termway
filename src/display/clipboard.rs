@@ -15,7 +15,11 @@ pub struct ClipboardBridge {
 }
 
 impl ClipboardBridge {
-    pub fn new(display: *mut xlib::Display) -> Option<Self> {
+    /// Create a new ClipboardBridge for the given X11 display.
+    ///
+    /// # Safety
+    /// Caller must ensure `display` is a valid pointer to an open X11 `Display`.
+    pub unsafe fn new(display: *mut xlib::Display) -> Option<Self> {
         if display.is_null() {
             return None;
         }
@@ -29,10 +33,10 @@ impl ClipboardBridge {
             let root = xlib::XDefaultRootWindow(display);
             let window = xlib::XCreateSimpleWindow(display, root, 0, 0, 1, 1, 0, 0, 0);
 
-            let clipboard_atom = xlib::XInternAtom(display, b"CLIPBOARD\0".as_ptr() as _, xlib::False);
-            let primary_atom = xlib::XInternAtom(display, b"PRIMARY\0".as_ptr() as _, xlib::False);
-            let utf8_string_atom = xlib::XInternAtom(display, b"UTF8_STRING\0".as_ptr() as _, xlib::False);
-            let target_property_atom = xlib::XInternAtom(display, b"XSEL_DATA\0".as_ptr() as _, xlib::False);
+            let clipboard_atom = xlib::XInternAtom(display, c"CLIPBOARD".as_ptr() as _, xlib::False);
+            let primary_atom = xlib::XInternAtom(display, c"PRIMARY".as_ptr() as _, xlib::False);
+            let utf8_string_atom = xlib::XInternAtom(display, c"UTF8_STRING".as_ptr() as _, xlib::False);
+            let target_property_atom = xlib::XInternAtom(display, c"XSEL_DATA".as_ptr() as _, xlib::False);
 
             // Subscribe to CLIPBOARD and PRIMARY owner changes (XFixesSetSelectionOwnerNotifyMask = 1<<0)
             xfixes::XFixesSelectSelectionInput(display, root, clipboard_atom, 1);
@@ -60,7 +64,7 @@ impl ClipboardBridge {
                 xlib::XNextEvent(self.display, &mut event);
 
                 let ev_type = event.get_type();
-                if ev_type == self.xfixes_event_base + 0 /* XFixesSelectionNotify */ {
+                if ev_type == self.xfixes_event_base /* XFixesSelectionNotify (offset 0) */ {
                     // Selection owner changed! Request the new selection.
                     let fixes_event = &*(&event as *const _ as *const xfixes::XFixesSelectionNotifyEvent);
                     let selection_atom = fixes_event.selection;

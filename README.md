@@ -173,12 +173,13 @@ To force Sixel graphics mode:
 Specify the target command and arguments after `--`:
 
 ```bash
-# Run gvim (Wayland compositor + auto-detected protocol)
+# Run GUI application (default: Wayland compositor + auto-detected graphics protocol)
 ./target/release/termway -- gvim
 
+# Run with floating window manager (title bar, resize handle, close button)
+./target/release/termway --wm -- gvim
+
 # Run web browser (supports Ubuntu Snap-packaged Firefox out-of-the-box)
-./target/release/termway -- firefox
-# or with floating window manager:
 ./target/release/termway --wm -- firefox
 
 # Run gnome-terminal (isolated D-Bus session ensures window opens inside termway)
@@ -186,15 +187,6 @@ Specify the target command and arguments after `--`:
 
 # Run privileged administrative tools (Polkit password dialog prompts inside termway)
 ./target/release/termway --wm -- gparted
-
-# Run with floating window manager (title bar, resize handle, close button)
-./target/release/termway --wm -- gvim
-
-# Explicitly force Sixel protocol
-./target/release/termway --sixel -- gvim
-
-# Explicitly force Kitty protocol
-./target/release/termway --kitty -- gvim
 
 # Run in legacy X11 / Xvfb mode
 ./target/release/termway --x11 --wm -- xclock
@@ -208,42 +200,68 @@ Specify the target command and arguments after `--`:
 > - Running legacy X11 applications requires write permissions to `/tmp/.X11-unix`. If `/tmp/.X11-unix` is read-only (such as in restricted container environments), `termway` proactively detects this and terminates with a descriptive error, preventing applications from unexpectedly escaping to the host desktop display.
 > - **Clipboard Support**: Text selection (`Shift + Arrows`) and pasting (`Ctrl-V` / terminal paste `Ctrl+Shift+V`) are supported. In the default Wayland mode, copying selected text via `Ctrl-C` is currently a known issue under investigation; if copy-and-paste functionality via `Ctrl-C` / `Ctrl-V` is needed, please use legacy X11 mode (`--x11`), where it works seamlessly.
 
-### 3. Font Cell Size Optimization (`--cell-size`, `TERMWAY_CELL_SIZE`)
+### 3. Graphics Protocol Auto-Detection & Explicit Selection (`--kitty`, `--sixel`)
+`termway` automatically detects terminal graphics protocol capabilities on startup:
+- **Kitty-capable terminals** (Kitty, Ghostty, WezTerm, etc.): Automatically uses Kitty Graphics Protocol.
+- **Sixel-capable terminals** (Windows Terminal, iTerm2, Foot, mlterm, RLogin, etc.): Automatically uses Sixel Graphics Protocol.
+- **VTE-based terminals** (GNOME Terminal, xterm, etc.): Automatically falls back to Sixel protocol.
+
+You can explicitly override the protocol using `--kitty` or `--sixel`:
+
+```bash
+# Force Sixel protocol
+./target/release/termway --sixel --wm -- gvim
+
+# Force Kitty protocol
+./target/release/termway --kitty --wm -- gvim
+```
+
+### 4. Font Cell Size Optimization (`--cell-size`, `TERMWAY_CELL_SIZE`)
 For pixel-perfect mouse tracking, `termway` automatically sends `\x1b[16t` and `\x1b[14t` on startup. If your terminal emulator does not answer these queries, you can manually specify the font cell dimensions:
 
 ```bash
 # CLI option: width x height
-./target/release/termway --cell-size 10x22 -- gvim
+./target/release/termway --cell-size 10x22 --wm -- gvim
 
 # Or via environment variable
 export TERMWAY_CELL_SIZE=10x22
-./target/release/termway -- gvim
+./target/release/termway --wm -- gvim
 ```
 
-### 4. Command Line Options
+### 5. Command Line Options
 
 | Option | Argument | Description | Default |
 | :--- | :--- | :--- | :--- |
 | `--wayland` | - | Use Smithay headless Wayland compositor mode (default) | Enabled |
 | `--x11`, `--xvfb` | - | Use legacy X11 / Xvfb capture mode | - |
 | `--kitty` | - | Force Kitty Graphics Protocol | Auto-detected |
-| `--sixel` | - | Force Sixel Graphics Protocol | Auto-detected |
+| `--sixel` | - | Force Sixel Graphics Protocol (`KITTY_WINDOW_ID` unset defaults to Sixel) | Auto-detected |
 | `--wm` | - | Enable internal floating window manager decorations and controls | - |
 | `--cell-size` | `<WxH>` | Specify font cell dimensions in pixels (e.g. `10x22`) | Auto-detected via SGR 14t |
 | `--width` | `<PIXELS>` | Virtual display resolution width | Auto-calculated from terminal |
 | `--height` | `<PIXELS>` | Virtual display resolution height | Auto-calculated from terminal |
 | `--fps` | `<FPS>` | Target frame rate limit | `30` |
-| `--demo` | - | Launch built-in Tkinter demo application | - |
+| `--demo` | - | Launch built-in demo application (GTK3 for Wayland, Tkinter for X11) | - |
 
 ---
 
 ## Running Tests
 
-`termway` comes with a comprehensive test suite (unit, integration, and end-to-end tests):
+`termway` comes with a comprehensive test suite (unit, integration, and end-to-end tests: 50 tests total):
 
 ```bash
-cargo test
+cargo test -- --test-threads=1
 ```
+
+---
+
+## Roadmap & Future Enhancements
+
+- [ ] **Bidirectional Clipboard Sync**:
+  - Full host-to-guest and guest-to-host clipboard synchronization via Bracketed Paste / OSC 52.
+- [ ] **Auto-Tiling Layout Mode (tmux / i3 style)**:
+  - Dynamic screen-splitting tiling layout in addition to floating mode.
+- [ ] **One-Key Screenshot / GIF Recording**
 
 ---
 

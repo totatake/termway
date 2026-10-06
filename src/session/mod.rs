@@ -407,3 +407,26 @@ impl Default for SessionManager {
         Self::new()
     }
 }
+
+/// Verifies that /tmp/.X11-unix (or /tmp if the directory does not exist) is writable.
+/// This prevents X11/XWayland servers and clients from failing or escaping to host displays.
+pub fn check_x11_unix_writability() -> Result<(), String> {
+    let x11_dir = std::path::Path::new("/tmp/.X11-unix");
+    if x11_dir.exists() {
+        let test_file = format!("/tmp/.X11-unix/.termway_test_{}", std::process::id());
+        if let Err(e) = std::fs::OpenOptions::new().write(true).create_new(true).open(&test_file) {
+            return Err(format!("Cannot write to /tmp/.X11-unix ({}). X11/XWayland will not work: {}", e.kind(), e));
+        } else {
+            let _ = std::fs::remove_file(&test_file);
+        }
+    } else {
+        let test_file = format!("/tmp/.termway_test_{}", std::process::id());
+        if let Err(e) = std::fs::OpenOptions::new().write(true).create_new(true).open(&test_file) {
+            return Err(format!("Cannot write to /tmp ({}). X11/XWayland will not work: {}", e.kind(), e));
+        } else {
+            let _ = std::fs::remove_file(&test_file);
+        }
+    }
+    Ok(())
+}
+

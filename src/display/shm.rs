@@ -13,7 +13,11 @@ pub struct ShmImage {
 }
 
 impl ShmImage {
-    pub fn new(display: *mut xlib::Display, _req_w: u32, _req_h: u32) -> Option<Self> {
+    /// Create a new SHM image buffer attached to the given X11 display.
+    ///
+    /// # Safety
+    /// Caller must ensure `display` is a valid pointer to an open X11 `Display`.
+    pub unsafe fn new(display: *mut xlib::Display, _req_w: u32, _req_h: u32) -> Option<Self> {
         if display.is_null() {
             return None;
         }

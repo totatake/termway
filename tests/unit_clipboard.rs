@@ -11,12 +11,12 @@ fn test_read_clipboard() {
         let root = xlib::XDefaultRootWindow(display);
         let win = xlib::XCreateSimpleWindow(display, root, 0, 0, 1, 1, 0, 0, 0);
         
-        let clipboard = xlib::XInternAtom(display, b"CLIPBOARD\0".as_ptr() as _, xlib::False);
-        let utf8_string = xlib::XInternAtom(display, b"UTF8_STRING\0".as_ptr() as _, xlib::False);
-        let target_property = xlib::XInternAtom(display, b"XSEL_DATA\0".as_ptr() as _, xlib::False);
+        let clipboard = xlib::XInternAtom(display, c"CLIPBOARD".as_ptr() as _, xlib::False);
+        let utf8_string = xlib::XInternAtom(display, c"UTF8_STRING".as_ptr() as _, xlib::False);
+        let target_property = xlib::XInternAtom(display, c"XSEL_DATA".as_ptr() as _, xlib::False);
 
         let mut child = match std::process::Command::new("xclip")
-            .args(&["-i", "-selection", "clipboard"])
+            .args(["-i", "-selection", "clipboard"])
             .env("DISPLAY", xvfb.display_string())
             .stdin(std::process::Stdio::piped())
             .spawn() {

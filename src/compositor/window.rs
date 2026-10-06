@@ -274,7 +274,7 @@ impl ManagedWindow {
             WindowSurface::X11(win) => {
                 let rect = Rectangle::new(
                     (self.loc.x, self.loc.y).into(),
-                    (w as i32, h as i32).into(),
+                    (w, h).into(),
                 );
                 let _ = win.configure(rect);
             }

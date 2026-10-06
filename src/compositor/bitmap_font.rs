@@ -5,35 +5,51 @@ pub const FONT_HEIGHT: usize = 8;
 // Basic 8x8 font table for ASCII characters
 include!("font_data.rs");
 
-pub fn render_char(data: &mut [u8], stride: usize, target_w: i32, target_h: i32, x: i32, y: i32, c: char, color: [u8; 4]) {
-    let code = c as usize;
-    if code < 32 || code > 126 {
-        return;
+/// Canvas buffer abstraction for font and decoration rasterization.
+pub struct BitmapCanvas<'a> {
+    pub data: &'a mut [u8],
+    pub stride: usize,
+    pub width: i32,
+    pub height: i32,
+}
+
+impl<'a> BitmapCanvas<'a> {
+    pub fn new(data: &'a mut [u8], stride: usize, width: i32, height: i32) -> Self {
+        Self { data, stride, width, height }
     }
-    let glyph = &FONT_8X8[code - 32];
-    for row in 0..8 {
-        let py = y + row as i32;
-        if py < 0 || py >= target_h { continue; }
-        let bits = glyph[row];
-        for col in 0..8 {
-            if (bits & (1 << (7 - col))) != 0 {
-                let px = x + col as i32;
-                if px >= 0 && px < target_w {
-                    let off = py as usize * stride + px as usize * 4;
-                    data[off..off + 4].copy_from_slice(&color);
+
+    pub fn render_char(&mut self, x: i32, y: i32, c: char, color: [u8; 4]) {
+        let code = c as usize;
+        if !(32..=126).contains(&code) {
+            return;
+        }
+        let glyph = &FONT_8X8[code - 32];
+        for (row, &bits) in glyph.iter().enumerate() {
+            let py = y + row as i32;
+            if py < 0 || py >= self.height {
+                continue;
+            }
+            for col in 0..8 {
+                if (bits & (1 << (7 - col))) != 0 {
+                    let px = x + col;
+                    if px >= 0 && px < self.width {
+                        let off = py as usize * self.stride + px as usize * 4;
+                        self.data[off..off + 4].copy_from_slice(&color);
+                    }
                 }
             }
         }
     }
-}
 
-pub fn render_text(data: &mut [u8], stride: usize, target_w: i32, target_h: i32, start_x: i32, start_y: i32, text: &str, color: [u8; 4], max_chars: usize) {
-    let mut cur_x = start_x;
-    for (i, c) in text.chars().enumerate() {
-        if i >= max_chars {
-            break;
+    pub fn render_text(&mut self, start_x: i32, start_y: i32, text: &str, color: [u8; 4], max_chars: usize) {
+        let mut cur_x = start_x;
+        for (i, c) in text.chars().enumerate() {
+            if i >= max_chars {
+                break;
+            }
+            self.render_char(cur_x, start_y, c, color);
+            cur_x += 8;
         }
-        render_char(data, stride, target_w, target_h, cur_x, start_y, c, color);
-        cur_x += 8;
     }
 }
+

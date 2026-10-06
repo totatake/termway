@@ -4,33 +4,26 @@ pub mod xwayland;
 pub mod window;
 pub mod bitmap_font;
 pub mod decoration;
+pub mod input;
 
 use std::io::{self, Read};
 use std::process::{Child, Command};
 use std::sync::Arc;
 use crate::terminal::winsize::WINCH_RECEIVED;
 
-use smithay::{
-    backend::input::{ButtonState, KeyState, Keycode},
-    input::{
-        keyboard::FilterResult,
-        pointer::{ButtonEvent, MotionEvent},
-    },
-    reexports::{
-        wayland_protocols::xdg::shell::server::xdg_toplevel,
-        wayland_server::{Display, ListeningSocket},
-    },
-    utils::{Logical, Point, SERIAL_COUNTER},
+use smithay::reexports::{
+    wayland_protocols::xdg::shell::server::xdg_toplevel,
+    wayland_server::{Display, ListeningSocket},
 };
 
 use crate::backend::TerminalBackend;
 use crate::engine::EngineConfig;
-use crate::protocol::{KeyCode, KeyboardParser, MouseAction, MouseButton, SgrMouseParser};
+use crate::protocol::{KeyCode, KeyboardParser, SgrMouseParser};
 use crate::terminal::{RawModeGuard, TerminalSize};
 
 use self::renderer::TermwayRenderer;
 use self::state::{send_frames_surface_tree, ClientState, TermwayState};
-use self::window::{WindowDragState, WindowSurface, BORDER_WIDTH, TITLEBAR_HEIGHT};
+use self::window::{BORDER_WIDTH, TITLEBAR_HEIGHT};
 
 // Raw mode では `\n` だけだと行頭に戻らず表示が崩れるため、CRLF で出力する。
 pub(crate) fn log_line(msg: impl AsRef<str>) {
@@ -132,36 +125,7 @@ impl TermwayCompositor {
         let backend = TerminalBackend::new(term_size, config.use_sixel, true);
 
         // Check writability of /tmp/.X11-unix so X11 apps don't fail mysteriously or fall back
-        let x11_dir = std::path::Path::new("/tmp/.X11-unix");
-        if x11_dir.exists() {
-            // Check if directory is writable by attempting to create a test file in it
-            let test_file = format!("/tmp/.X11-unix/.termway_test_{}", std::process::id());
-            match std::fs::OpenOptions::new().write(true).create_new(true).open(&test_file) {
-                Ok(_) => {
-                    let _ = std::fs::remove_file(&test_file);
-                }
-                Err(e) => {
-                    return Err(format!(
-                        "Cannot write to /tmp/.X11-unix: {}. XWayland / X11 applications will not work.",
-                        e
-                    ).into());
-                }
-            }
-        } else {
-            // If /tmp/.X11-unix does not exist, check if /tmp itself is writable
-            let test_file = format!("/tmp/.termway_test_{}", std::process::id());
-            match std::fs::OpenOptions::new().write(true).create_new(true).open(&test_file) {
-                Ok(_) => {
-                    let _ = std::fs::remove_file(&test_file);
-                }
-                Err(e) => {
-                    return Err(format!(
-                        "Cannot write to /tmp: {}. XWayland / X11 applications will not work.",
-                        e
-                    ).into());
-                }
-            }
-        }
+        crate::session::check_x11_unix_writability()?;
 
         // 5. Try starting XWayland for legacy X11 compatibility
         // Workaround for environments where WAYLAND_SOCKET FD gets closed (e.g. by security wrappers):
@@ -383,7 +347,7 @@ impl TermwayCompositor {
             // Clean up destroyed windows/surfaces
             self.state.windows.retain(|w| smithay::reexports::wayland_server::Resource::is_alive(w.wl_surface()));
             self.state.managed_windows.retain(|w| {
-                w.wl_surface().as_ref().map(|s| smithay::reexports::wayland_server::Resource::is_alive(s)).unwrap_or(true)
+                w.wl_surface().as_ref().map(smithay::reexports::wayland_server::Resource::is_alive).unwrap_or(true)
             });
 
             let polkit_pid = self.session.polkit_pid();
@@ -425,14 +389,11 @@ impl TermwayCompositor {
             }
 
             // Check if client child process is still running
-            let is_child_alive = if let Some(ref mut child) = self.client_child {
-                match child.try_wait() {
-                    Ok(None) => true,
-                    _ => false,
-                }
-            } else {
-                false
-            };
+            let is_child_alive = self
+                .client_child
+                .as_mut()
+                .map(|c| matches!(c.try_wait(), Ok(None)))
+                .unwrap_or(false);
 
             // A. Check exit condition based on window lifecycle
             if self.has_opened_windows {
@@ -692,11 +653,11 @@ impl TermwayCompositor {
                                     log_line(format!("[termway] Terminal reported window size: {}x{}px", w, h));
                                     if !self.cell_size_queried {
                                         let mut new_size = self.backend.term_size();
-                                        if new_size.cols > 0 {
-                                            new_size.cell_width_px = (w / new_size.cols).max(1);
+                                        if let Some(res) = w.checked_div(new_size.cols) {
+                                            new_size.cell_width_px = res.max(1);
                                         }
-                                        if new_size.rows > 0 {
-                                            new_size.cell_height_px = (h / new_size.rows).max(1);
+                                        if let Some(res) = h.checked_div(new_size.rows) {
+                                            new_size.cell_height_px = res.max(1);
                                         }
                                         new_size.width_px = new_size.cols * new_size.cell_width_px;
                                         new_size.height_px = new_size.rows * new_size.cell_height_px;
@@ -740,501 +701,26 @@ impl TermwayCompositor {
     }
 
     fn dispatch_mouse_event(&mut self, ev: &crate::protocol::MouseEvent) {
-        let serial = SERIAL_COUNTER.next_serial();
-        let time = self.state.start_time.elapsed().as_millis() as u32;
-
         let avail_rows = if self.backend.is_sixel() {
             self.term_rows.saturating_sub(1).max(1)
         } else {
             self.term_rows.max(1)
         };
-        let cell_w = self.renderer.width() as f64 / self.term_cols as f64;
-        let cell_h = self.renderer.height() as f64 / avail_rows as f64;
-        let px = (ev.col.saturating_sub(1)) as f64 * cell_w + (cell_w * 0.5);
-        let py = (ev.row.saturating_sub(1)) as f64 * cell_h + (cell_h * 0.5);
-        let loc: Point<f64, Logical> = Point::from((px, py));
-        let loc_i32 = Point::<i32, Logical>::from((px as i32, py as i32));
-
-        let pointer = self.state.pointer.clone();
-        let keyboard = self.state.keyboard.clone();
-
-        match ev.action {
-            MouseAction::Move | MouseAction::Drag => {
-                // 1. Process active window dragging (Moving or Resizing)
-                match self.state.drag_state {
-                    WindowDragState::Moving { start_cursor, start_window_pos } => {
-                        let dx = (px - start_cursor.0).round() as i32;
-                        let dy = (py - start_cursor.1).round() as i32;
-                        if let Some(top_win) = self.state.managed_windows.last_mut() {
-                            let min_x = if top_win.has_ssd { BORDER_WIDTH } else { 0 };
-                            let max_x = (self.renderer.width() as i32 - top_win.size.w - min_x).max(min_x);
-                            let min_y = if top_win.has_ssd { TITLEBAR_HEIGHT + BORDER_WIDTH } else { 0 };
-                            let max_y = (self.renderer.height() as i32 - top_win.size.h - min_x).max(min_y);
-
-                            let new_x = (start_window_pos.0 + dx).clamp(min_x, max_x);
-                            let new_y = (start_window_pos.1 + dy).clamp(min_y, max_y);
-                            top_win.set_loc(Point::from((new_x, new_y)));
-                            self.state.dirty = true;
-                        }
-                        return;
-                    }
-                    WindowDragState::Resizing { start_cursor, start_window_geo } => {
-                        let dw = (px - start_cursor.0).round() as i32;
-                        let dh = (py - start_cursor.1).round() as i32;
-                        if let Some(top_win) = self.state.managed_windows.last_mut() {
-                            let max_w = (self.renderer.width() as i32 - top_win.loc.x - BORDER_WIDTH).max(100);
-                            let max_h = (self.renderer.height() as i32 - top_win.loc.y - BORDER_WIDTH).max(60);
-
-                            let new_w = (start_window_geo.size.w + dw).clamp(100, max_w);
-                            let new_h = (start_window_geo.size.h + dh).clamp(60, max_h);
-                            top_win.configure_size(new_w, new_h);
-                            self.state.dirty = true;
-                        }
-                        return;
-                    }
-                    WindowDragState::None => {}
-                }
-
-                // 2. Normal pointer motion: hit test managed windows (Top to Bottom)
-                let mut focus = None;
-                for win in self.state.managed_windows.iter().rev() {
-                    let content_geo = win.content_geometry();
-                    if content_geo.contains(loc_i32) {
-                        if let Some(surface) = self.state.surface_for_managed_window(win) {
-                            let win_origin = Point::from((win.loc.x as f64, win.loc.y as f64));
-                            focus = Some((surface, win_origin));
-                            break;
-                        }
-                    }
-                }
-                // Check unmanaged X11 popup/override-redirect surfaces
-                if focus.is_none() {
-                    for xwin in self.state.x11_windows.iter().rev() {
-                        let is_managed = self.state.managed_windows.iter().any(|mw| matches!(&mw.surface, WindowSurface::X11(w) if w == xwin));
-                        if !is_managed {
-                            let geo = xwin.geometry();
-                            if geo.contains(loc_i32) {
-                                if let Some(s) = self.state.surface_for_x11(xwin) {
-                                    focus = Some((s, Point::from((geo.loc.x as f64, geo.loc.y as f64))));
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                }
-                if focus.is_none() {
-                    if let Some(surface) = self.state.unassociated_surfaces.last() {
-                        focus = Some((surface.clone(), Point::from((0.0, 0.0))));
-                    }
-                }
-
-                let motion = MotionEvent { location: loc, serial, time };
-                pointer.motion(&mut self.state, focus, &motion);
-                pointer.frame(&mut self.state);
-            }
-
-            MouseAction::Press => {
-                let is_left = matches!(ev.button, MouseButton::Left);
-
-                // A. Hit test managed windows from front to back
-                let mut hit_window_id = None;
-                let mut clicked_close = false;
-                let mut clicked_titlebar = false;
-                let mut clicked_resize = false;
-                let mut clicked_content = false;
-                let mut win_loc = Point::from((0, 0));
-                let mut win_geo = smithay::utils::Rectangle::new((0, 0).into(), (0, 0).into());
-
-                for win in self.state.managed_windows.iter().rev() {
-                    if self.state.enable_wm && win.has_ssd {
-                        if is_left && win.close_button_hit_geometry().contains(loc_i32) {
-                            hit_window_id = Some(win.id);
-                            clicked_close = true;
-                            break;
-                        }
-                        if is_left && win.resize_handle_hit_geometry().contains(loc_i32) {
-                            hit_window_id = Some(win.id);
-                            clicked_resize = true;
-                            win_geo = win.content_geometry();
-                            break;
-                        }
-                        if win.titlebar_geometry().contains(loc_i32) {
-                            hit_window_id = Some(win.id);
-                            clicked_titlebar = true;
-                            win_loc = win.loc;
-                            break;
-                        }
-                    }
-                    if win.content_geometry().contains(loc_i32) {
-                        hit_window_id = Some(win.id);
-                        clicked_content = true;
-                        win_loc = win.loc;
-                        break;
-                    }
-                }
-
-                if let Some(id) = hit_window_id {
-                    if clicked_close {
-                        // Close target window
-                        if let Some(pos) = self.state.managed_windows.iter().position(|w| w.id == id) {
-                            let win = self.state.managed_windows.remove(pos);
-                            win.close();
-
-                            // If this was an X11 surface, send SIGTERM to its process if PID is available
-                            if let WindowSurface::X11(ref xwin) = win.surface {
-                                if let Ok(pid) = xwin.get_client_pid() {
-                                    if pid > 0 {
-                                        let _ = nix::sys::signal::kill(
-                                            nix::unistd::Pid::from_raw(pid as i32),
-                                            nix::sys::signal::Signal::SIGTERM,
-                                        );
-                                    }
-                                }
-                            }
-
-                            // If all managed windows closed, terminate compositor or client process
-                            if self.state.managed_windows.is_empty() {
-                                if let Some(ref mut child) = self.client_child {
-                                    let _ = child.kill();
-                                }
-                                self.state.running = false;
-                            } else {
-                                if let Some(top) = self.state.managed_windows.last_mut() {
-                                    top.active = true;
-                                }
-                                if let Some(top) = self.state.managed_windows.last() {
-                                    if let Some(s) = self.state.surface_for_managed_window(top) {
-                                        keyboard.set_focus(&mut self.state, Some(s), serial);
-                                    }
-                                }
-                            }
-                            self.state.dirty = true;
-                        }
-                        return;
-                    }
-
-                    // Raise clicked window to top of Z-order & activate
-                    self.state.raise_window(id);
-
-                    if clicked_titlebar && is_left {
-                        // Begin window drag/move
-                        self.state.drag_state = WindowDragState::Moving {
-                            start_cursor: (px, py),
-                            start_window_pos: (win_loc.x, win_loc.y),
-                        };
-                        self.state.dirty = true;
-                        return;
-                    }
-
-                    if clicked_resize && is_left {
-                        // Begin window resize
-                        self.state.drag_state = WindowDragState::Resizing {
-                            start_cursor: (px, py),
-                            start_window_geo: win_geo,
-                        };
-                        self.state.dirty = true;
-                        return;
-                    }
-
-                    if clicked_content {
-                        // Forward press to client surface
-                        let win = self.state.managed_windows.last().unwrap();
-                        let focus = self.state.surface_for_managed_window(win).map(|s| (s, Point::from((win.loc.x as f64, win.loc.y as f64))));
-
-                        let motion = MotionEvent { location: loc, serial, time };
-                        pointer.motion(&mut self.state, focus.clone(), &motion);
-
-                        let btn = match ev.button {
-                            MouseButton::Left => 0x110,
-                            MouseButton::Middle => 0x112,
-                            MouseButton::Right => 0x111,
-                            _ => 0x110,
-                        };
-                        let btn_ev = ButtonEvent { serial, time, button: btn, state: ButtonState::Pressed };
-                        pointer.button(&mut self.state, &btn_ev);
-                        pointer.frame(&mut self.state);
-
-                        if let Some((s, _)) = focus {
-                            keyboard.set_focus(&mut self.state, Some(s), serial);
-                        }
-                        return;
-                    }
-                }
-
-                // B. Fallback: outside managed windows (unmanaged X11 popups or desktop)
-                let mut focus = None;
-                for xwin in self.state.x11_windows.iter().rev() {
-                    let is_managed = self.state.managed_windows.iter().any(|mw| matches!(&mw.surface, WindowSurface::X11(w) if w == xwin));
-                    if !is_managed {
-                        let geo = xwin.geometry();
-                        if geo.contains(loc_i32) {
-                            if let Some(s) = self.state.surface_for_x11(xwin) {
-                                focus = Some((s, Point::from((geo.loc.x as f64, geo.loc.y as f64))));
-                                break;
-                            }
-                        }
-                    }
-                }
-                if focus.is_none() {
-                    if let Some(surface) = self.state.unassociated_surfaces.last() {
-                        focus = Some((surface.clone(), Point::from((0.0, 0.0))));
-                    }
-                }
-
-                let motion = MotionEvent { location: loc, serial, time };
-                pointer.motion(&mut self.state, focus.clone(), &motion);
-                let btn = match ev.button {
-                    MouseButton::Left => 0x110,
-                    MouseButton::Middle => 0x112,
-                    MouseButton::Right => 0x111,
-                    _ => 0x110,
-                };
-                let btn_ev = ButtonEvent { serial, time, button: btn, state: ButtonState::Pressed };
-                pointer.button(&mut self.state, &btn_ev);
-                pointer.frame(&mut self.state);
-
-                if let Some((s, _)) = focus {
-                    keyboard.set_focus(&mut self.state, Some(s), serial);
-                }
-            }
-
-            MouseAction::Release => {
-                let was_dragging = !matches!(self.state.drag_state, WindowDragState::None);
-                self.state.drag_state = WindowDragState::None;
-
-                if was_dragging {
-                    self.state.dirty = true;
-                    return;
-                }
-
-                // Forward normal release event
-                let mut focus = None;
-                for win in self.state.managed_windows.iter().rev() {
-                    if win.content_geometry().contains(loc_i32) {
-                        if let Some(surface) = self.state.surface_for_managed_window(win) {
-                            focus = Some((surface, Point::from((win.loc.x as f64, win.loc.y as f64))));
-                            break;
-                        }
-                    }
-                }
-                if focus.is_none() {
-                    for xwin in self.state.x11_windows.iter().rev() {
-                        let is_managed = self.state.managed_windows.iter().any(|mw| matches!(&mw.surface, WindowSurface::X11(w) if w == xwin));
-                        if !is_managed {
-                            let geo = xwin.geometry();
-                            if geo.contains(loc_i32) {
-                                if let Some(s) = self.state.surface_for_x11(xwin) {
-                                    focus = Some((s, Point::from((geo.loc.x as f64, geo.loc.y as f64))));
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                }
-                if focus.is_none() {
-                    if let Some(surface) = self.state.unassociated_surfaces.last() {
-                        focus = Some((surface.clone(), Point::from((0.0, 0.0))));
-                    }
-                }
-
-                let motion = MotionEvent { location: loc, serial, time };
-                pointer.motion(&mut self.state, focus, &motion);
-                let btn = match ev.button {
-                    MouseButton::Left => 0x110,
-                    MouseButton::Middle => 0x112,
-                    MouseButton::Right => 0x111,
-                    _ => 0x110,
-                };
-                let btn_ev = ButtonEvent { serial, time, button: btn, state: ButtonState::Released };
-                pointer.button(&mut self.state, &btn_ev);
-                pointer.frame(&mut self.state);
-            }
-        }
+        self::input::dispatch_mouse_event(
+            &mut self.state,
+            self.renderer.width(),
+            self.renderer.height(),
+            self.term_cols,
+            avail_rows,
+            ev,
+            &mut self.client_child,
+        );
     }
 
     fn dispatch_key_event(&mut self, code: KeyCode) {
-        let mut time = self.state.start_time.elapsed().as_millis() as u32;
-
-        // Map standard keys to Linux evdev scancodes.
-        // Also determine if Shift or Ctrl modifier is required.
-        let (evdev_code, need_shift, need_ctrl): (u32, bool, bool) = match code {
-            KeyCode::Char(c) => match c {
-                'a'..='z' => {
-                    let ev = match c {
-                        'a' => 30, 'b' => 48, 'c' => 46, 'd' => 32, 'e' => 18,
-                        'f' => 33, 'g' => 34, 'h' => 35, 'i' => 23, 'j' => 36,
-                        'k' => 37, 'l' => 38, 'm' => 50, 'n' => 49, 'o' => 24,
-                        'p' => 25, 'q' => 16, 'r' => 19, 's' => 31, 't' => 20,
-                        'u' => 22, 'v' => 47, 'w' => 17, 'x' => 45, 'y' => 21,
-                        'z' => 44,
-                        _ => unreachable!(),
-                    };
-                    (ev, false, false)
-                }
-                'A'..='Z' => {
-                    let ev = match c.to_ascii_lowercase() {
-                        'a' => 30, 'b' => 48, 'c' => 46, 'd' => 32, 'e' => 18,
-                        'f' => 33, 'g' => 34, 'h' => 35, 'i' => 23, 'j' => 36,
-                        'k' => 37, 'l' => 38, 'm' => 50, 'n' => 49, 'o' => 24,
-                        'p' => 25, 'q' => 16, 'r' => 19, 's' => 31, 't' => 20,
-                        'u' => 22, 'v' => 47, 'w' => 17, 'x' => 45, 'y' => 21,
-                        'z' => 44,
-                        _ => unreachable!(),
-                    };
-                    (ev, true, false)
-                }
-                '1' => (2, false, false), '2' => (3, false, false), '3' => (4, false, false),
-                '4' => (5, false, false), '5' => (6, false, false), '6' => (7, false, false),
-                '7' => (8, false, false), '8' => (9, false, false), '9' => (10, false, false),
-                '0' => (11, false, false),
-                '!' => (2, true, false), '@' => (3, true, false), '#' => (4, true, false),
-                '$' => (5, true, false), '%' => (6, true, false), '^' => (7, true, false),
-                '&' => (8, true, false), '*' => (9, true, false), '(' => (10, true, false),
-                ')' => (11, true, false),
-                '-' => (12, false, false), '_' => (12, true, false),
-                '=' => (13, false, false), '+' => (13, true, false),
-                '[' => (26, false, false), '{' => (26, true, false),
-                ']' => (27, false, false), '}' => (27, true, false),
-                '\\' => (43, false, false), '|' => (43, true, false),
-                ';' => (39, false, false), ':' => (39, true, false),
-                '\'' => (40, false, false), '"' => (40, true, false),
-                '`' => (41, false, false), '~' => (41, true, false),
-                ',' => (51, false, false), '<' => (51, true, false),
-                '.' => (52, false, false), '>' => (52, true, false),
-                '/' => (53, false, false), '?' => (53, true, false),
-                ' ' => (57, false, false),
-                '\n' | '\r' => (28, false, false),
-                '\t' => (15, false, false),
-                _ => return,
-            },
-            KeyCode::Enter => (28, false, false),
-            KeyCode::Backspace => (14, false, false),
-            KeyCode::Tab => (15, false, false),
-            KeyCode::Escape => (1, false, false),
-            KeyCode::Up => (103, false, false),
-            KeyCode::Down => (108, false, false),
-            KeyCode::Left => (105, false, false),
-            KeyCode::Right => (106, false, false),
-            KeyCode::Home => (102, false, false),
-            KeyCode::End => (107, false, false),
-            KeyCode::PageUp => (104, false, false),
-            KeyCode::PageDown => (109, false, false),
-            KeyCode::Delete => (111, false, false),
-            KeyCode::Ctrl(c) => match c.to_ascii_lowercase() {
-                'a' => (30, false, true), 'b' => (48, false, true), 'c' => (46, false, true), 'd' => (32, false, true),
-                'e' => (18, false, true), 'f' => (33, false, true), 'g' => (34, false, true), 'h' => (35, false, true),
-                'i' => (23, false, true), 'j' => (36, false, true), 'k' => (37, false, true), 'l' => (38, false, true),
-                'm' => (50, false, true), 'n' => (49, false, true), 'o' => (24, false, true), 'p' => (25, false, true),
-                'q' => (16, false, true), 'r' => (19, false, true), 's' => (31, false, true), 't' => (20, false, true),
-                'u' => (22, false, true), 'v' => (47, false, true), 'w' => (17, false, true), 'x' => (45, false, true),
-                'y' => (21, false, true), 'z' => (44, false, true),
-                _ => return,
-            },
-            KeyCode::ShiftUp => (103, true, false),
-            KeyCode::ShiftDown => (108, true, false),
-            KeyCode::ShiftLeft => (105, true, false),
-            KeyCode::ShiftRight => (106, true, false),
-            KeyCode::ShiftHome => (102, true, false),
-            KeyCode::ShiftEnd => (107, true, false),
-            KeyCode::ShiftPageUp => (104, true, false),
-            KeyCode::ShiftPageDown => (109, true, false),
-            KeyCode::ShiftDelete => (111, true, false),
-            KeyCode::ShiftTab => (15, true, false),
-            KeyCode::CtrlUp => (103, false, true),
-            KeyCode::CtrlDown => (108, false, true),
-            KeyCode::CtrlLeft => (105, false, true),
-            KeyCode::CtrlRight => (106, false, true),
-            KeyCode::CtrlHome => (102, false, true),
-            KeyCode::CtrlEnd => (107, false, true),
-            KeyCode::CtrlShiftUp => (103, true, true),
-            KeyCode::CtrlShiftDown => (108, true, true),
-            KeyCode::CtrlShiftLeft => (105, true, true),
-            KeyCode::CtrlShiftRight => (106, true, true),
-            KeyCode::CtrlShiftHome => (102, true, true),
-            KeyCode::CtrlShiftEnd => (107, true, true),
-            KeyCode::Ignore => return,
-        };
-
-        // Smithay Keycode expects XKB keycode, which is evdev scancode + 8.
-        // (X11/XKB keycodes start at 8, and Smithay subtracts 8 when emitting to Wayland client).
-        let key = Keycode::new(evdev_code + 8);
-        let shift_key = Keycode::new(42 + 8); // KEY_LEFTSHIFT = 42
-        let ctrl_key = Keycode::new(29 + 8);  // KEY_LEFTCTRL = 29
-        let keyboard = self.state.keyboard.clone();
-
-        if need_shift {
-            let shift_serial = SERIAL_COUNTER.next_serial();
-            keyboard.input::<(), _>(
-                &mut self.state,
-                shift_key,
-                KeyState::Pressed,
-                shift_serial,
-                time,
-                |_, _, _| FilterResult::Forward,
-            );
-            time += 1;
-        }
-
-        if need_ctrl {
-            let ctrl_serial = SERIAL_COUNTER.next_serial();
-            keyboard.input::<(), _>(
-                &mut self.state,
-                ctrl_key,
-                KeyState::Pressed,
-                ctrl_serial,
-                time,
-                |_, _, _| FilterResult::Forward,
-            );
-            time += 1;
-        }
-
-        // Send Press then Release
-        let press_serial = SERIAL_COUNTER.next_serial();
-        keyboard.input::<(), _>(
-            &mut self.state,
-            key,
-            KeyState::Pressed,
-            press_serial,
-            time,
-            |_, _, _| FilterResult::Forward,
-        );
-        time += 1;
-        let release_serial = SERIAL_COUNTER.next_serial();
-        keyboard.input::<(), _>(
-            &mut self.state,
-            key,
-            KeyState::Released,
-            release_serial,
-            time,
-            |_, _, _| FilterResult::Forward,
-        );
-        time += 1;
-
-        if need_ctrl {
-            let ctrl_release_serial = SERIAL_COUNTER.next_serial();
-            keyboard.input::<(), _>(
-                &mut self.state,
-                ctrl_key,
-                KeyState::Released,
-                ctrl_release_serial,
-                time,
-                |_, _, _| FilterResult::Forward,
-            );
-            time += 1;
-        }
-
-        if need_shift {
-            let shift_release_serial = SERIAL_COUNTER.next_serial();
-            keyboard.input::<(), _>(
-                &mut self.state,
-                shift_key,
-                KeyState::Released,
-                shift_release_serial,
-                time,
-                |_, _, _| FilterResult::Forward,
-            );
-        }
+        self::input::dispatch_key_event(&mut self.state, code);
     }
+
 
     /// Ensures that `XDG_RUNTIME_DIR` is set to an existing, writable directory with 0700 permissions.
     /// When running under `sudo` or minimal container environments, `XDG_RUNTIME_DIR` is often unset or invalid.
@@ -1249,7 +735,7 @@ impl TermwayCompositor {
                 } else {
                     // Check if writable by creating/checking a test file
                     let test_file = path.join(".termway_runtime_test");
-                    match std::fs::OpenOptions::new().create(true).write(true).open(&test_file) {
+                    match std::fs::OpenOptions::new().create(true).truncate(true).write(true).open(&test_file) {
                         Ok(_) => {
                             let _ = std::fs::remove_file(test_file);
                             false

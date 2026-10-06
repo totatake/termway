@@ -24,12 +24,18 @@ fn test_polkit_agent_lookup_and_lifecycle() {
 #[test]
 fn test_session_manager_integration() {
     let mut manager = SessionManager::new();
-    let addr = manager.dbus_address();
-    if addr.is_some() {
-        assert!(addr.unwrap().starts_with("unix:"));
+    if let Some(addr) = manager.dbus_address() {
+        assert!(addr.starts_with("unix:"));
     }
     // Starting polkit should not panic
     manager.start_polkit(Some("wayland-1"), Some(":1"));
+}
+
+#[test]
+fn test_check_x11_unix_writability() {
+    use termway::session::check_x11_unix_writability;
+    // Calling writability check in standard environment should succeed or return Err gracefully without panicking
+    let _ = check_x11_unix_writability();
 }
 
 #[test]

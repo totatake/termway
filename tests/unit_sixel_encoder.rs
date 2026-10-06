@@ -17,7 +17,7 @@ fn test_sixel_blank_image() {
 
 #[test]
 fn test_sixel_rle() {
-    let mut rgba = vec![0u8; 10 * 1 * 4]; // 10x1 image
+    let mut rgba = vec![0u8; 10 * 4]; // 10x1 image
     for i in 0..10 {
         rgba[i * 4] = 255;   // Red
         rgba[i * 4 + 1] = 0; // Green

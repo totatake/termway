@@ -70,6 +70,7 @@ impl KittyEncoder {
     }
 
     /// Encode a sub-rectangle of an RGBA image (dirty/damage region).
+    #[allow(clippy::too_many_arguments)]
     pub fn encode_rgba_subimage(
         full_rgba: &[u8],
         full_width: u32,

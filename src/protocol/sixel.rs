@@ -25,8 +25,8 @@ impl SixelEncoder {
         }
 
         // 2. Emit palette definitions ONLY for used colors
-        for i in 0..256 {
-            if used_colors[i] {
+        for (i, &is_used) in used_colors.iter().enumerate() {
+            if is_used {
                 let r = (i >> 5) & 7;
                 let g = (i >> 2) & 7;
                 let b = i & 3;
@@ -51,8 +51,8 @@ impl SixelEncoder {
             }
 
             // Encode each color present in the band
-            for c in 0..256 {
-                if !band_used[c] {
+            for (c, &is_used) in band_used.iter().enumerate() {
+                if !is_used {
                     continue;
                 }
 

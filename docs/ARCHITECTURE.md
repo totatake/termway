@@ -11,24 +11,45 @@
 ```
 src/
 ├── main.rs                   # CLIパーサー、起動パラメータ初期化
-├── engine.rs                 # メインイベントループ、フレーム同期制御
-├── terminal/                 # 端末制御・保護・プロトコル検証層
-│   ├── winsize.rs            # TIOCGWINSZ によるピクセル/セル解像度取得
-│   ├── raw.rs                # termios Rawモード化 & RAII Drop ガード
-│   └── query.rs              # Kitty Graphics Protocol 対応可否の事前検証
-├── protocol/                 # エスケープシーケンス解析・生成層
-│   ├── kitty.rs              # Kitty Graphics Protocol エンコーダ
-│   ├── sgr_mouse.rs          # xterm SGR 1006 マウスプロトコルパーサー
-│   └── keyboard.rs           # ANSIキー入力・特殊キーパーサー
-├── display/                  # 仮想ディスプレイ管理・差分検出層
+├── lib.rs                    # ライブラリエクスポート定義
+├── engine.rs                 # レガシー X11 メインループ、フレーム同期制御
+├── backend/                  # ターミナル描画・非同期I/O層
+│   ├── mod.rs                # モジュールエクスポート
+│   └── terminal.rs           # TerminalBackend (Kitty/Sixel + SGR + 非同期I/O)
+├── compositor/               # Smithay Wayland コンポジタコア層 (v2.0)
+│   ├── mod.rs                # TermwayCompositor ライフサイクル・イベントループ
+│   ├── input.rs              # マウス・キー入力イベントディスパッチ & evdev 変換
+│   ├── state.rs              # Smithay CompositorHandler / Seat / DataDevice 状態管理
+│   ├── renderer.rs           # Pixman ヘッドレスレンダラー & ダメージ合成
+│   ├── window.rs             # ウィンドウジオメトリ、Z-order、フォーカス、ドラッグ状態管理
+│   ├── decoration.rs         # フローティング WM 装飾描画 (タイトルバー、枠線、ボタン)
+│   ├── bitmap_font.rs        # タイトル文字列ビットマップレンダリング
+│   ├── font_data.rs          # 組み込み 8x8 ASCII ビットマップフォントデータ
+│   └── xwayland.rs           # XWayland サーバー管理 & X11Wm シェル統合
+├── display/                  # レガシー X11 仮想ディスプレイ & キャプチャ層
+│   ├── mod.rs                # モジュールエクスポート
 │   ├── xvfb.rs               # Xvfb ライフサイクル管理
 │   ├── framebuffer.rs        # RGBA8888 フレームバッファ & XImage 変換
-│   └── damage.rs             # タイルベース差分トラッカー
-├── input/                    # 入力注入層
-│   └── xtest.rs              # libXtst によるマウス/キー仮想イベント注入
-└── backend/                  # ターミナル描画・入力処理層
+│   ├── damage.rs             # タイルベース差分トラッカー
+│   ├── cursor.rs             # XFixes カーソル画像キャプチャ
+│   ├── clipboard.rs          # X11 クリップボード同期 (OSC 52)
+│   └── shm.rs                # MIT-SHM 共有メモリキャプチャ
+├── input/                    # レガシー入力注入層
+│   ├── mod.rs                # モジュールエクスポート
+│   └── xtest.rs              # libXtst による X11 仮想イベント注入
+├── protocol/                 # プロトコルエンコード・デコード層
+│   ├── mod.rs                # モジュールエクスポート
+│   ├── kitty.rs              # Kitty Graphics Protocol エンコーダ
+│   ├── sixel.rs              # Sixel Graphics Protocol エンコーダ
+│   ├── sgr_mouse.rs          # xterm SGR 1006 マウスプロトコルパーサー
+│   └── keyboard.rs           # ANSI / CSI 修飾キー・特殊キーパーサー
+├── session/                  # セッション管理 & 環境検証層
+│   └── mod.rs                # D-Bus 分離、Polkit 認証エージェント、X11 書込検証
+└── terminal/                 # 端末制御・保護・プロトコル検証層
     ├── mod.rs                # モジュールエクスポート
-    └── terminal.rs           # TerminalBackend (Kitty + SGR + 非同期I/O)
+    ├── winsize.rs            # TIOCGWINSZ / SGR 14t による解像度取得
+    ├── raw.rs                # termios Raw モード化 & RAII Drop ガード
+    └── query.rs              # Kitty / Sixel プロトコル対応可否検証
 ```
 
 ---
@@ -359,5 +380,39 @@ termway は「起動した直系親プロセスの終了」に過度に依存せ
 - **フォーク猶予時間 (Grace Period)**: 起動直後に親プロセスが exit(0) した場合でも、3秒間は子プロセスによるウィンドウの表示を待機。
 - **全ウィンドウ破棄時の自動終了**: 一度ウィンドウが開かれた後は、ユーザーがアプリを終了（`:q` やメニュー等）または [×] ボタンで全ウィンドウが破棄された瞬間に、コンポジタを正常終了してターミナルシェルへ安全に復帰。
 これにより、ユーザーは `-f` などのフォアグラウンドオプションを明示的に付与せずとも、自然にアプリを実行・終了できます。
+
+---
+
+### 6.9 入力イベントディスパッチとモジュール分離 (`src/compositor/input.rs`)
+
+コンポジタのコア（`src/compositor/mod.rs`）がライフサイクル管理・イベントループ・描画ハンドリングに専念できるよう、端末からの入力シーケンス変換および Smithay Seat へのディスパッチ処理は専用モジュール `src/compositor/input.rs` に完全分離されています。
+
+1. **キーコード・evdev マッピング (`map_keycode_to_evdev`)**:
+   - `protocol::keyboard::KeyCode`（ANSI / CSI シーケンスからパースされたキー表現）を Linux evdev キーコード（例: `KEY_A = 30`, `KEY_LEFT = 105`, `KEY_ENTER = 28` 等）へ高速 O(1) テーブル変換。
+   - 大文字・記号判定ロジックにより、Shift を伴う文字（`A`〜`Z`, `!`, `@` 等）に対して自動的に `KEY_LEFTSHIFT` イベントを補完。
+2. **キー入力ディスパッチ (`dispatch_key_event`)**:
+   - 単調増加ミリ秒タイムスタンプ（`Instant::now()` 基準）を生成し、Smithay の `keyboard.input()` を呼び出し。
+   - Shift / Ctrl 修飾キーの先行押下 → 対象キー押下・解放 → 修飾キー解放の順序をミリ秒単位で厳密に制御し、XWayland クライアントでの修飾キー抜けを防止。
+3. **マウスイベントディスパッチ (`dispatch_mouse_event`)**:
+   - 文字セル座標 $(col, row)$ をコンポジタ仮想ピクセル座標へ高精度変換。
+   - **ウィンドウマネージャ対話**:
+     - タイトルバー・枠線・閉じるボタン・リサイズハンドルのヒットテスト。
+     - クリック時の Z-order 最前面浮上（`raise_window`）およびフォーカス切り替え（`seat.keyboard.set_focus` / `seat.pointer.set_focus`）。
+     - ドラッグ状態マシン（`WindowDragState::Moving` / `Resizing`）の更新と画面境界クランプ。
+     - 閉じるボタン `[×]` クリック時のクライアント終了要求（`send_close`）。
+   - **Wayland ポインタ通知**:
+     - 対象サーフェスに対する `pointer.motion()`、`pointer.button()`（左/中/右クリック）、`pointer.axis()`（ホイールスクロール）を Smithay ポインタパイプラインへ注入。
+
+---
+
+### 6.10 実行環境健全性の事前検査と共通化 (`src/session/mod.rs`)
+
+`termway` は起動時、および X11 / XWayland サーバーの初期化前に、システム環境の健全性を検証する統一ヘルパー `check_x11_unix_writability()` を備えています。
+
+- **問題の背景**: コンテナ環境（Docker, Podman, LXC）や制限されたサンドボックス環境では、ホスト側の `/tmp/.X11-unix` が読み取り専用（`ro`）でマウントされている場合があります。この状態で Xvfb や XWayland を起動すると、UNIX ドメインソケットファイル（`/tmp/.X11-unix/X*`）を作成できずにハングアップするか、予期せずホスト側の既設ディスプレイ（`:0` 等）へエスケープ接続してしまう危険性がありました。
+- **統一検査機構**:
+  - Xvfb 起動（`src/display/xvfb.rs`）および XWayland 起動（`src/compositor/mod.rs`）の直前に、`/tmp/.X11-unix` に一時テストファイルを作成・削除して書き込み権限を検証。
+  - 書込不可の場合は即座にわかりやすいエラーメッセージを出力して終了し、ホスト環境への不正接続を 100% 防止します。
+
 
 

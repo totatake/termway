@@ -85,7 +85,7 @@ root.mainloop()
     assert!(kitty_seq.starts_with("\x1b_Ga=T,q=2,f=32"));
 
     // 4. Inject synthetic mouse click event using XTest (FR-3)
-    let mut injector = XTestInjector::new(xvfb.raw_display());
+    let mut injector = unsafe { XTestInjector::new(xvfb.raw_display()) };
     let click_ev = MouseEvent {
         button: MouseButton::Left,
         action: MouseAction::Press,

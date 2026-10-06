@@ -137,7 +137,7 @@ impl TermwayRenderer {
         let stride = self.buffer.stride();
         let data_ptr = unsafe { self.buffer.data() };
         let slice = unsafe {
-            std::slice::from_raw_parts(data_ptr as *const u8, (self.height as usize) * (stride as usize))
+            std::slice::from_raw_parts(data_ptr as *const u8, (self.height as usize) * stride)
         };
 
         Ok(slice)

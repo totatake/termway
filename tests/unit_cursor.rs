@@ -13,8 +13,8 @@ fn test_xfixes_cursor() {
         let height = (*cursor_image).height;
         let pixels = std::slice::from_raw_parts((*cursor_image).pixels, (width * height) as usize);
         println!("Cursor pixels (first 10):");
-        for i in 0..10 {
-            println!("{:08x}", pixels[i]);
+        for &p in pixels.iter().take(10) {
+            println!("{:08x}", p);
         }
         x11::xlib::XFree(cursor_image as *mut _);
     }

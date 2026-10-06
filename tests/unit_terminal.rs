@@ -30,8 +30,8 @@ fn test_map_cell_to_target_x11() {
     let size = TerminalSize::fallback(100, 50); // 900x900
     // Target display is 800x600
     let (tx, ty) = size.map_cell_to_target(1, 1, 800, 600);
-    assert!(tx >= 0 && tx < 800);
-    assert!(ty >= 0 && ty < 600);
+    assert!((0..800).contains(&tx));
+    assert!((0..600).contains(&ty));
 
     // Bottom right cell
     let (br_x, br_y) = size.map_cell_to_target(100, 50, 800, 600);

@@ -8,7 +8,10 @@ pub struct XTestInjector {
 
 impl XTestInjector {
     /// Create a new XTest injector for the given X11 display.
-    pub fn new(display: *mut x11::xlib::Display) -> Self {
+    ///
+    /// # Safety
+    /// Caller must ensure `display` is a valid pointer to an open X11 `Display`.
+    pub unsafe fn new(display: *mut x11::xlib::Display) -> Self {
         Self { display }
     }
 

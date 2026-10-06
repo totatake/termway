@@ -15,15 +15,7 @@ pub struct XvfbServer {
 impl XvfbServer {
     /// Spawn an Xvfb instance on an available display number.
     pub fn spawn(width: u32, height: u32) -> Result<Self, String> {
-        let x11_dir = std::path::Path::new("/tmp/.X11-unix");
-        if x11_dir.exists() {
-            let test_file = format!("/tmp/.X11-unix/.termway_test_{}", std::process::id());
-            if let Err(e) = std::fs::OpenOptions::new().write(true).create_new(true).open(&test_file) {
-                return Err(format!("Cannot write to /tmp/.X11-unix ({}). Xvfb will not work: {}", e.kind(), e));
-            } else {
-                let _ = std::fs::remove_file(&test_file);
-            }
-        }
+        crate::session::check_x11_unix_writability()?;
 
         let display_num = Self::find_free_display();
         let display_str = format!(":{}", display_num);
@@ -140,9 +132,14 @@ impl XvfbServer {
         if status != 0 && !children_return.is_null() {
             let slice = unsafe { std::slice::from_raw_parts(children_return, nchildren_return as usize) };
             for &win in slice {
-                let mut attrs: x11::xlib::XWindowAttributes = unsafe { std::mem::zeroed() };
-                if unsafe { x11::xlib::XGetWindowAttributes(self.display_ptr, win, &mut attrs) } != 0 {
-                    if attrs.map_state == x11::xlib::IsViewable && attrs.override_redirect == 0 && attrs.width > 1 && attrs.height > 1 {
+                let mut attrs = std::mem::MaybeUninit::<x11::xlib::XWindowAttributes>::uninit();
+                if unsafe { x11::xlib::XGetWindowAttributes(self.display_ptr, win, attrs.as_mut_ptr()) } != 0 {
+                    let attrs = unsafe { attrs.assume_init() };
+                    if attrs.map_state == x11::xlib::IsViewable
+                        && attrs.override_redirect == 0
+                        && attrs.width > 1
+                        && attrs.height > 1
+                    {
                         count += 1;
                     }
                 }
