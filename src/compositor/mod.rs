@@ -72,6 +72,7 @@ pub struct TermwayCompositor {
     _xwayland_client: Option<smithay::reexports::wayland_server::Client>,
     session: crate::session::SessionManager,
     cell_size_queried: bool,
+    wrap_dir: Option<String>,
 }
 
 impl TermwayCompositor {
@@ -154,15 +155,17 @@ impl TermwayCompositor {
             std::process::Command::new("which").arg("Xwayland").output().unwrap().stdout
         ).unwrap();
         let xwayland_real = xwayland_real.trim();
-        let wrap_dir = "/tmp/termway_wrap";
-        let _ = std::fs::create_dir_all(wrap_dir);
+        let uid = unsafe { libc::getuid() };
+        let pid = std::process::id();
+        let wrap_dir = format!("/tmp/termway_wrap_{}_{}", uid, pid);
+        let _ = std::fs::create_dir_all(&wrap_dir);
         let wrapper_path = format!("{}/Xwayland", wrap_dir);
         let wrapper_script = format!(
             "#!/bin/bash\nunset WAYLAND_SOCKET\nexport WAYLAND_DISPLAY={}\nARGS=()\nfor arg in \"$@\"; do\n    if [ \"$arg\" != \"-terminate\" ]; then\n        ARGS+=(\"$arg\")\n    fi\ndone\nexec {} \"${{ARGS[@]}}\" -ac\n",
             socket_name, xwayland_real
         );
         std::fs::write(&wrapper_path, wrapper_script).unwrap();
-        std::fs::set_permissions(&wrapper_path, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+        std::fs::set_permissions(&wrapper_path, std::os::unix::fs::PermissionsExt::from_mode(0o700)).unwrap();
         
         let old_path = std::env::var("PATH").unwrap_or_default();
         std::env::set_var("PATH", format!("{}:{}", wrap_dir, old_path));
@@ -219,6 +222,7 @@ impl TermwayCompositor {
             x11_display,
             session,
             cell_size_queried,
+            wrap_dir: Some(wrap_dir),
             term_cols: term_size.cols.max(1),
             term_rows: term_size.rows.max(1),
             input_buffer: Vec::with_capacity(1024),
@@ -826,6 +830,14 @@ impl TermwayCompositor {
             let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700));
             std::env::set_var("XDG_RUNTIME_DIR", &fallback_dir);
             log_line(format!("[termway] Using fallback XDG_RUNTIME_DIR={}", fallback_dir));
+        }
+    }
+}
+
+impl Drop for TermwayCompositor {
+    fn drop(&mut self) {
+        if let Some(ref dir) = self.wrap_dir {
+            let _ = std::fs::remove_dir_all(dir);
         }
     }
 }

@@ -359,15 +359,12 @@ impl SessionManager {
         wayland_display: Option<&str>,
         x11_display: Option<&str>,
     ) {
-        // 1. Update isolated D-Bus session if present
+        // Only update the isolated D-Bus session if present.
+        // We MUST NOT overwrite the host user session (systemd user bus) with termway's
+        // temporary DISPLAY / WAYLAND_DISPLAY, which would break gnome-terminal and other
+        // host desktop applications after termway exits.
         if let Some(dbus) = self.isolated_dbus.as_ref().map(|d| d.address()) {
             Self::run_update_activation_env(dbus, false, wayland_display, x11_display);
-        }
-
-        // 2. Also update ambient systemd user session if present (with --systemd for Snap / portals)
-        if let Some(ambient) = self.ambient_dbus_address() {
-            let use_systemd = std::path::Path::new("/run/systemd/system").exists();
-            Self::run_update_activation_env(ambient, use_systemd, wayland_display, x11_display);
         }
     }
 

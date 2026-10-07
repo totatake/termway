@@ -55,24 +55,30 @@ root.mainloop()
     let child = cmd.spawn().expect("Tkinter test app should launch");
     let _app_guard = TestApp { child };
 
-    // Allow window manager / X11 client to render initial frame
-    thread::sleep(Duration::from_millis(600));
-
     // 3. Capture initial frame buffer (FR-1)
     let mut fb = Framebuffer::new(width, height);
     let mut tracker = DamageTracker::new(width, height, 32);
 
-    let ximage = xvfb.get_image();
-    assert!(!ximage.is_null(), "XGetImage should return valid image pointer");
-    unsafe {
-        fb.copy_from_ximage(ximage);
-        x11::xlib::XDestroyImage(ximage);
-    }
-
-    // Verify initial red canvas exists at (100, 100) - RGBA red should have high R, low G
     let pixel_idx = (150 * width + 150) * 4;
-    let r_init = fb.pixels[pixel_idx as usize];
-    let g_init = fb.pixels[pixel_idx as usize + 1];
+    let mut r_init = 0;
+    let mut g_init = 0;
+
+    // Poll until Tkinter maps its window and draws the red canvas
+    for _ in 0..25 {
+        thread::sleep(Duration::from_millis(100));
+        let ximage = xvfb.get_image();
+        if !ximage.is_null() {
+            unsafe {
+                fb.copy_from_ximage(ximage);
+                x11::xlib::XDestroyImage(ximage);
+            }
+            r_init = fb.pixels[pixel_idx as usize];
+            g_init = fb.pixels[pixel_idx as usize + 1];
+            if r_init > 150 && g_init < 100 {
+                break;
+            }
+        }
+    }
     assert!(r_init > 150, "Initial canvas pixel R should be red (>150), got {}", r_init);
     assert!(g_init < 100, "Initial canvas pixel G should be low (<100), got {}", g_init);
 
