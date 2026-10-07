@@ -31,10 +31,6 @@ impl XwmHandler for TermwayState {
     }
     fn new_override_redirect_window(&mut self, _xwm: XwmId, window: X11Surface) {
         crate::compositor::log_line(format!("[xwayland] new_override_redirect_window id={:?} geo={:?}", window.window_id(), window.geometry()));
-        if !self.x11_windows.iter().any(|w| w == &window) {
-            self.x11_windows.push(window);
-        }
-        self.dirty = true;
     }
 
     fn map_window_request(&mut self, _xwm: XwmId, window: X11Surface) {

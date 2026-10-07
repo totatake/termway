@@ -400,13 +400,19 @@ impl TermwayCompositor {
                 title.contains("authentication") || title.contains("polkit") || title.contains("policykit")
             };
 
+            let is_unmanaged_real_x11 = |w: &smithay::xwayland::X11Surface| -> bool {
+                let is_managed = self.state.managed_windows.iter().any(|mw| matches!(&mw.surface, WindowSurface::X11(x) if x == w));
+                let geo = w.geometry();
+                !is_managed && geo.size.w > 1 && geo.size.h > 1
+            };
+
             let active_window_count = self.state.managed_windows.len()
                 + self.state.windows.len()
-                + self.state.x11_windows.len();
+                + self.state.x11_windows.iter().filter(|w| is_unmanaged_real_x11(w)).count();
 
             let client_window_count = self.state.managed_windows.iter().filter(|w| !w.is_polkit(polkit_pid)).count()
                 + self.state.windows.iter().filter(|w| !is_wayland_polkit(w)).count()
-                + self.state.x11_windows.iter().filter(|w| !is_x11_polkit(w)).count();
+                + self.state.x11_windows.iter().filter(|w| !is_x11_polkit(w) && is_unmanaged_real_x11(w)).count();
 
             if client_window_count > 0 {
                 self.has_opened_windows = true;

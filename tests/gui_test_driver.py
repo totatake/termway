@@ -75,6 +75,24 @@ class TermwayTestDriver:
         if self.master_fd is not None:
             os.write(self.master_fd, data)
 
+    def is_alive(self) -> bool:
+        """Returns True if the termway process is still running."""
+        if self.pid is None:
+            return False
+        try:
+            pid, _ = os.waitpid(self.pid, os.WNOHANG)
+            if pid != 0:
+                self.running = False
+                return False
+            return True
+        except OSError:
+            self.running = False
+            return False
+
+    def send_keys(self, keys: str):
+        """Sends a string of keys, converting newline to carriage return."""
+        self.send_raw(keys.replace("\n", "\r").encode("utf-8"))
+
     def send_key(self, key: str):
         """Sends a key stroke or sequence."""
         if key == "Enter":
