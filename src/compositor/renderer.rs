@@ -61,7 +61,26 @@ impl TermwayRenderer {
         // 1. Collect render elements from surfaces (Front to Back order for draw_render_elements)
         let mut elements: Vec<WaylandSurfaceRenderElement<PixmanRenderer>> = Vec::new();
 
-        // A. Render unmanaged X11 popup/override-redirect surfaces on top
+        // A. Render Wayland XDG popups on top
+        for window in state.managed_windows.iter().rev() {
+            if let WindowSurface::Wayland(ref toplevel) = window.surface {
+                for (popup, popup_offset) in smithay::desktop::PopupManager::popups_for_surface(toplevel.wl_surface()) {
+                    let popup_x = window.loc.x + popup_offset.x - popup.geometry().loc.x;
+                    let popup_y = window.loc.y + popup_offset.y - popup.geometry().loc.y;
+                    let elems = render_elements_from_surface_tree(
+                        &mut self.renderer,
+                        popup.wl_surface(),
+                        (popup_x, popup_y),
+                        1.0,
+                        1.0,
+                        Kind::Unspecified,
+                    );
+                    elements.extend(elems);
+                }
+            }
+        }
+
+        // B. Render unmanaged X11 popup/override-redirect surfaces on top
         for xwindow in state.x11_windows.iter().rev() {
             let is_managed = state.managed_windows.iter().any(|mw| matches!(&mw.surface, WindowSurface::X11(w) if w == xwindow));
             if !is_managed {

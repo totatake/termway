@@ -33,11 +33,16 @@ use smithay::{
         shell::xdg::{
             PopupSurface, PositionerState, ToplevelSurface, XdgShellHandler, XdgShellState,
             decoration::{XdgDecorationHandler, XdgDecorationState},
+            XDG_POPUP_ROLE,
         },
         shm::{ShmHandler, ShmState},
     },
 };
 
+use smithay::desktop::{
+    find_popup_root_surface, PopupKind, PopupManager, PopupPointerGrab,
+};
+use smithay::input::pointer::Focus;
 use smithay::reexports::wayland_protocols::xdg::decoration::zv1::server::zxdg_toplevel_decoration_v1::Mode as DecorationMode;
 
 #[derive(Default)]
@@ -58,6 +63,7 @@ pub struct TermwayState {
     pub xdg_shell_state: XdgShellState,
     pub xdg_decoration_state: XdgDecorationState,
     pub shm_state: ShmState,
+    pub popups: PopupManager,
     pub seat_state: SeatState<Self>,
     pub seat: Seat<Self>,
     pub keyboard: KeyboardHandle<Self>,
@@ -124,6 +130,7 @@ impl TermwayState {
             xdg_shell_state,
             xdg_decoration_state,
             shm_state,
+            popups: PopupManager::default(),
             seat_state,
             seat,
             keyboard,
@@ -238,6 +245,7 @@ impl CompositorHandler for TermwayState {
 
     fn commit(&mut self, surface: &WlSurface) {
         smithay::backend::renderer::utils::on_commit_buffer_handler::<Self>(surface);
+        self.popups.commit(surface);
         self.dirty = true;
         
         // 破棄済みサーフェスをフォーカス・描画候補から除く
@@ -313,6 +321,9 @@ impl CompositorHandler for TermwayState {
         if smithay::wayland::compositor::get_role(surface) == Some("cursor_image") {
             tracked = true;
         }
+        if smithay::wayland::compositor::get_role(surface) == Some(XDG_POPUP_ROLE) {
+            tracked = true;
+        }
         if !tracked {
             use smithay::reexports::wayland_server::Resource;
             let pid = surface.id().protocol_id();
@@ -339,6 +350,8 @@ impl XdgShellHandler for TermwayState {
     fn new_toplevel(&mut self, surface: ToplevelSurface) {
         let id = self.next_window_id;
         self.next_window_id += 1;
+        let wl_id = surface.wl_surface().id().protocol_id();
+        crate::compositor::log_line(format!("[compositor] new_toplevel id={} surface={}", id, wl_id));
 
         let (loc, configure_size, init_window_size) = if self.enable_wm {
             let offset = ((self.managed_windows.len() % 8) as i32) * 20;
@@ -390,19 +403,67 @@ impl XdgShellHandler for TermwayState {
         self.dirty = true;
     }
 
-    fn new_popup(&mut self, surface: PopupSurface, _positioner: PositionerState) {
+    fn new_popup(&mut self, surface: PopupSurface, positioner: PositionerState) {
+        let geo = positioner.get_geometry();
+        crate::compositor::log_line(format!(
+            "[compositor] new_popup id={} geo={:?}",
+            surface.wl_surface().id().protocol_id(),
+            geo
+        ));
+        surface.with_pending_state(|state| {
+            state.geometry = geo;
+        });
+        if let Err(err) = self.popups.track_popup(PopupKind::Xdg(surface.clone())) {
+            crate::compositor::log_line(format!("[compositor] Failed to track popup: {:?}", err));
+        }
         let _ = surface.send_configure();
-        let wl = surface.wl_surface().clone();
-        let keyboard = self.keyboard.clone();
-        keyboard.set_focus(
-            self,
-            Some(wl),
-            smithay::utils::SERIAL_COUNTER.next_serial(),
-        );
+        // NOTE: キーボードフォーカスは toplevel に残し、ポップアップへは移さない。
+        // Qt はメニュー切替時に旧ポップアップを自ら destroy するため、フォーカスが
+        // 旧ポップアップ上にあると「アプリが非アクティブ化した」と判断され、
+        // 直後に生成された新しいポップアップも閉じられてしまう。
+        // (Qt/GTK はキー入力をアプリ内部で最前面ポップアップへ配送する)
         self.dirty = true;
     }
-    fn grab(&mut self, _surface: PopupSurface, _seat: wl_seat::WlSeat, _serial: Serial) {}
-    fn reposition_request(&mut self, _surface: PopupSurface, _positioner: PositionerState, _token: u32) {}
+    fn grab(&mut self, surface: PopupSurface, seat: wl_seat::WlSeat, serial: Serial) {
+        crate::compositor::log_line(format!(
+            "[compositor] grab request id={} serial={:?}",
+            surface.wl_surface().id().protocol_id(),
+            serial
+        ));
+        let seat: Seat<Self> = match Seat::from_resource(&seat) {
+            Some(s) => s,
+            None => {
+                crate::compositor::log_line("[compositor] grab: Seat::from_resource returned None!");
+                return;
+            }
+        };
+        let kind = PopupKind::Xdg(surface.clone());
+        if let Ok(root) = find_popup_root_surface(&kind) {
+            match self.popups.grab_popup::<Self>(root, kind, &seat, serial) {
+                Ok(grab) => {
+                    crate::compositor::log_line(format!(
+                        "[compositor] grab_popup succeeded for id={}",
+                        surface.wl_surface().id().protocol_id()
+                    ));
+                    if let Some(pointer) = seat.get_pointer() {
+                        pointer.set_grab(self, PopupPointerGrab::new(&grab), serial, Focus::Keep);
+                    }
+                }
+                Err(err) => {
+                    crate::compositor::log_line(format!("[compositor] grab_popup error: {:?}", err));
+                }
+            }
+        } else {
+            crate::compositor::log_line("[compositor] grab: find_popup_root_surface failed!");
+        }
+    }
+    fn reposition_request(&mut self, surface: PopupSurface, positioner: PositionerState, token: u32) {
+        surface.with_pending_state(|state| {
+            state.geometry = positioner.get_geometry();
+        });
+        let _ = surface.send_repositioned(token);
+        self.dirty = true;
+    }
 
     fn maximize_request(&mut self, surface: ToplevelSurface) {
         surface.with_pending_state(|state| {

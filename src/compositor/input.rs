@@ -4,7 +4,8 @@ use smithay::{
         keyboard::FilterResult,
         pointer::{ButtonEvent, MotionEvent},
     },
-    utils::{Logical, Point, SERIAL_COUNTER},
+    reexports::wayland_server::protocol::wl_surface::WlSurface,
+    utils::{Logical, Point, Rectangle, SERIAL_COUNTER},
 };
 use std::process::Child;
 
@@ -204,6 +205,82 @@ pub fn dispatch_key_event(state: &mut TermwayState, code: KeyCode) {
     }
 }
 
+/// Helper to find any active popup at loc_i32 (Wayland XDG popups or unmanaged X11 popups)
+fn find_popup_focus(
+    state: &TermwayState,
+    loc_i32: Point<i32, Logical>,
+) -> Option<(WlSurface, Point<f64, Logical>)> {
+    // 1. Wayland XDG popups (topmost)
+    for win in state.managed_windows.iter().rev() {
+        if let WindowSurface::Wayland(ref toplevel) = win.surface {
+            for (popup, popup_offset) in smithay::desktop::PopupManager::popups_for_surface(toplevel.wl_surface()) {
+                let popup_loc = Point::from((
+                    win.loc.x + popup_offset.x - popup.geometry().loc.x,
+                    win.loc.y + popup_offset.y - popup.geometry().loc.y,
+                ));
+                if let Some((surf, pt)) = smithay::desktop::utils::under_from_surface_tree(
+                    popup.wl_surface(),
+                    loc_i32.to_f64(),
+                    popup_loc,
+                    smithay::desktop::WindowSurfaceType::ALL,
+                ) {
+                    return Some((surf, pt.to_f64()));
+                }
+                let bbox = smithay::desktop::utils::bbox_from_surface_tree(popup.wl_surface(), (0, 0));
+                let popup_geo = Rectangle::new(popup_loc, bbox.size);
+                if popup_geo.contains(loc_i32) {
+                    return Some((
+                        popup.wl_surface().clone(),
+                        Point::from((popup_loc.x as f64, popup_loc.y as f64)),
+                    ));
+                }
+            }
+        }
+    }
+
+    // 2. Unmanaged X11 override-redirect popups (topmost)
+    for xwin in state.x11_windows.iter().rev() {
+        let is_managed = state.managed_windows.iter().any(|mw| matches!(&mw.surface, WindowSurface::X11(w) if w == xwin));
+        if !is_managed {
+            let geo = xwin.geometry();
+            if geo.contains(loc_i32) {
+                if let Some(s) = state.surface_for_x11(xwin) {
+                    return Some((s, Point::from((geo.loc.x as f64, geo.loc.y as f64))));
+                }
+            }
+        }
+    }
+
+    None
+}
+
+/// Helper to find pointer focus across popups, managed windows, and unassociated surfaces
+fn find_pointer_focus(
+    state: &TermwayState,
+    loc_i32: Point<i32, Logical>,
+) -> Option<(WlSurface, Point<f64, Logical>)> {
+    if let Some(popup) = find_popup_focus(state, loc_i32) {
+        return Some(popup);
+    }
+
+    // Check managed windows content
+    for win in state.managed_windows.iter().rev() {
+        let content_geo = win.content_geometry();
+        if content_geo.contains(loc_i32) {
+            if let Some(surface) = state.surface_for_managed_window(win) {
+                return Some((surface, Point::from((win.loc.x as f64, win.loc.y as f64))));
+            }
+        }
+    }
+
+    // Fallback: unassociated surfaces
+    if let Some(surface) = state.unassociated_surfaces.last() {
+        return Some((surface.clone(), Point::from((0.0, 0.0))));
+    }
+
+    None
+}
+
 /// Dispatches a mouse event (motion, press, release) to the compositor.
 pub fn dispatch_mouse_event(
     state: &mut TermwayState,
@@ -264,39 +341,8 @@ pub fn dispatch_mouse_event(
                 WindowDragState::None => {}
             }
 
-            // 2. Normal pointer motion: hit test managed windows (Top to Bottom)
-            let mut focus = None;
-            for win in state.managed_windows.iter().rev() {
-                let content_geo = win.content_geometry();
-                if content_geo.contains(loc_i32) {
-                    if let Some(surface) = state.surface_for_managed_window(win) {
-                        let win_origin = Point::from((win.loc.x as f64, win.loc.y as f64));
-                        focus = Some((surface, win_origin));
-                        break;
-                    }
-                }
-            }
-            // Check unmanaged X11 popup/override-redirect surfaces
-            if focus.is_none() {
-                for xwin in state.x11_windows.iter().rev() {
-                    let is_managed = state.managed_windows.iter().any(|mw| matches!(&mw.surface, WindowSurface::X11(w) if w == xwin));
-                    if !is_managed {
-                        let geo = xwin.geometry();
-                        if geo.contains(loc_i32) {
-                            if let Some(s) = state.surface_for_x11(xwin) {
-                                focus = Some((s, Point::from((geo.loc.x as f64, geo.loc.y as f64))));
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-            if focus.is_none() {
-                if let Some(surface) = state.unassociated_surfaces.last() {
-                    focus = Some((surface.clone(), Point::from((0.0, 0.0))));
-                }
-            }
-
+            // 2. Normal pointer motion: check popups, managed windows, and fallback
+            let focus = find_pointer_focus(state, loc_i32);
             let motion = MotionEvent { location: loc, serial, time };
             pointer.motion(state, focus, &motion);
             pointer.frame(state);
@@ -304,6 +350,42 @@ pub fn dispatch_mouse_event(
 
         MouseAction::Press => {
             let is_left = matches!(ev.button, MouseButton::Left);
+
+            // 0. Check popups first (topmost over all windows)
+            if let Some((popup_surface, origin)) = find_popup_focus(state, loc_i32) {
+                let focus = Some((popup_surface.clone(), origin));
+                let motion = MotionEvent { location: loc, serial, time };
+                pointer.motion(state, focus.clone(), &motion);
+
+                let btn = match ev.button {
+                    MouseButton::Left => 0x110,
+                    MouseButton::Middle => 0x112,
+                    MouseButton::Right => 0x111,
+                    _ => 0x110,
+                };
+                let btn_ev = ButtonEvent { serial, time, button: btn, state: ButtonState::Pressed };
+                pointer.button(state, &btn_ev);
+                pointer.frame(state);
+
+                // xdg_popup にはキーボードフォーカスを移さない (state.rs new_popup 参照)
+                let is_xdg_popup = smithay::wayland::compositor::get_role(&popup_surface)
+                    == Some(smithay::wayland::shell::xdg::XDG_POPUP_ROLE);
+                if !is_xdg_popup {
+                    keyboard.set_focus(state, Some(popup_surface), serial);
+                }
+                return;
+            }
+
+            // Clicked outside popups: dismiss any active Wayland popups
+            for win in &state.managed_windows {
+                if let WindowSurface::Wayland(ref toplevel) = win.surface {
+                    for (popup, _) in smithay::desktop::PopupManager::popups_for_surface(toplevel.wl_surface()) {
+                        if let smithay::desktop::PopupKind::Xdg(ref p) = popup {
+                            p.send_popup_done();
+                        }
+                    }
+                }
+            }
 
             // Hit test managed windows from front to back
             let mut hit_window_id = None;
@@ -430,26 +512,8 @@ pub fn dispatch_mouse_event(
                 }
             }
 
-            // Fallback: outside managed windows (unmanaged X11 popups or desktop)
-            let mut focus = None;
-            for xwin in state.x11_windows.iter().rev() {
-                let is_managed = state.managed_windows.iter().any(|mw| matches!(&mw.surface, WindowSurface::X11(w) if w == xwin));
-                if !is_managed {
-                    let geo = xwin.geometry();
-                    if geo.contains(loc_i32) {
-                        if let Some(s) = state.surface_for_x11(xwin) {
-                            focus = Some((s, Point::from((geo.loc.x as f64, geo.loc.y as f64))));
-                            break;
-                        }
-                    }
-                }
-            }
-            if focus.is_none() {
-                if let Some(surface) = state.unassociated_surfaces.last() {
-                    focus = Some((surface.clone(), Point::from((0.0, 0.0))));
-                }
-            }
-
+            // Fallback: outside managed windows
+            let focus = find_pointer_focus(state, loc_i32);
             let motion = MotionEvent { location: loc, serial, time };
             pointer.motion(state, focus.clone(), &motion);
             let btn = match ev.button {
@@ -477,35 +541,7 @@ pub fn dispatch_mouse_event(
             }
 
             // Forward normal release event
-            let mut focus = None;
-            for win in state.managed_windows.iter().rev() {
-                if win.content_geometry().contains(loc_i32) {
-                    if let Some(surface) = state.surface_for_managed_window(win) {
-                        focus = Some((surface, Point::from((win.loc.x as f64, win.loc.y as f64))));
-                        break;
-                    }
-                }
-            }
-            if focus.is_none() {
-                for xwin in state.x11_windows.iter().rev() {
-                    let is_managed = state.managed_windows.iter().any(|mw| matches!(&mw.surface, WindowSurface::X11(w) if w == xwin));
-                    if !is_managed {
-                        let geo = xwin.geometry();
-                        if geo.contains(loc_i32) {
-                            if let Some(s) = state.surface_for_x11(xwin) {
-                                focus = Some((s, Point::from((geo.loc.x as f64, geo.loc.y as f64))));
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-            if focus.is_none() {
-                if let Some(surface) = state.unassociated_surfaces.last() {
-                    focus = Some((surface.clone(), Point::from((0.0, 0.0))));
-                }
-            }
-
+            let focus = find_pointer_focus(state, loc_i32);
             let motion = MotionEvent { location: loc, serial, time };
             pointer.motion(state, focus, &motion);
             let btn = match ev.button {
@@ -520,3 +556,4 @@ pub fn dispatch_mouse_event(
         }
     }
 }
+

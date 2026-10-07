@@ -23,7 +23,7 @@ use crate::terminal::{RawModeGuard, TerminalSize};
 
 use self::renderer::TermwayRenderer;
 use self::state::{send_frames_surface_tree, ClientState, TermwayState};
-use self::window::{BORDER_WIDTH, TITLEBAR_HEIGHT};
+use self::window::{WindowSurface, BORDER_WIDTH, TITLEBAR_HEIGHT};
 
 // Raw mode では `\n` だけだと行頭に戻らず表示が崩れるため、CRLF で出力する。
 pub(crate) fn log_line(msg: impl AsRef<str>) {
@@ -489,6 +489,7 @@ impl TermwayCompositor {
             // E. Dispatch Wayland client protocol messages
             let _ = self.display.dispatch_clients(&mut self.state);
             let _ = self.display.flush_clients();
+            self.state.popups.cleanup();
 
             // F. Render if damaged
             if self.state.dirty {
@@ -497,11 +498,15 @@ impl TermwayCompositor {
                 if let Ok(pixels) = self.renderer.render(&self.state) {
                     let _ = self.backend.render_pixels(pixels, w, h);
 
-
                     let time = self.state.start_time.elapsed().as_millis() as u32;
                     for window in &self.state.managed_windows {
                         if let Some(surface) = self.state.surface_for_managed_window(window) {
                             send_frames_surface_tree(&surface, time);
+                        }
+                        if let WindowSurface::Wayland(ref toplevel) = window.surface {
+                            for (popup, _) in smithay::desktop::PopupManager::popups_for_surface(toplevel.wl_surface()) {
+                                send_frames_surface_tree(popup.wl_surface(), time);
+                            }
                         }
                     }
                     for window in &self.state.windows {

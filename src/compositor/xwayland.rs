@@ -29,8 +29,12 @@ impl XwmHandler for TermwayState {
     fn new_window(&mut self, _xwm: XwmId, _window: X11Surface) {
         crate::compositor::log_line("[xwayland] new_window");
     }
-    fn new_override_redirect_window(&mut self, _xwm: XwmId, _window: X11Surface) {
-        crate::compositor::log_line("[xwayland] new_override_redirect_window");
+    fn new_override_redirect_window(&mut self, _xwm: XwmId, window: X11Surface) {
+        crate::compositor::log_line(format!("[xwayland] new_override_redirect_window id={:?} geo={:?}", window.window_id(), window.geometry()));
+        if !self.x11_windows.iter().any(|w| w == &window) {
+            self.x11_windows.push(window);
+        }
+        self.dirty = true;
     }
 
     fn map_window_request(&mut self, _xwm: XwmId, window: X11Surface) {
@@ -144,6 +148,12 @@ impl XwmHandler for TermwayState {
             "[xwayland] configure_request id={:?} req=({:?},{:?},{:?},{:?}) current={:?}",
             window.window_id(), x, y, w, h, window.geometry()
         ));
+
+        if window.is_override_redirect() {
+            let _ = window.configure(None);
+            self.dirty = true;
+            return;
+        }
 
         let rect = if self.enable_wm {
             let cur_loc = self.managed_windows.iter().find(|mw| matches!(&mw.surface, WindowSurface::X11(ref xwin) if xwin == &window))

@@ -414,5 +414,23 @@ termway は「起動した直系親プロセスの終了」に過度に依存せ
   - Xvfb 起動（`src/display/xvfb.rs`）および XWayland 起動（`src/compositor/mod.rs`）の直前に、`/tmp/.X11-unix` に一時テストファイルを作成・削除して書き込み権限を検証。
   - 書込不可の場合は即座にわかりやすいエラーメッセージを出力して終了し、ホスト環境への不正接続を 100% 防止します。
 
+---
+
+### 6.11 ポップアップメニューおよびドロップダウンメニューの制御 (`xdg_popup` & X11 override-redirect)
+
+Wireshark、GTK/Qt アプリケーション、エディタ等のメニューバー（File, Edit, View 等）やコンテキストメニュー、ツールチップを正常に表示・操作するため、Wayland ネイティブおよび XWayland の両プロトコルに対応したポップアップ制御機構を実装しています。
+
+1. **Wayland ネイティブポップアップ (`xdg_popup` & `PopupManager`)**:
+   - `PopupManager`: Smithay の `PopupManager` をコンポジタ状態（`TermwayState`）に保持し、コミット時の状態追跡（`popups.commit`）およびポップアップ登録（`track_popup`）を実施。
+   - **ジオメトリ計算**: `PositionerState::get_geometry()` により親サーフェスに対する相対配置矩形を算出・反映。
+   - **最前面レンダリング**: 通常ウィンドウのレンダリング要素よりも前面に `PopupManager::popups_for_surface` から得られるポップアップサーフェスを描画要素として追加。
+   - **ヒットテストとフォーカス**: マウスクリックおよび移動時、最前面のポップアップサーフェスを最優先でヒットテストし、ポインタおよびキーボードフォーカスを割り当て。ポップアップ外をクリックした場合は `send_popup_done()` を発行してメニューを適切に閉じる。
+
+2. **XWayland ドロップダウンメニュー (`override-redirect`)**:
+   - **ウィンドウ追跡**: `new_override_redirect_window` で検知されたメニュー用ウィンドウを `x11_windows` に登録。
+   - **WM クランプのバイパス**: `configure_request` において、通常ウィンドウ用のタイトルバーや枠線マージンへのクランプをバイパスし、クライアントが要求した絶対座標・サイズを尊重して `window.configure()` を実行。
+   - **最前面ヒットテスト**: マウス押下・解放処理において、通常ウィンドウよりも前面に override-redirect ウィンドウを優先ヒットテストして入力を直接転送。
+
+
 
 

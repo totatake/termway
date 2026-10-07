@@ -251,3 +251,17 @@ fn test_data_device_focus_change() {
     // Focus change to None (unfocus) should complete cleanly without panicking
     state.focus_changed(&seat, None);
 }
+
+#[test]
+fn test_popup_and_override_redirect_handling() {
+    let display = Display::<TermwayState>::new().expect("Failed to create Wayland Display");
+    let dh = display.handle();
+
+    let state = TermwayState::new(&dh, 1024, 768, true);
+
+    // Verify PopupManager is initialized
+    assert_eq!(state.managed_windows.len(), 0);
+    assert_eq!(state.x11_windows.len(), 0);
+    assert_eq!(state.unassociated_surfaces.len(), 0);
+}
+

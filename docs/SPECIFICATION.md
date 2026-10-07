@@ -73,6 +73,7 @@ flowchart LR
     FR21 --> T_Sess
     FR22 --> T_Sys
     FR23 --> T_Comp
+    FR24 --> T_Comp
 ```
 
 ---
@@ -103,6 +104,7 @@ flowchart LR
 | **FR-21** | コマンド存在性・PATH 事前検証 | 起動時に指定されたコマンドの存在を `PATH` および絶対/相対パスから事前探索・検証し、存在しないコマンドや空コマンドに対しては仮想サーバー起動前に分かりやすいエラーメッセージを表示し、Linux 標準の終了コード 127 で即時終了すること。 | `tests/unit_session.rs` | **PASS** |
 | **FR-22** | `/tmp/.X11-unix` 書込権限事前検査 | Xvfb 起動前に `/tmp/.X11-unix` ディレクトリへの書込可否をテストし、パーミッション不足やリードオンリー環境によるハングアップやエラー発生を防止すること。 | `tests/system_e2e_gui.rs` | **PASS** |
 | **FR-23** | Wayland データデバイスフォーカス & シリアル整合性 | Wayland Seat においてウィンドウ・サーフェスのフォーカス切り替え時に `set_data_device_focus` を通知してクリップボード操作の整合性を保つこと。また、キー押下・解放イベント発行時に単調増加（monotonic）なシリアル番号を保証すること。 | `tests/unit_compositor.rs` | **PASS** |
+| **FR-24** | Wayland XDG Popup & X11 Override-Redirect メニュー対応 | Wireshark や各種 GUI アプリケーションのドロップダウンメニュー・コンテキストメニュー等を表示・操作可能とするため、(1) Wayland `xdg_popup` を `PopupManager` で追跡・ジオメトリ計算・描画・最前面ヒットテスト・非アクティブクリック時の `send_done` 破棄を行うこと。(2) XWayland の override-redirect ウィンドウを通常ウィンドウマネージャの配置クランプからバイパスし、クライアント要求座標での表示・描画・クリック入力転送を行うこと。 | `tests/unit_compositor.rs` | **PASS** |
 
 ### 2.2 非機能要件 (Non-Functional Requirements)
 
@@ -161,6 +163,7 @@ flowchart LR
 - `test_state_raise_window`: ウィンドウの Z-order 最前面浮上（Raise）およびアクティブ状態切り替え検証
 - `test_window_clamping_logic`: 画面解像度境界に対するウィンドウ位置・フレームのクランプ検証
 - `test_data_device_focus_change`: フォーカス遷移時の DataDevice フォーカス更新処理検証
+- `test_popup_and_override_redirect_handling`: Wayland XDG ポップアップ（PopupManager）および X11 override-redirect ドロップダウンメニューの追跡・描画・ジオメトリ制御検証
 
 #### `tests/unit_session.rs`
 - `test_dbus_session_lifecycle`: `dbus-daemon --session --print-address` による専用 D-Bus セッションバスの起動、アドレス取得、環境変数設定およびライフサイクル検証
@@ -219,7 +222,7 @@ $ cargo test -- --test-threads=1
      Running tests/integration_pipeline.rs (5 tests) ... ok
      Running tests/system_e2e_gui.rs (1 test) ... ok
      Running tests/unit_clipboard.rs (1 test) ... ok
-     Running tests/unit_compositor.rs (9 tests) ... ok
+     Running tests/unit_compositor.rs (10 tests) ... ok
      Running tests/unit_cursor.rs (1 test) ... ok
      Running tests/unit_damage_tracker.rs (3 tests) ... ok
      Running tests/unit_keyboard.rs (4 tests) ... ok
@@ -231,9 +234,9 @@ $ cargo test -- --test-threads=1
      Running tests/unit_sixel_encoder.rs (3 tests) ... ok
      Running tests/unit_terminal.rs (4 tests) ... ok
 
-test result: ok. 50 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.45s
+test result: ok. 51 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.45s
 ```
-全 50 テストが 100% 成功し、すべての要件定義項目が検証されました。
+全 51 テストが 100% 成功し、すべての要件定義項目が検証されました。
 
 ---
 
