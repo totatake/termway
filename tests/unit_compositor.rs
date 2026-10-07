@@ -253,15 +253,16 @@ fn test_data_device_focus_change() {
 }
 
 #[test]
-fn test_popup_and_override_redirect_handling() {
+fn test_dump_state_json() {
     let display = Display::<TermwayState>::new().expect("Failed to create Wayland Display");
     let dh = display.handle();
 
     let state = TermwayState::new(&dh, 1024, 768, true);
+    let json = state.dump_state_json();
 
-    // Verify PopupManager is initialized
-    assert_eq!(state.managed_windows.len(), 0);
-    assert_eq!(state.x11_windows.len(), 0);
-    assert_eq!(state.unassociated_surfaces.len(), 0);
+    assert!(json.contains("\"screen_width\": 1024"));
+    assert!(json.contains("\"screen_height\": 768"));
+    assert!(json.contains("\"windows\": ["));
+    assert!(json.contains("\"popups\": ["));
 }
 

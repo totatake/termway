@@ -8,8 +8,27 @@ pub mod input;
 
 use std::io::{self, Read};
 use std::process::{Child, Command};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use crate::terminal::winsize::WINCH_RECEIVED;
+
+pub static CAPTURE_REQUESTED: AtomicBool = AtomicBool::new(false);
+pub static STATE_DUMP_REQUESTED: AtomicBool = AtomicBool::new(false);
+
+fn setup_test_signals() {
+    unsafe {
+        libc::signal(libc::SIGUSR1, handle_sigusr1 as *const () as usize);
+        libc::signal(libc::SIGUSR2, handle_sigusr2 as *const () as usize);
+    }
+}
+
+extern "C" fn handle_sigusr1(_: libc::c_int) {
+    CAPTURE_REQUESTED.store(true, Ordering::Relaxed);
+}
+
+extern "C" fn handle_sigusr2(_: libc::c_int) {
+    STATE_DUMP_REQUESTED.store(true, Ordering::Relaxed);
+}
 
 use smithay::reexports::{
     wayland_protocols::xdg::shell::server::xdg_toplevel,
@@ -57,6 +76,7 @@ pub struct TermwayCompositor {
 
 impl TermwayCompositor {
     pub fn new(config: EngineConfig) -> Result<Self, Box<dyn std::error::Error>> {
+        setup_test_signals();
         let mut term_size = TerminalSize::query().unwrap_or_else(|_| TerminalSize::fallback(80, 24));
         let cell_size_queried = config.cell_size.is_some();
         if let Some((cw, ch)) = config.cell_size {
@@ -522,6 +542,47 @@ impl TermwayCompositor {
                     }
                 }
                 self.state.dirty = false;
+            }
+
+            // G. Process test capture / inspection requests
+            let dump_requested = CAPTURE_REQUESTED.swap(false, Ordering::Relaxed);
+            let state_requested = STATE_DUMP_REQUESTED.swap(false, Ordering::Relaxed);
+
+            if dump_requested || std::env::var("TERMWAY_TEST_CAPTURE_NOW").is_ok() {
+                if std::env::var("TERMWAY_TEST_CAPTURE_NOW").is_ok() {
+                    std::env::remove_var("TERMWAY_TEST_CAPTURE_NOW");
+                }
+                let dump_dir = std::env::var("TERMWAY_TEST_DUMP_DIR").unwrap_or_else(|_| "/tmp".into());
+                let _ = std::fs::create_dir_all(&dump_dir);
+                let w = self.renderer.width();
+                let h = self.renderer.height();
+                if let Ok(pixels) = self.renderer.render(&self.state) {
+                    let ts = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_millis();
+                    let path = format!("{}/termway_capture_{}.png", dump_dir, ts);
+                    if let Some(img) = image::RgbaImage::from_raw(w, h, pixels.to_vec()) {
+                        let _ = img.save(&path);
+                        log_line(format!("[test] Saved screenshot to {}", path));
+                    }
+                    // Also maintain latest link/copy
+                    let latest_path = format!("{}/termway_capture_latest.png", dump_dir);
+                    if let Some(img) = image::RgbaImage::from_raw(w, h, pixels.to_vec()) {
+                        let _ = img.save(&latest_path);
+                    }
+                }
+            }
+
+            if state_requested || std::env::var("TERMWAY_TEST_STATE_NOW").is_ok() {
+                if std::env::var("TERMWAY_TEST_STATE_NOW").is_ok() {
+                    std::env::remove_var("TERMWAY_TEST_STATE_NOW");
+                }
+                let state_file = std::env::var("TERMWAY_TEST_STATE_FILE")
+                    .unwrap_or_else(|_| "/tmp/termway_gui_state.json".into());
+                let json = self.state.dump_state_json();
+                let _ = std::fs::write(&state_file, json);
+                log_line(format!("[test] Dumped GUI state to {}", state_file));
             }
         }
 

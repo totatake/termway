@@ -226,6 +226,59 @@ impl TermwayState {
 
         None
     }
+
+    /// Dumps current GUI window and popup state as JSON for automated testing and inspection.
+    pub fn dump_state_json(&self) -> String {
+        use smithay::reexports::wayland_server::Resource;
+        let mut out = String::from("{\n");
+        out.push_str(&format!("  \"screen_width\": {},\n", self.width));
+        out.push_str(&format!("  \"screen_height\": {},\n", self.height));
+
+        // Windows
+        out.push_str("  \"windows\": [\n");
+        for (i, win) in self.managed_windows.iter().enumerate() {
+            let kind = match win.surface {
+                super::window::WindowSurface::Wayland(_) => "wayland",
+                super::window::WindowSurface::X11(_) => "x11",
+                super::window::WindowSurface::Dummy => "dummy",
+            };
+            let content_geo = win.content_geometry();
+            let title_escaped = win.title.replace('\\', "\\\\").replace('\"', "\\\"");
+            let comma = if i + 1 < self.managed_windows.len() { "," } else { "" };
+            out.push_str(&format!(
+                "    {{\"id\": {}, \"kind\": \"{}\", \"title\": \"{}\", \"active\": {}, \"x\": {}, \"y\": {}, \"width\": {}, \"height\": {}}}{}\n",
+                win.id, kind, title_escaped, win.active, content_geo.loc.x, content_geo.loc.y, content_geo.size.w, content_geo.size.h, comma
+            ));
+        }
+        out.push_str("  ],\n");
+
+        // Popups
+        out.push_str("  \"popups\": [\n");
+        let mut popup_entries = Vec::new();
+        for win in &self.managed_windows {
+            if let super::window::WindowSurface::Wayland(ref toplevel) = win.surface {
+                for (popup, popup_offset) in smithay::desktop::PopupManager::popups_for_surface(toplevel.wl_surface()) {
+                    let popup_x = win.loc.x + popup_offset.x - popup.geometry().loc.x;
+                    let popup_y = win.loc.y + popup_offset.y - popup.geometry().loc.y;
+                    let geo = popup.geometry();
+                    let id = popup.wl_surface().id().protocol_id();
+                    let bbox = smithay::desktop::utils::bbox_from_surface_tree(popup.wl_surface(), (0, 0));
+                    popup_entries.push(format!(
+                        "    {{\"id\": {}, \"parent_window_id\": {}, \"x\": {}, \"y\": {}, \"width\": {}, \"height\": {}, \"buffer_width\": {}, \"buffer_height\": {}}}",
+                        id, win.id, popup_x, popup_y, geo.size.w, geo.size.h, bbox.size.w, bbox.size.h
+                    ));
+                }
+            }
+        }
+        out.push_str(&popup_entries.join(",\n"));
+        if !popup_entries.is_empty() {
+            out.push('\n');
+        }
+        out.push_str("  ]\n");
+
+        out.push('}');
+        out
+    }
 }
 
 // 1. BufferHandler

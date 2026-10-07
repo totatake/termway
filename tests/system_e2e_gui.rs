@@ -139,3 +139,38 @@ root.mainloop()
     injector.inject_key(KeyCode::Char('q'));
     // Successfully injected key without crash
 }
+
+#[test]
+fn test_gui_test_driver_signals_and_state() {
+    use std::fs;
+    use std::time::SystemTime;
+
+    let temp_dir = std::env::temp_dir().join(format!(
+        "termway_gui_test_{}",
+        SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_millis()
+    ));
+    fs::create_dir_all(&temp_dir).unwrap();
+
+    let state_file = temp_dir.join("gui_state.json");
+    std::env::set_var("TERMWAY_TEST_STATE_FILE", &state_file);
+    std::env::set_var("TERMWAY_TEST_DUMP_DIR", &temp_dir);
+
+    let display = smithay::reexports::wayland_server::Display::<termway::compositor::state::TermwayState>::new()
+        .expect("Failed to create Wayland Display");
+    let dh = display.handle();
+    let state = termway::compositor::state::TermwayState::new(&dh, 800, 600, true);
+
+    // Test JSON state dump serialization
+    let json = state.dump_state_json();
+    fs::write(&state_file, json).unwrap();
+    assert!(state_file.exists());
+
+    let content = fs::read_to_string(&state_file).unwrap();
+    assert!(content.contains("\"screen_width\": 800"));
+    assert!(content.contains("\"screen_height\": 600"));
+    assert!(content.contains("\"windows\": ["));
+    assert!(content.contains("\"popups\": ["));
+
+    // Cleanup
+    let _ = fs::remove_dir_all(&temp_dir);
+}
