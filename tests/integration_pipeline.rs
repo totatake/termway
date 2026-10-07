@@ -144,3 +144,34 @@ fn test_graphics_protocol_fastpath_detection() {
     std::env::remove_var("WT_SESSION");
     std::env::set_var("TERM", "dumb");
 }
+
+#[test]
+fn test_x11_wm_fails_when_openbox_missing() {
+    let binary = env!("CARGO_BIN_EXE_termway");
+    let test_dir = std::env::temp_dir().join(format!("termway_test_wm_{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&test_dir);
+    let dummy_script = test_dir.join("dummy_client");
+    std::fs::write(&dummy_script, "#!/bin/sh\nexit 0\n").expect("write dummy");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&dummy_script, std::fs::Permissions::from_mode(0o755));
+    }
+
+    let output = std::process::Command::new(binary)
+        .env("PATH", &test_dir)
+        .args(["--x11", "--wm", "--", dummy_script.to_str().unwrap()])
+        .output()
+        .expect("execute termway");
+
+    let _ = std::fs::remove_dir_all(&test_dir);
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("openbox") && stderr.contains("not found in PATH"),
+        "stderr should contain openbox not found error, got: {}",
+        stderr
+    );
+}
+

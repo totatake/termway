@@ -214,6 +214,11 @@ root.mainloop()
         }
     }
 
+    if !use_wayland && config.enable_wm && termway::session::find_executable("openbox").is_none() {
+        eprintln!("Error: Window Manager 'openbox' not found in PATH. Please install openbox (e.g. 'sudo apt install openbox') or run without --wm.");
+        std::process::exit(1);
+    }
+
     if use_wayland {
         let mut compositor = termway::compositor::TermwayCompositor::new(config)?;
         if let Err(e) = compositor.run() {

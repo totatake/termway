@@ -96,8 +96,10 @@ impl TermwayEngine {
                     Some(child)
                 }
                 Err(e) => {
-                    eprintln!("[termway] Failed to start openbox: {}. Is it installed?", e);
-                    None
+                    return Err(format!(
+                        "Failed to start Window Manager 'openbox': {}. Please install openbox (e.g. 'sudo apt install openbox') or run without --wm.",
+                        e
+                    ).into());
                 }
             }
         } else {
