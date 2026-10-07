@@ -23,9 +23,9 @@ OPTIONS:
 
 EXAMPLES:
     termway --demo
-    termway -- gvim -f
-    termway --kitty -- gvim -f
-    termway --cell-size 10x22 -- gvim -f
+    termway -- gvim
+    termway --kitty -- gvim
+    termway --cell-size 10x22 -- gvim
     termway --x11 --wm -- xclock
 "#
     );
