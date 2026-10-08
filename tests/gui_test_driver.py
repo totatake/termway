@@ -136,7 +136,7 @@ class TermwayTestDriver:
             return ""
         os.kill(self.pid, signal.SIGUSR1)
         time.sleep(0.2)
-        latest = os.path.join(self.dump_dir, "termway_capture_latest.png")
+        latest = os.path.join(self.dump_dir, "termway_screenshot_latest.png")
         return latest if os.path.exists(latest) else ""
 
     def query_gui_state(self) -> dict:

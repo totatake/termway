@@ -821,11 +821,6 @@ impl TermwayCompositor {
             if let Some(img) = image::RgbaImage::from_raw(w, h, pixels.to_vec()) {
                 let _ = img.save(&latest_path);
             }
-            // Also maintain legacy capture filename for test compatibility
-            let capture_path = format!("{}/termway_capture_{}.png", dump_dir, ts);
-            let _ = std::fs::copy(&path, &capture_path);
-            let capture_latest = format!("{}/termway_capture_latest.png", dump_dir);
-            let _ = std::fs::copy(&path, &capture_latest);
         }
     }
 
