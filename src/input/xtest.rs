@@ -86,6 +86,7 @@ impl XTestInjector {
                 KeyCode::PageUp => x11::keysym::XK_Page_Up as u64,
                 KeyCode::PageDown => x11::keysym::XK_Page_Down as u64,
                 KeyCode::Delete => x11::keysym::XK_Delete as u64,
+                KeyCode::F12 => x11::keysym::XK_F12 as u64,
                 KeyCode::Ctrl(c) => {
                     need_ctrl = true;
                     c as u64

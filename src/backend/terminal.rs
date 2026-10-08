@@ -9,6 +9,7 @@ pub struct TerminalBackend {
     input_buffer: Vec<u8>,
     use_sixel: bool,
     is_wayland: bool,
+    pub screenshot_requested: bool,
 }
 
 impl TerminalBackend {
@@ -18,6 +19,7 @@ impl TerminalBackend {
             input_buffer: Vec::with_capacity(1024),
             use_sixel,
             is_wayland,
+            screenshot_requested: false,
         }
     }
 
@@ -57,8 +59,8 @@ impl TerminalBackend {
         let mut stdout = io::stdout();
 
         let mode_desc = self.name();
-        let overlay_text = format!("\x1b[40;37m [{}] [Ctrl-Q: Exit] \x1b[0m", mode_desc);
-        let overlay_len = mode_desc.len() + 18;
+        let overlay_text = format!("\x1b[40;37m [{}] [Ctrl-Q: Exit] [F12: Screenshot] \x1b[0m", mode_desc);
+        let overlay_len = mode_desc.len() + 37;
         let overlay_row = self.term_size.rows;
         let overlay_col = self.term_size.cols.saturating_sub(overlay_len as u16 + 2).max(1);
         let overlay_seq = format!("\x1b[{};{}H{}", overlay_row, overlay_col, overlay_text);
@@ -87,8 +89,8 @@ impl TerminalBackend {
         let mut stdout = io::stdout();
 
         let mode_desc = self.name();
-        let overlay_text = format!("\x1b[40;37m [{}] [Ctrl-Q: Exit] \x1b[0m", mode_desc);
-        let overlay_len = mode_desc.len() + 18;
+        let overlay_text = format!("\x1b[40;37m [{}] [Ctrl-Q: Exit] [F12: Screenshot] \x1b[0m", mode_desc);
+        let overlay_len = mode_desc.len() + 37;
         let overlay_row = self.term_size.rows;
         let overlay_col = self.term_size.cols.saturating_sub(overlay_len as u16 + 2).max(1);
         let overlay_seq = format!("\x1b[{};{}H{}", overlay_row, overlay_col, overlay_text);
@@ -195,6 +197,11 @@ impl TerminalBackend {
                 if key_ev.code == KeyCode::Ctrl('q') {
                     return Ok(false); // Signal to terminate
                 }
+                if key_ev.code == KeyCode::F12 {
+                    self.screenshot_requested = true;
+                    self.input_buffer.drain(..consumed);
+                    continue;
+                }
 
                 injector.inject_key(key_ev.code);
                 self.input_buffer.drain(..consumed);
@@ -210,5 +217,11 @@ impl TerminalBackend {
         }
 
         Ok(true)
+    }
+
+    pub fn take_screenshot_requested(&mut self) -> bool {
+        let req = self.screenshot_requested;
+        self.screenshot_requested = false;
+        req
     }
 }

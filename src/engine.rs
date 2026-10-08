@@ -219,6 +219,27 @@ impl TermwayEngine {
                 Err(_) => break,
             }
 
+            if backend.take_screenshot_requested() {
+                let screenshot_dir = std::env::var("TERMWAY_SCREENSHOT_DIR")
+                    .or_else(|_| std::env::var("TERMWAY_TEST_DUMP_DIR"))
+                    .unwrap_or_else(|_| ".".into());
+                let _ = std::fs::create_dir_all(&screenshot_dir);
+                let ts = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis();
+                let path = format!("{}/termway_screenshot_{}.png", screenshot_dir, ts);
+                if let Some(img) = image::RgbaImage::from_raw(fb.width, fb.height, fb.pixels.clone()) {
+                    if img.save(&path).is_ok() {
+                        eprintln!("[termway] Screenshot saved: {}", path);
+                    }
+                }
+                let latest_path = format!("{}/termway_screenshot_latest.png", screenshot_dir);
+                if let Some(img) = image::RgbaImage::from_raw(fb.width, fb.height, fb.pixels.clone()) {
+                    let _ = img.save(&latest_path);
+                }
+            }
+
             // C. Poll X11 clipboard events
             if let Some(cb) = &mut clipboard {
                 cb.poll_events();

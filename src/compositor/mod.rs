@@ -562,26 +562,7 @@ impl TermwayCompositor {
                 if std::env::var("TERMWAY_TEST_CAPTURE_NOW").is_ok() {
                     std::env::remove_var("TERMWAY_TEST_CAPTURE_NOW");
                 }
-                let dump_dir = std::env::var("TERMWAY_TEST_DUMP_DIR").unwrap_or_else(|_| "/tmp".into());
-                let _ = std::fs::create_dir_all(&dump_dir);
-                let w = self.renderer.width();
-                let h = self.renderer.height();
-                if let Ok(pixels) = self.renderer.render(&self.state) {
-                    let ts = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_millis();
-                    let path = format!("{}/termway_capture_{}.png", dump_dir, ts);
-                    if let Some(img) = image::RgbaImage::from_raw(w, h, pixels.to_vec()) {
-                        let _ = img.save(&path);
-                        log_line(format!("[test] Saved screenshot to {}", path));
-                    }
-                    // Also maintain latest link/copy
-                    let latest_path = format!("{}/termway_capture_latest.png", dump_dir);
-                    if let Some(img) = image::RgbaImage::from_raw(w, h, pixels.to_vec()) {
-                        let _ = img.save(&latest_path);
-                    }
-                }
+                self.save_screenshot();
             }
 
             if state_requested || std::env::var("TERMWAY_TEST_STATE_NOW").is_ok() {
@@ -779,6 +760,11 @@ impl TermwayCompositor {
                     self.state.running = false;
                     return;
                 }
+                if key_ev.code == KeyCode::F12 {
+                    self.save_screenshot();
+                    self.input_buffer.drain(..consumed);
+                    continue;
+                }
                 self.dispatch_key_event(key_ev.code);
                 self.input_buffer.drain(..consumed);
                 continue;
@@ -810,6 +796,37 @@ impl TermwayCompositor {
             text.into_bytes(),
         );
         self.dispatch_key_event(KeyCode::Ctrl('v'));
+    }
+
+    fn save_screenshot(&mut self) {
+        let dump_dir = std::env::var("TERMWAY_SCREENSHOT_DIR")
+            .or_else(|_| std::env::var("TERMWAY_TEST_DUMP_DIR"))
+            .unwrap_or_else(|_| ".".into());
+        let _ = std::fs::create_dir_all(&dump_dir);
+        let w = self.renderer.width();
+        let h = self.renderer.height();
+        if let Ok(pixels) = self.renderer.render(&self.state) {
+            let ts = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis();
+            let path = format!("{}/termway_screenshot_{}.png", dump_dir, ts);
+            if let Some(img) = image::RgbaImage::from_raw(w, h, pixels.to_vec()) {
+                if img.save(&path).is_ok() {
+                    eprintln!("[termway] Screenshot saved: {}", path);
+                    log_line(format!("[termway] Screenshot saved: {}", path));
+                }
+            }
+            let latest_path = format!("{}/termway_screenshot_latest.png", dump_dir);
+            if let Some(img) = image::RgbaImage::from_raw(w, h, pixels.to_vec()) {
+                let _ = img.save(&latest_path);
+            }
+            // Also maintain legacy capture filename for test compatibility
+            let capture_path = format!("{}/termway_capture_{}.png", dump_dir, ts);
+            let _ = std::fs::copy(&path, &capture_path);
+            let capture_latest = format!("{}/termway_capture_latest.png", dump_dir);
+            let _ = std::fs::copy(&path, &capture_latest);
+        }
     }
 
     fn dispatch_mouse_event(&mut self, ev: &crate::protocol::MouseEvent) {

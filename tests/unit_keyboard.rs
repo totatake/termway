@@ -47,6 +47,10 @@ fn test_keyboard_special_keys() {
     let (ev, len) = KeyboardParser::parse(&[0x16]).expect("parse Ctrl+V");
     assert_eq!(len, 1);
     assert_eq!(ev.code, KeyCode::Ctrl('v'));
+
+    let (ev, len) = KeyboardParser::parse(b"\x1b[24~").expect("parse F12");
+    assert_eq!(len, 5);
+    assert_eq!(ev.code, KeyCode::F12);
 }
 
 #[test]

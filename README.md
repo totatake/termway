@@ -25,6 +25,10 @@
   - Self-contained window management without requiring external window managers.
   - Minimalist, distraction-free decorations: 22px title bar, 1px border, close button `[×]`, bottom-right resize handle, and 8x8 bitmap font window titles.
   - Screen boundary clamping mechanism prevents windows and Sixel graphics from being clipped at the right or bottom terminal edges.
+- **Bidirectional Host Clipboard Synchronization (`Ctrl-C` / `Ctrl-V`)**:
+  - Full support for OSC 52 and Bracketed Paste protocols. Seamless bidirectional copy-and-paste between in-terminal GUI apps and the host OS (Windows, macOS, Linux), including full multibyte / UTF-8 text support.
+- **One-Key Screenshot (`F12`) & Clean Exit (`Ctrl-Q`)**:
+  - Instant PNG capture via `F12`. Safe terminal state restoration and clean teardown via `Ctrl-Q`.
 
 ---
 
@@ -199,6 +203,7 @@ Specify the target command and arguments after `--`:
 > - Privileged GUI tools like `gparted` or `pkexec` will display their authentication dialog within the terminal when `policykit-1-gnome` or `lxpolkit` is installed.
 > - Running legacy X11 applications requires write permissions to `/tmp/.X11-unix`. If `/tmp/.X11-unix` is read-only (such as in restricted container environments), `termway` proactively detects this and terminates with a descriptive error, preventing applications from unexpectedly escaping to the host desktop display.
 > - **Clipboard Support**: Bidirectional clipboard synchronization is fully supported in both Wayland and X11 modes. Copying inside applications via `Ctrl-C` (or mouse selection) synchronizes to the host clipboard via OSC 52, and pasting from the host via `Ctrl-V` (or terminal paste `Ctrl+Shift+V` / right-click) seamlessly pastes into the application via Bracketed Paste with full UTF-8 / multibyte character support.
+> - **Shortcuts**: Press `Ctrl-Q` at any time to safely exit. Press `F12` to instantly save the current GUI display to a PNG image file (one-key screenshot).
 
 ### 3. Graphics Protocol Auto-Detection & Explicit Selection (`--kitty`, `--sixel`)
 `termway` automatically detects terminal graphics protocol capabilities on startup:
@@ -228,7 +233,16 @@ export TERMWAY_CELL_SIZE=10x22
 ./target/release/termway --wm -- gvim
 ```
 
-### 5. Command Line Options
+### 5. Shortcuts & Built-in Features
+
+| Shortcut | Action | Description |
+| :--- | :--- | :--- |
+| `Ctrl-Q` | Safe Exit | Terminates the application and cleanly restores terminal raw mode and screen buffer |
+| `F12` | One-Key Screenshot | Instantly saves the current GUI frame as a high-resolution PNG image (configurable via `TERMWAY_SCREENSHOT_DIR`, defaults to current directory) |
+| `Ctrl-C` / Mouse Selection | Copy to Clipboard | Synchronizes the selected text to the host OS clipboard (Windows / macOS / Linux) via OSC 52 |
+| `Ctrl-V` / Terminal Paste | Paste from Clipboard | Pastes text from the host clipboard directly into the application via Bracketed Paste with full UTF-8 / multibyte support |
+
+### 6. Command Line Options
 
 | Option | Argument | Description | Default |
 | :--- | :--- | :--- | :--- |
@@ -252,16 +266,6 @@ export TERMWAY_CELL_SIZE=10x22
 ```bash
 cargo test -- --test-threads=1
 ```
-
----
-
-## Roadmap & Future Enhancements
-
-- [x] **Bidirectional Clipboard Sync**:
-  - Full host-to-guest and guest-to-host clipboard synchronization via Bracketed Paste / OSC 52 (full multibyte / UTF-8 support).
-- [ ] **Auto-Tiling Layout Mode (tmux / i3 style)**:
-  - Dynamic screen-splitting tiling layout in addition to floating mode.
-- [ ] **One-Key Screenshot / GIF Recording**
 
 ---
 
