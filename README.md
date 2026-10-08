@@ -198,7 +198,7 @@ Specify the target command and arguments after `--`:
 > - Single-instance daemon applications like `gnome-terminal` work seamlessly inside `termway` thanks to the automated isolated D-Bus session.
 > - Privileged GUI tools like `gparted` or `pkexec` will display their authentication dialog within the terminal when `policykit-1-gnome` or `lxpolkit` is installed.
 > - Running legacy X11 applications requires write permissions to `/tmp/.X11-unix`. If `/tmp/.X11-unix` is read-only (such as in restricted container environments), `termway` proactively detects this and terminates with a descriptive error, preventing applications from unexpectedly escaping to the host desktop display.
-> - **Clipboard Support**: Text selection (`Shift + Arrows`) and pasting (`Ctrl-V` / terminal paste `Ctrl+Shift+V`) are supported. In the default Wayland mode, copying selected text via `Ctrl-C` is currently a known issue under investigation; if copy-and-paste functionality via `Ctrl-C` / `Ctrl-V` is needed, please use legacy X11 mode (`--x11`), where it works seamlessly.
+> - **Clipboard Support**: Bidirectional clipboard synchronization is fully supported in both Wayland and X11 modes. Copying inside applications via `Ctrl-C` (or mouse selection) synchronizes to the host clipboard via OSC 52, and pasting from the host via `Ctrl-V` (or terminal paste `Ctrl+Shift+V` / right-click) seamlessly pastes into the application via Bracketed Paste with full UTF-8 / multibyte character support.
 
 ### 3. Graphics Protocol Auto-Detection & Explicit Selection (`--kitty`, `--sixel`)
 `termway` automatically detects terminal graphics protocol capabilities on startup:
@@ -257,8 +257,8 @@ cargo test -- --test-threads=1
 
 ## Roadmap & Future Enhancements
 
-- [ ] **Bidirectional Clipboard Sync**:
-  - Full host-to-guest and guest-to-host clipboard synchronization via Bracketed Paste / OSC 52.
+- [x] **Bidirectional Clipboard Sync**:
+  - Full host-to-guest and guest-to-host clipboard synchronization via Bracketed Paste / OSC 52 (full multibyte / UTF-8 support).
 - [ ] **Auto-Tiling Layout Mode (tmux / i3 style)**:
   - Dynamic screen-splitting tiling layout in addition to floating mode.
 - [ ] **One-Key Screenshot / GIF Recording**

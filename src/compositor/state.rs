@@ -1,4 +1,4 @@
-use std::os::unix::io::OwnedFd;
+use std::os::unix::io::{FromRawFd, OwnedFd};
 use smithay::{
     delegate_compositor, delegate_data_device, delegate_output, delegate_seat, delegate_shm,
     delegate_xdg_shell,
@@ -28,7 +28,7 @@ use smithay::{
         output::OutputHandler,
         selection::{
             data_device::{ClientDndGrabHandler, DataDeviceHandler, DataDeviceState, ServerDndGrabHandler},
-            SelectionHandler,
+            SelectionHandler, SelectionSource, SelectionTarget,
         },
         shell::xdg::{
             PopupSurface, PositionerState, ToplevelSurface, XdgShellHandler, XdgShellState,
@@ -606,7 +606,67 @@ impl OutputHandler for TermwayState {}
 
 // 7. SelectionHandler & DataDeviceHandler
 impl SelectionHandler for TermwayState {
-    type SelectionUserData = ();
+    type SelectionUserData = Vec<u8>;
+
+    fn new_selection(&mut self, ty: SelectionTarget, source: Option<SelectionSource>, seat: Seat<Self>) {
+        if ty != SelectionTarget::Clipboard {
+            return;
+        }
+        let Some(source) = source else {
+            return;
+        };
+        let mimes = source.mime_types();
+        let text_mime = mimes.iter().find(|m| {
+            m.as_str() == "text/plain;charset=utf-8"
+                || m.as_str() == "UTF8_STRING"
+                || m.as_str() == "text/plain"
+                || m.starts_with("text/")
+        }).cloned();
+
+        if let Some(mime) = text_mime {
+            let mut fds = [0i32; 2];
+            if unsafe { libc::pipe(fds.as_mut_ptr()) } == 0 {
+                let read_fd = unsafe { OwnedFd::from_raw_fd(fds[0]) };
+                let write_fd = unsafe { OwnedFd::from_raw_fd(fds[1]) };
+
+                if smithay::wayland::selection::data_device::request_data_device_client_selection(
+                    &seat,
+                    mime,
+                    write_fd,
+                ).is_ok() {
+                    std::thread::spawn(move || {
+                        use std::io::{Read, Write};
+                        use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+                        let mut file = std::fs::File::from(read_fd);
+                        let mut data = Vec::new();
+                        if file.read_to_end(&mut data).is_ok() {
+                            if let Ok(text) = std::str::from_utf8(&data) {
+                                if !text.is_empty() {
+                                    let b64 = BASE64.encode(text);
+                                    eprintln!("[termway] Copied to host clipboard: {:?}", text);
+                                    print!("\x1b]52;c;{}\x07", b64);
+                                    let _ = std::io::stdout().flush();
+                                }
+                            }
+                        }
+                    });
+                }
+            }
+        }
+    }
+
+    fn send_selection(
+        &mut self,
+        _ty: SelectionTarget,
+        _mime_type: String,
+        fd: OwnedFd,
+        _seat: Seat<Self>,
+        user_data: &Self::SelectionUserData,
+    ) {
+        use std::io::Write;
+        let mut file = std::fs::File::from(fd);
+        let _ = file.write_all(user_data);
+    }
 }
 
 impl DataDeviceHandler for TermwayState {

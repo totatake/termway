@@ -266,3 +266,46 @@ fn test_dump_state_json() {
     assert!(json.contains("\"popups\": ["));
 }
 
+#[test]
+fn test_compositor_clipboard_selection_and_send() {
+    use smithay::wayland::selection::SelectionHandler;
+    use smithay::wayland::selection::SelectionTarget;
+    use std::io::Read;
+    use std::os::unix::io::FromRawFd;
+
+    let display = Display::<TermwayState>::new().expect("Failed to create Wayland Display");
+    let dh = display.handle();
+
+    let mut state = TermwayState::new(&dh, 800, 600, true);
+    let seat = state.seat.clone();
+
+    // Set server-side clipboard selection
+    let sample_text = "Hello Wayland Clipboard!";
+    smithay::wayland::selection::data_device::set_data_device_selection(
+        &dh,
+        &seat,
+        vec!["text/plain;charset=utf-8".to_string()],
+        sample_text.as_bytes().to_vec(),
+    );
+
+    // Verify send_selection writes the user_data to the provided fd
+    let mut fds = [0i32; 2];
+    assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0);
+    let read_fd = unsafe { std::os::fd::OwnedFd::from_raw_fd(fds[0]) };
+    let write_fd = unsafe { std::os::fd::OwnedFd::from_raw_fd(fds[1]) };
+
+    state.send_selection(
+        SelectionTarget::Clipboard,
+        "text/plain;charset=utf-8".to_string(),
+        write_fd,
+        seat,
+        &sample_text.as_bytes().to_vec(),
+    );
+
+    let mut file = std::fs::File::from(read_fd);
+    let mut read_data = String::new();
+    file.read_to_string(&mut read_data).expect("Failed to read from pipe");
+    assert_eq!(read_data, sample_text);
+}
+
+

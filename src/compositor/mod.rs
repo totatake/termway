@@ -691,6 +691,22 @@ impl TermwayCompositor {
 
     fn process_terminal_input(&mut self) {
         while !self.input_buffer.is_empty() {
+            // 0. Try parsing bracketed paste (\x1b[200~ ... \x1b[201~)
+            if let Ok(input_str) = std::str::from_utf8(&self.input_buffer) {
+                if let Some(start) = input_str.find("\x1b[200~") {
+                    if let Some(end_offset) = input_str[start..].find("\x1b[201~") {
+                        let pasted_text = input_str[start + 6..start + end_offset].to_string();
+                        let total_consumed = start + end_offset + 6;
+                        self.input_buffer.drain(..total_consumed);
+                        self.handle_bracketed_paste(pasted_text);
+                        continue;
+                    } else {
+                        // Incomplete bracketed paste; wait for remainder to arrive
+                        break;
+                    }
+                }
+            }
+
             // 1. Try parsing cell size response (\x1b[6;height;widtht from \x1b[16t)
             if let Ok(input_str) = std::str::from_utf8(&self.input_buffer) {
                 if let Some(start) = input_str.find("\x1b[6;") {
@@ -768,12 +784,32 @@ impl TermwayCompositor {
                 continue;
             }
 
+            if self.input_buffer.windows(6).any(|w| w == b"\x1b[200~") {
+                break;
+            }
+
             if self.input_buffer.len() > 32 {
                 self.input_buffer.remove(0);
             } else {
                 break;
             }
         }
+    }
+
+    fn handle_bracketed_paste(&mut self, text: String) {
+        log_line(format!("[termway] Bracketed paste received ({} bytes)", text.len()));
+        smithay::wayland::selection::data_device::set_data_device_selection(
+            &self.state.dh,
+            &self.state.seat,
+            vec![
+                "text/plain;charset=utf-8".to_string(),
+                "text/plain".to_string(),
+                "UTF8_STRING".to_string(),
+                "STRING".to_string(),
+            ],
+            text.into_bytes(),
+        );
+        self.dispatch_key_event(KeyCode::Ctrl('v'));
     }
 
     fn dispatch_mouse_event(&mut self, ev: &crate::protocol::MouseEvent) {
