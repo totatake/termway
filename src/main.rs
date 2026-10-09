@@ -225,12 +225,14 @@ root.mainloop()
         let mut compositor = termway::compositor::TermwayCompositor::new(config)?;
         if let Err(e) = compositor.run() {
             eprintln!("Error: {}", e);
+            drop(compositor);
             std::process::exit(1);
         }
     } else {
         let mut engine = TermwayEngine::new(config);
         if let Err(e) = engine.run() {
             eprintln!("Error: {}", e);
+            drop(engine);
             std::process::exit(1);
         }
     }

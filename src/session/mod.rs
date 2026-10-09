@@ -15,11 +15,23 @@ pub struct DbusSession {
 
 impl DbusSession {
     pub fn start() -> Result<Self, String> {
-        let mut child = Command::new("dbus-daemon")
-            .arg("--session")
+        let mut cmd = Command::new("dbus-daemon");
+        cmd.arg("--session")
             .arg("--print-address")
+            .arg("--nofork")
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(Stdio::null());
+
+        #[cfg(target_os = "linux")]
+        unsafe {
+            use std::os::unix::process::CommandExt;
+            cmd.pre_exec(|| {
+                libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM);
+                Ok(())
+            });
+        }
+
+        let mut child = cmd
             .spawn()
             .map_err(|e| format!("Failed to spawn dbus-daemon: {}", e))?;
 
@@ -138,6 +150,15 @@ impl PolkitAgent {
             } else {
                 cmd.stdout(Stdio::null());
                 cmd.stderr(Stdio::null());
+            }
+
+            #[cfg(target_os = "linux")]
+            unsafe {
+                use std::os::unix::process::CommandExt;
+                cmd.pre_exec(|| {
+                    libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM);
+                    Ok(())
+                });
             }
 
             match cmd.spawn() {
