@@ -61,3 +61,41 @@ fn test_find_executable() {
     // Empty command
     assert!(find_executable("").is_none());
 }
+
+#[test]
+fn test_launcher_shims_route_snaps_to_ambient_bus() {
+    use std::process::Command;
+    use termway::session::LauncherShims;
+
+    let root = std::env::temp_dir().join(format!("termway-shim-test-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let snap_bin = root.join("snap-bin");
+    std::fs::create_dir_all(&snap_bin).unwrap();
+    // Fake snap app that reports the bus it was launched with
+    let fake = snap_bin.join("fakebrowser");
+    std::fs::write(&fake, "#!/bin/sh\necho \"$DBUS_SESSION_BUS_ADDRESS $1\"\n").unwrap();
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    let ambient = "unix:path=/run/user/0/it's-ambient";
+    let shims = LauncherShims::create(&root.join("shims"), &snap_bin, ambient).unwrap();
+    let out = Command::new(shims.dir().join("fakebrowser"))
+        .arg("https://example.com")
+        .env("DBUS_SESSION_BUS_ADDRESS", "unix:path=/tmp/isolated")
+        .output()
+        .unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout).trim(),
+        format!("{} https://example.com", ambient)
+    );
+
+    // Creating over an existing directory must fail rather than reuse it
+    assert!(LauncherShims::create(&root.join("shims"), &snap_bin, ambient).is_err());
+
+    let dir = shims.dir().to_path_buf();
+    drop(shims);
+    assert!(!dir.exists());
+    let _ = std::fs::remove_dir_all(&root);
+}

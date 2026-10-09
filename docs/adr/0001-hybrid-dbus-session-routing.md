@@ -2,7 +2,7 @@
 
 * **ステータス**: 承認済 (Accepted)
 * **日付**: 2026-10-09
-* **対象コンポーネント**: `src/session/mod.rs` (`SessionManager`, `is_snap_command`), `src/engine.rs`, `src/compositor/mod.rs`
+* **対象コンポーネント**: `src/session/mod.rs` (`SessionManager`, `is_snap_command`, `LauncherShims`), `src/engine.rs`, `src/compositor/mod.rs`
 
 ---
 
@@ -29,6 +29,11 @@ Ubuntu 22.04 / 24.04 等のモダンな Linux ディストリビューション�
 * `/usr/bin/firefox` 自体が単なる ELF バイナリではなく、内部で `exec /snap/bin/firefox "$@"` を実行するシェルスクリプトである場合があります。
 * また、`xdg-open https://example.com` のように URL を開くコマンドを実行した場合、親コマンド自体は非 Snap（シェルスクリプトやシステムツール）ですが、実際に呼び出されるデフォルトハンドラが Snap 版ブラウザになります。親コマンドに隔離 D-Bus を渡してしまうと、子プロセスの Snap アプリがそれを引き継いでしまい、同様の cgroup エラーが発生します。
 
+### 課題 4: 起動済みクライアントの子孫プロセスからの Snap 起動
+* 課題 3 の判定は Termway が直接起動するトップレベルコマンドにしか適用されない。
+* `termway -- code` で VS Code を起動し、GitHub ログインでブラウザを開く場合、VS Code（非 Snap）には隔離 D-Bus が渡され、その子孫である `xdg-open` → Snap 版 Firefox も隔離 D-Bus を継承するため、課題 2 と同じ cgroup エラーでブラウザが起動しない。
+* また、SSH の非ログインシェルから起動した場合は `/etc/profile.d` が `XDG_DATA_DIRS` に `/var/lib/snapd/desktop` を追加しないため、GIO が Snap 版ブラウザの `.desktop` を見つけられず、https URL を gvfs 経由でテキストエディタに開いてしまう。
+
 ---
 
 ## 2. 決定事項 (Decision)
@@ -45,6 +50,13 @@ Termway では、**「ハイブリッド D-Bus セッションルーティング
      * Snap アプリケーション、またはそれを起動する代表的ランチャー（`xdg-open`, `sensible-browser`, `gio`, `gnome-open`）と判定された場合、**ホストの Ambient D-Bus** を環境変数 `DBUS_SESSION_BUS_ADDRESS` として注入する。
    * **その他の一般アプリケーション**:
      * `gnome-terminal` を含む上記以外のすべてのコマンドには、**Termway 隔離 D-Bus** を注入する。
+4. **子孫プロセス向けの PATH シム (`LauncherShims`)** (課題 4):
+   * 隔離 D-Bus とホスト D-Bus の両方が利用可能で `/snap/bin` が存在する場合、`$XDG_RUNTIME_DIR/termway-shims-<pid>/` にラッパースクリプトを生成し、Termway プロセスの `PATH` 先頭に追加する（全クライアントとその子孫が継承する）。
+   * `/snap/bin` の各エントリ: 常に `DBUS_SESSION_BUS_ADDRESS` をホスト D-Bus に差し替えて実体を exec する。
+   * URL ランチャー（`xdg-open`, `sensible-browser`, `x-www-browser`, `gnome-www-browser`, `www-browser`）: 第1引数が `file:` 以外の URL（`*://*`, `mailto:*`）の場合のみホスト D-Bus に差し替える。ファイルを開く場合は隔離 D-Bus のまま（課題 1 の保護を維持）。`.desktop` の `Exec=/snap/bin/firefox` のような絶対パス起動も、ランチャー段階でバスを差し替えることで救済する。
+   * シムディレクトリは終了時に削除し、シグナルで強制終了された場合の残骸は次回起動時に PID の生存確認をして削除する。
+5. **`XDG_DATA_DIRS` の補完** (課題 4):
+   * `/var/lib/snapd/desktop` が存在し `XDG_DATA_DIRS` に含まれていない場合は末尾に追加する（未設定時は XDG 仕様の既定値 `/usr/local/share:/usr/share` を基点とする）。
 
 ---
 
@@ -76,5 +88,7 @@ Termway では、**「ハイブリッド D-Bus セッションルーティング
 ### 否定的な結果・背反 (Negative / Trade-offs)
 * **ホスト起動済みアプリへの委譲リスク**:
   * ホスト OS のデスクトップ上ですでに Firefox や PDF ビューア（Evince 等）が起動している状態で、Termway から `termway xdg-open https://...` や `termway firefox` を実行した場合、ホスト D-Bus 経由でホスト側の既存ウィンドウへ新規タブやウィンドウが開いてしまう可能性がある。
+* **シムで救済できない経路**:
+  * GTK アプリが `g_app_info_launch` 等で `.desktop` の `Exec=/snap/bin/...` を直接起動する場合など、PATH を経由せず URL ランチャーも通らない Snap 起動は、引き続き隔離 D-Bus を継承して失敗する。
 * **ヒューリスティック判定の保守コスト**:
   * 新たな URL ランチャーや、独自のシェルスクリプトでラップされた Snap アプリケーションが登場した場合、`is_snap_command` の判定条件（ホワイトリスト）のメンテナンスが必要となる。

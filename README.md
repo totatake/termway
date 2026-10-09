@@ -199,6 +199,7 @@ Specify the target command and arguments after `--`:
 > **Note**:
 > - GUI applications that automatically fork into the background (such as `gvim` or `gedit`) can be launched without `-f`. `termway` tracks the window lifecycle and automatically terminates when all application windows are closed.
 > - Modern web browsers like `firefox` (including default Ubuntu Snap packages) work out-of-the-box thanks to automatic ambient systemd session bus routing.
+> - Browsers opened *by* a running app (e.g. the GitHub sign-in page launched from VS Code via `xdg-open`) also open inside Termway: Snap launchers and URL openers reached through `PATH` are shimmed to use the ambient bus.
 > - Single-instance daemon applications like `gnome-terminal` work seamlessly inside `termway` thanks to the automated isolated D-Bus session.
 > - Privileged GUI tools like `gparted` or `pkexec` will display their authentication dialog within the terminal when `policykit-1-gnome` or `lxpolkit` is installed.
 > - Running legacy X11 applications requires write permissions to `/tmp/.X11-unix`. If `/tmp/.X11-unix` is read-only (such as in restricted container environments), `termway` proactively detects this and terminates with a descriptive error, preventing applications from unexpectedly escaping to the host desktop display.
