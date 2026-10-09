@@ -1,3 +1,5 @@
+pub mod secret_bridge;
+
 use std::io::{BufRead, BufReader};
 use std::process::{Child, Command, Stdio};
 
@@ -213,6 +215,30 @@ fn remove_stale_shim_dirs(base: &std::path::Path) {
     }
 }
 
+/// Adopt the host desktop's XDG_CURRENT_DESKTOP when termway runs outside the desktop
+/// session (e.g. over SSH). Electron and Chromium only pick the libsecret keyring backend
+/// for a recognized desktop and otherwise fall back to unencrypted "basic" storage.
+fn import_host_current_desktop() {
+    if std::env::var("XDG_CURRENT_DESKTOP").is_ok_and(|v| !v.is_empty()) {
+        return;
+    }
+    let Ok(output) = Command::new("systemctl")
+        .args(["--user", "show-environment"])
+        .stderr(Stdio::null())
+        .output()
+    else {
+        return;
+    };
+    let env = String::from_utf8_lossy(&output.stdout);
+    if let Some(desktop) = env
+        .lines()
+        .find_map(|l| l.strip_prefix("XDG_CURRENT_DESKTOP="))
+        .filter(|v| !v.is_empty())
+    {
+        std::env::set_var("XDG_CURRENT_DESKTOP", desktop);
+    }
+}
+
 /// Make snap `.desktop` files discoverable when termway is started outside a login shell
 /// (e.g. `ssh host termway -- code`), where /etc/profile.d has not extended XDG_DATA_DIRS.
 /// Without it, GIO finds no handler for https and falls back to opening the page as text.
@@ -413,6 +439,7 @@ pub struct SessionManager {
     ambient_dbus_address: Option<String>,
     polkit: Option<PolkitAgent>,
     launcher_shims: Option<LauncherShims>,
+    secret_bridge: Option<secret_bridge::ServiceBridge>,
 }
 
 impl SessionManager {
@@ -455,11 +482,33 @@ impl SessionManager {
         };
         ensure_snap_desktop_data_dir();
 
+        // 4. Relay the host keyring (Secret Service) into the isolated bus so that apps
+        // storing credentials through libsecret (VS Code, Chromium) can use the OS keyring.
+        let secret_bridge = match (&isolated_dbus, &ambient_dbus_address) {
+            (Some(isolated), Some(ambient)) => {
+                match secret_bridge::ServiceBridge::start_secret_service(isolated.address(), ambient) {
+                    Ok(bridge) => {
+                        import_host_current_desktop();
+                        Some(bridge)
+                    }
+                    Err(e) => {
+                        crate::compositor::log_line(format!(
+                            "[termway] Notice: Secret Service not bridged ({}).",
+                            e
+                        ));
+                        None
+                    }
+                }
+            }
+            _ => None,
+        };
+
         Self {
             isolated_dbus,
             ambient_dbus_address,
             polkit: None,
             launcher_shims,
+            secret_bridge,
         }
     }
 
@@ -497,6 +546,10 @@ impl SessionManager {
                 None
             }
         }
+    }
+
+    pub fn is_secret_service_bridged(&self) -> bool {
+        self.secret_bridge.is_some()
     }
 
     pub fn launcher_shim_dir(&self) -> Option<&std::path::Path> {
