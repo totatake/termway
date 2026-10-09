@@ -19,7 +19,7 @@
 - **Event-Driven Tile Damage Tracking**:
   - Renders only modified regions on `wl_surface.commit` and damage events, drastically minimizing CPU usage and latency.
 - **Hybrid D-Bus Session & Snap Support (Firefox, gnome-terminal & gparted ready)**:
-  - **Dual D-Bus Architecture**: Automatically spawns an isolated D-Bus session bus for single-instance applications (e.g. `gnome-terminal`) to guarantee dedicated server instances on Termway's display, while transparently routing the host's ambient `systemd --user` session bus to strictly confined Snap applications (e.g. Ubuntu's Snap-packaged `firefox`) for cgroup scope creation.
+  - **Dual D-Bus Architecture**: Automatically spawns an isolated D-Bus session bus for single-instance applications (e.g. `gnome-terminal`) to guarantee dedicated server instances on Termway's display, while transparently routing the host's ambient `systemd --user` session bus to strictly confined Snap applications (e.g. Ubuntu's Snap-packaged `firefox`) and URL openers (`xdg-open`) for cgroup scope creation. (See [ADR-0001](docs/adr/0001-hybrid-dbus-session-routing.md) for detailed architecture decisions and trade-offs).
   - **Integrated Polkit Authentication Agent**: Automatically discovers and runs background authentication agents (`policykit-1-gnome` or `lxpolkit`). Elevation prompts for privileged tools like `gparted` or `pkexec` pop up seamlessly inside your terminal window.
 - **Built-in Floating Window Manager (Openbox / Fluxbox Style)** (`--wm`):
   - Self-contained window management without requiring external window managers.
