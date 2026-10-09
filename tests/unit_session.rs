@@ -43,6 +43,7 @@ fn test_snap_command_detection() {
     use termway::session::is_snap_command;
     assert!(is_snap_command("snap"));
     assert!(is_snap_command("/snap/bin/firefox"));
+    assert!(is_snap_command("xdg-open"));
     assert!(!is_snap_command("nonexistent_binary_termway_xyz_123"));
 }
 

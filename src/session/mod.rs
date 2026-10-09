@@ -191,6 +191,13 @@ impl Drop for PolkitAgent {
 /// Snap applications are strictly confined by `snap-confine` and require access to the
 /// host's `systemd --user` session bus (`/run/user/<uid>/bus`) to register transient cgroup scopes.
 pub fn is_snap_command(cmd_name: &str) -> bool {
+    // Treat common URL openers and launchers as snap-dependent because they
+    // frequently launch snap applications (like Firefox/Chromium) as default handlers.
+    let launchers = ["xdg-open", "sensible-browser", "gio", "gnome-open"];
+    if launchers.contains(&cmd_name) {
+        return true;
+    }
+
     if cmd_name == "snap" || cmd_name.starts_with("/snap/") {
         return true;
     }
