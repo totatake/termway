@@ -283,6 +283,7 @@ impl Writer {
         Self { buf: Vec::new(), big_endian }
     }
 
+    #[allow(clippy::manual_is_multiple_of)]
     fn pad(&mut self, align: usize) {
         while self.buf.len() % align != 0 {
             self.buf.push(0);
@@ -327,6 +328,7 @@ struct Reader<'a> {
 }
 
 impl Reader<'_> {
+    #[allow(clippy::manual_div_ceil)]
     fn align(&mut self, align: usize) {
         self.pos = (self.pos + align - 1) / align * align;
     }

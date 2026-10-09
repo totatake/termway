@@ -82,9 +82,23 @@ impl RawModeGuard {
         );
         let _ = stdout.flush();
 
+        // Allow terminal emulator to process tracking disable, and drain any in-flight mouse events
+        std::thread::sleep(std::time::Duration::from_millis(25));
+        unsafe {
+            let flags = libc::fcntl(self.stdin_fd, libc::F_GETFL);
+            if flags >= 0 {
+                libc::fcntl(self.stdin_fd, libc::F_SETFL, flags | libc::O_NONBLOCK);
+                let mut buf = [0u8; 1024];
+                while libc::read(self.stdin_fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len()) > 0 {}
+                libc::fcntl(self.stdin_fd, libc::F_SETFL, flags);
+            }
+            libc::tcflush(self.stdin_fd, libc::TCIFLUSH);
+        }
+
         if let Some(orig) = self.original_termios {
             unsafe {
-                libc::tcsetattr(self.stdin_fd, libc::TCSANOW, &orig);
+                libc::tcsetattr(self.stdin_fd, libc::TCSAFLUSH, &orig);
+                libc::tcflush(self.stdin_fd, libc::TCIFLUSH);
             }
         }
     }
