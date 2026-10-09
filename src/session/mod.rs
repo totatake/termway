@@ -609,7 +609,6 @@ impl SessionManager {
                        [termway]         sudo apt install -y policykit-1-gnome (or lxpolkit)\n\
                        [termway]         Alternatively, run directly with: sudo ./termway --wm <command>";
             crate::compositor::log_line(msg);
-            eprintln!("{}", msg);
         }
         self.polkit = Some(agent);
     }
