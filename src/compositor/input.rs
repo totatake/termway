@@ -1,8 +1,8 @@
 use smithay::{
-    backend::input::{ButtonState, KeyState, Keycode},
+    backend::input::{Axis, AxisSource, ButtonState, KeyState, Keycode},
     input::{
         keyboard::FilterResult,
-        pointer::{ButtonEvent, MotionEvent},
+        pointer::{AxisFrame, ButtonEvent, MotionEvent},
     },
     reexports::wayland_server::protocol::wl_surface::WlSurface,
     utils::{Logical, Point, Rectangle, SERIAL_COUNTER},
@@ -350,6 +350,25 @@ pub fn dispatch_mouse_event(
         }
 
         MouseAction::Press => {
+            // Handle mouse wheel scrolling (Wayland pointer axis scroll events)
+            if matches!(ev.button, MouseButton::WheelUp | MouseButton::WheelDown) {
+                let focus = find_pointer_focus(state, loc_i32);
+                let motion = MotionEvent { location: loc, serial, time };
+                pointer.motion(state, focus, &motion);
+
+                let value = if matches!(ev.button, MouseButton::WheelUp) { -15.0 } else { 15.0 };
+                let v120 = if matches!(ev.button, MouseButton::WheelUp) { -120 } else { 120 };
+
+                let frame = AxisFrame::new(time)
+                    .source(AxisSource::Wheel)
+                    .value(Axis::Vertical, value)
+                    .v120(Axis::Vertical, v120);
+                pointer.axis(state, frame);
+                pointer.frame(state);
+                state.dirty = true;
+                return;
+            }
+
             let is_left = matches!(ev.button, MouseButton::Left);
 
             // 0. Check popups first (topmost over all windows)
@@ -533,6 +552,10 @@ pub fn dispatch_mouse_event(
         }
 
         MouseAction::Release => {
+            if matches!(ev.button, MouseButton::WheelUp | MouseButton::WheelDown) {
+                return;
+            }
+
             let was_dragging = !matches!(state.drag_state, WindowDragState::None);
             state.drag_state = WindowDragState::None;
 

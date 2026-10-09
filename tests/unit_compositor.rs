@@ -308,4 +308,43 @@ fn test_compositor_clipboard_selection_and_send() {
     assert_eq!(read_data, sample_text);
 }
 
+#[test]
+fn test_compositor_mouse_wheel_dispatch() {
+    use termway::compositor::input::dispatch_mouse_event;
+    use termway::protocol::{MouseAction, MouseButton, MouseEvent};
+
+    let display = Display::<TermwayState>::new().expect("Failed to create Wayland Display");
+    let dh = display.handle();
+
+    let mut state = TermwayState::new(&dh, 800, 600, true);
+    state.dirty = false;
+
+    let wheel_up = MouseEvent {
+        button: MouseButton::WheelUp,
+        action: MouseAction::Press,
+        col: 40,
+        row: 15,
+        shift: false,
+        meta: false,
+        ctrl: false,
+    };
+    let mut child = None;
+    dispatch_mouse_event(&mut state, 800, 600, 80, 24, &wheel_up, &mut child);
+    assert!(state.dirty, "WheelUp should set state.dirty = true");
+
+    state.dirty = false;
+    let wheel_down = MouseEvent {
+        button: MouseButton::WheelDown,
+        action: MouseAction::Press,
+        col: 40,
+        row: 15,
+        shift: false,
+        meta: false,
+        ctrl: false,
+    };
+    dispatch_mouse_event(&mut state, 800, 600, 80, 24, &wheel_down, &mut child);
+    assert!(state.dirty, "WheelDown should set state.dirty = true");
+}
+
+
 

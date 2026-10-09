@@ -118,7 +118,11 @@ class TermwayTestDriver:
         - col, row: 1-based terminal cell coordinates
         - action: 'press', 'release', 'click', 'move'
         """
-        if action == "press":
+        if action == "wheel_up":
+            self.send_raw(f"\x1b[<64;{col};{row}M".encode("ascii"))
+        elif action == "wheel_down":
+            self.send_raw(f"\x1b[<65;{col};{row}M".encode("ascii"))
+        elif action == "press":
             self.send_raw(f"\x1b[<{button};{col};{row}M".encode("ascii"))
         elif action == "release":
             self.send_raw(f"\x1b[<{button};{col};{row}m".encode("ascii"))
