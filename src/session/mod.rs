@@ -194,12 +194,21 @@ pub fn is_snap_command(cmd_name: &str) -> bool {
     if cmd_name == "snap" || cmd_name.starts_with("/snap/") {
         return true;
     }
-    if std::path::Path::new(&format!("/snap/bin/{}", cmd_name)).exists() {
-        return true;
+
+    // Extract the base filename in case an absolute path like /usr/bin/firefox was passed
+    if let Some(file_name) = std::path::Path::new(cmd_name).file_name().and_then(|n| n.to_str()) {
+        if std::path::Path::new(&format!("/snap/bin/{}", file_name)).exists() {
+            return true;
+        }
     }
+
     let path_env = std::env::var("PATH").unwrap_or_default();
+    let mut check_paths = vec![std::path::PathBuf::from(cmd_name)];
     for dir in path_env.split(':') {
-        let full_path = std::path::Path::new(dir).join(cmd_name);
+        check_paths.push(std::path::Path::new(dir).join(cmd_name));
+    }
+
+    for full_path in check_paths {
         if full_path.exists() {
             let path_str = full_path.to_string_lossy();
             if path_str.contains("/snap/") {
@@ -211,7 +220,7 @@ pub fn is_snap_command(cmd_name: &str) -> bool {
                 }
             }
             if let Ok(content) = std::fs::read_to_string(&full_path) {
-                if content.contains("snap run") || content.contains("/usr/bin/snap") {
+                if content.contains("snap run") || content.contains("/usr/bin/snap") || content.contains("/snap/bin/") {
                     return true;
                 }
             }
