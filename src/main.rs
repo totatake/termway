@@ -19,6 +19,7 @@ OPTIONS:
                               (Built-in WM is always active in native Wayland mode)
     --sixel                   Force Sixel graphics protocol
     --kitty                   Force Kitty graphics protocol
+    --hud                     Enable real-time performance HUD indicator
     --demo                    Run built-in demo GUI application
     -V, --version             Print version information
     -h, --help                Print this help information
@@ -104,6 +105,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             explicit_kitty = true;
         } else if arg == "--wm" {
             config.enable_wm = true;
+        } else if arg == "--hud" {
+            config.hud = true;
         } else if arg == "--demo" {
             run_demo = true;
         } else if arg == "--" {

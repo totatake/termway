@@ -78,6 +78,7 @@ pub fn map_keycode_to_evdev(code: KeyCode) -> Option<(u32, bool, bool)> {
         KeyCode::PageUp => (104, false, false),
         KeyCode::PageDown => (109, false, false),
         KeyCode::Delete => (111, false, false),
+        KeyCode::F11 => (87, false, false),
         KeyCode::F12 => (88, false, false),
         KeyCode::Ctrl(c) => match c.to_ascii_lowercase() {
             'a' => (30, false, true), 'b' => (48, false, true), 'c' => (46, false, true), 'd' => (32, false, true),

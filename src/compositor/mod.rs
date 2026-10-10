@@ -183,7 +183,10 @@ impl TermwayCompositor {
         let renderer = TermwayRenderer::new(width, height)?;
 
         // 4. Initialize Terminal Output Backend
-        let backend = TerminalBackend::new(term_size, config.use_sixel, true);
+        let mut backend = TerminalBackend::new(term_size, config.use_sixel, true);
+        if config.hud {
+            backend.set_hud_enabled(true);
+        }
 
         // Check writability of /tmp/.X11-unix so X11 apps don't fail mysteriously or fall back
         crate::session::check_x11_unix_writability()?;

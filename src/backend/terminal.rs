@@ -15,6 +15,7 @@ struct RenderJob {
     term_rows: u16,
     taskbar: Option<String>,
     needs_clear: bool,
+    show_hud: bool,
 }
 
 struct AsyncRenderState {
@@ -29,6 +30,7 @@ pub struct TerminalBackend {
     use_sixel: bool,
     is_wayland: bool,
     pub screenshot_requested: bool,
+    pub show_hud: bool,
     pub needs_clear: bool,
     async_state: Arc<(Mutex<AsyncRenderState>, Condvar)>,
     worker_handle: Option<JoinHandle<()>>,
@@ -61,6 +63,14 @@ impl TerminalBackend {
                 let mut kitty_b64 = String::new();
                 let mut kitty_out = String::new();
 
+                let mut stat_start = std::time::Instant::now();
+                let mut stat_frames: u32 = 0;
+                let mut stat_bytes: usize = 0;
+                let mut fps: f64 = 0.0;
+                let mut kb_per_sec: f64 = 0.0;
+                let mut last_encode_ms: f64;
+                let mut prev_hud_shown = false;
+
                 let (lock, cvar) = &*state_clone;
                 loop {
                     let job = {
@@ -74,23 +84,8 @@ impl TerminalBackend {
                         guard.pending_job.take().unwrap()
                     };
 
-                    let overlay_text = format!("\x1b[40;37m [{}] [Ctrl-Q: Exit] [F12: Screenshot] \x1b[0m", mode_desc);
-                    let overlay_len = mode_desc.len() + 37;
-                    let overlay_row = job.term_rows;
-                    let overlay_col = job.term_cols.saturating_sub(overlay_len as u16 + 2).max(1);
-                    let overlay_seq = format!("\x1b[{};{}H{}", overlay_row, overlay_col, overlay_text);
-
-                    let taskbar_str = job.taskbar.as_deref().unwrap_or("");
-                    let taskbar_seq = format!("\x1b[{};1H\x1b[2K{}", overlay_row, taskbar_str);
-                    let clear_seq = if job.needs_clear {
-                        if use_sixel {
-                            "\x1b[2J\x1b[H"
-                        } else {
-                            "\x1b[2J\x1b[H\x1b_Ga=d,d=a\x1b\\"
-                        }
-                    } else {
-                        ""
-                    };
+                    let encode_start = std::time::Instant::now();
+                    let bytes_encoded: usize;
 
                     if use_sixel {
                         SixelEncoder::encode_fullscreen_frame_into(
@@ -100,9 +95,7 @@ impl TerminalBackend {
                             &mut sixel_out,
                             &mut sixel_quantized,
                         );
-                        let _ = write!(stdout, "\x1b[?2026h{}\x1b[H", clear_seq);
-                        let _ = stdout.write_all(&sixel_out);
-                        let _ = write!(stdout, "{}{}\x1b[?2026l", taskbar_seq, overlay_seq);
+                        bytes_encoded = sixel_out.len();
                     } else {
                         KittyEncoder::encode_fullscreen_frame_into(
                             &job.pixels,
@@ -114,7 +107,69 @@ impl TerminalBackend {
                             &mut kitty_b64,
                             &mut kitty_out,
                         );
-                        let _ = write!(stdout, "\x1b[?2026h{}{}{}{}\x1b[?2026l", clear_seq, kitty_out, taskbar_seq, overlay_seq);
+                        bytes_encoded = kitty_out.len();
+                    }
+
+                    let encode_dur = encode_start.elapsed();
+                    last_encode_ms = encode_dur.as_secs_f64() * 1000.0;
+                    stat_frames += 1;
+                    stat_bytes += bytes_encoded;
+
+                    let elapsed = stat_start.elapsed();
+                    if elapsed >= std::time::Duration::from_millis(500) {
+                        let secs = elapsed.as_secs_f64();
+                        fps = (stat_frames as f64) / secs;
+                        kb_per_sec = (stat_bytes as f64 / 1024.0) / secs;
+                        stat_frames = 0;
+                        stat_bytes = 0;
+                        stat_start = std::time::Instant::now();
+                    }
+
+                    let overlay_text = format!(
+                        "\x1b[40;37m [{}] [F12: Shot] [Ctrl-Q: Exit] \x1b[0m",
+                        mode_desc
+                    );
+                    let overlay_len = mode_desc.len() + 32;
+                    let overlay_row = job.term_rows;
+                    let overlay_col = job.term_cols.saturating_sub(overlay_len as u16 + 2).max(1);
+                    let overlay_seq = format!("\x1b[{};{}H{}", overlay_row, overlay_col, overlay_text);
+
+                    let taskbar_str = job.taskbar.as_deref().unwrap_or("");
+                    let taskbar_seq = format!("\x1b[{};1H\x1b[2K{}", overlay_row, taskbar_str);
+
+                    let mut clear_seq = String::new();
+                    if job.needs_clear {
+                        if use_sixel {
+                            clear_seq.push_str("\x1b[2J\x1b[H");
+                        } else {
+                            clear_seq.push_str("\x1b[2J\x1b[H\x1b_Ga=d,d=a\x1b\\");
+                        }
+                    } else if prev_hud_shown && !job.show_hud {
+                        clear_seq.push_str("\x1b[1;1H\x1b[2K");
+                    }
+                    prev_hud_shown = job.show_hud;
+
+                    let hud_seq = if job.show_hud && job.term_cols >= 50 {
+                        let text_part = format!(
+                            " {:>4.1} FPS │ {}x{} │ {:>5.1} KB/s │ {:>4.1}ms ",
+                            fps, job.width, job.height, kb_per_sec, last_encode_ms
+                        );
+                        let vis_len = 9 + text_part.chars().count();
+                        let hud_col = job.term_cols.saturating_sub(vis_len as u16).max(1);
+                        format!(
+                            "\x1b[1;{}H\x1b[44;97m termway \x1b[48;5;236;97m{}\x1b[0m",
+                            hud_col, text_part
+                        )
+                    } else {
+                        String::new()
+                    };
+
+                    if use_sixel {
+                        let _ = write!(stdout, "\x1b[?2026h{}\x1b[H", clear_seq);
+                        let _ = stdout.write_all(&sixel_out);
+                        let _ = write!(stdout, "{}{}{}\x1b[?2026l", taskbar_seq, overlay_seq, hud_seq);
+                    } else {
+                        let _ = write!(stdout, "\x1b[?2026h{}{}{}{}{}\x1b[?2026l", clear_seq, kitty_out, taskbar_seq, overlay_seq, hud_seq);
                     }
                     let _ = stdout.flush();
 
@@ -130,10 +185,27 @@ impl TerminalBackend {
             use_sixel,
             is_wayland,
             screenshot_requested: false,
+            show_hud: false,
             needs_clear: false,
             async_state,
             worker_handle,
         }
+    }
+
+    pub fn toggle_hud(&mut self) {
+        self.show_hud = !self.show_hud;
+        self.needs_clear = true;
+    }
+
+    pub fn set_hud_enabled(&mut self, enabled: bool) {
+        if self.show_hud != enabled {
+            self.show_hud = enabled;
+            self.needs_clear = true;
+        }
+    }
+
+    pub fn is_hud_enabled(&self) -> bool {
+        self.show_hud
     }
 
     pub fn resize(&mut self, term_size: TerminalSize) {
@@ -195,6 +267,7 @@ impl TerminalBackend {
             job.term_cols = self.term_size.cols;
             job.term_rows = self.term_size.rows;
             job.taskbar = taskbar.map(String::from);
+            job.show_hud = self.show_hud;
             if needs_clear {
                 job.needs_clear = true;
             }
@@ -210,6 +283,7 @@ impl TerminalBackend {
                 term_rows: self.term_size.rows,
                 taskbar: taskbar.map(String::from),
                 needs_clear,
+                show_hud: self.show_hud,
             });
         }
         cvar.notify_one();

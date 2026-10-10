@@ -15,6 +15,7 @@ pub struct EngineConfig {
     pub fps: u32,
     pub enable_wm: bool,
     pub use_sixel: bool,
+    pub hud: bool,
     pub command: Vec<String>,
 }
 
@@ -27,6 +28,7 @@ impl Default for EngineConfig {
             fps: 30,
             enable_wm: false,
             use_sixel: false,
+            hud: false,
             command: Vec::new(),
         }
     }
@@ -136,6 +138,9 @@ impl TermwayEngine {
 
         // 7. Create backend instance
         let mut backend = TerminalBackend::new(term_size, self.config.use_sixel, false);
+        if self.config.hud {
+            backend.set_hud_enabled(true);
+        }
 
         // 8. Enter Raw mode and terminal alternate screen
         let _raw_guard = RawModeGuard::enter()?;

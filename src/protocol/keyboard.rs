@@ -15,6 +15,7 @@ pub enum KeyCode {
     PageUp,
     PageDown,
     Delete,
+    F11,
     F12,
     Ctrl(char),
 
@@ -156,6 +157,7 @@ impl KeyboardParser {
                                 ["6", "5"] => KeyCode::PageDown,
                                 ["1", "6"] => KeyCode::CtrlShiftHome,
                                 ["4", "6"] => KeyCode::CtrlShiftEnd,
+                                ["23"] | ["23", _] => KeyCode::F11,
                                 ["24"] | ["24", _] => KeyCode::F12,
                                 _ => KeyCode::Ignore,
                             }
