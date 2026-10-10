@@ -175,3 +175,35 @@ fn test_x11_wm_fails_when_openbox_missing() {
     );
 }
 
+#[test]
+fn test_termway_version_flag() {
+    let binary = env!("CARGO_BIN_EXE_termway");
+
+    // Test --version
+    let output = std::process::Command::new(binary)
+        .arg("--version")
+        .output()
+        .expect("execute termway --version");
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains(&format!("termway {}", env!("CARGO_PKG_VERSION"))),
+        "stdout should contain package version, got: {}",
+        stdout
+    );
+
+    // Test -V
+    let output_short = std::process::Command::new(binary)
+        .arg("-V")
+        .output()
+        .expect("execute termway -V");
+    assert!(output_short.status.success());
+    let stdout_short = String::from_utf8_lossy(&output_short.stdout);
+    assert!(
+        stdout_short.contains(&format!("termway {}", env!("CARGO_PKG_VERSION"))),
+        "stdout should contain package version, got: {}",
+        stdout_short
+    );
+}
+
+

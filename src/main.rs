@@ -20,6 +20,7 @@ OPTIONS:
     --sixel                   Force Sixel graphics protocol
     --kitty                   Force Kitty graphics protocol
     --demo                    Run built-in demo GUI application
+    -V, --version             Print version information
     -h, --help                Print this help information
 
 EXAMPLES:
@@ -49,6 +50,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let arg = &args[i];
         if arg == "-h" || arg == "--help" {
             print_help();
+            return Ok(());
+        } else if arg == "-V" || arg == "--version" {
+            println!("termway {}", env!("CARGO_PKG_VERSION"));
             return Ok(());
         } else if arg == "--width" {
             i += 1;

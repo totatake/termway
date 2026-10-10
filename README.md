@@ -253,6 +253,8 @@ export TERMWAY_CELL_SIZE=10x22
 | `--height` | `<PIXELS>` | Virtual display resolution height | Auto-calculated from terminal |
 | `--fps` | `<FPS>` | Target frame rate limit | `30` |
 | `--demo` | - | Launch built-in demo application (GTK3 for Wayland, Tkinter for X11) | - |
+| `-V`, `--version` | - | Print version information | - |
+| `-h`, `--help` | - | Print help information | - |
 
 ---
 
