@@ -37,6 +37,8 @@ impl KittyEncoder {
     }
 
     /// Optimized zero-allocation version reusing preallocated base64 and output string buffers.
+    /// Uses RFC 1950 zlib compression (`o=z`) at compression level 1 to drastically reduce
+    /// terminal PTY bandwidth and escape sequence parsing overhead.
     pub fn encode_fullscreen_frame_into(
         rgba: &[u8],
         width: u32,
@@ -47,8 +49,9 @@ impl KittyEncoder {
         b64_buf: &mut String,
         output: &mut String,
     ) {
+        let compressed = miniz_oxide::deflate::compress_to_vec_zlib(rgba, 1);
         b64_buf.clear();
-        BASE64.encode_string(rgba, b64_buf);
+        BASE64.encode_string(&compressed, b64_buf);
         output.clear();
 
         // Move cursor to top-left (1,1) before displaying
@@ -67,7 +70,7 @@ impl KittyEncoder {
 
             if first {
                 output.push_str(&format!(
-                    "\x1b_Ga=T,q=2,i={},C=1,f=32,z=-1,s={},v={},c={},r={},m={};",
+                    "\x1b_Ga=T,q=2,i={},C=1,f=32,o=z,z=-1,s={},v={},c={},r={},m={};",
                     image_id, width, height, term_cols, term_rows, m_flag
                 ));
                 first = false;

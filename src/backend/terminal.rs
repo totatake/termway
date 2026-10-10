@@ -83,7 +83,11 @@ impl TerminalBackend {
                     let taskbar_str = job.taskbar.as_deref().unwrap_or("");
                     let taskbar_seq = format!("\x1b[{};1H\x1b[2K{}", overlay_row, taskbar_str);
                     let clear_seq = if job.needs_clear {
-                        "\x1b[2J"
+                        if use_sixel {
+                            "\x1b[2J"
+                        } else {
+                            "\x1b[2J\x1b_Ga=d,d=a\x1b\\"
+                        }
                     } else {
                         ""
                     };

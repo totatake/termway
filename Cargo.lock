@@ -728,6 +728,7 @@ dependencies = [
  "base64",
  "image",
  "libc",
+ "miniz_oxide 0.8.9",
  "nix",
  "pixman",
  "smithay",
