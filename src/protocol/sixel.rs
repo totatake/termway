@@ -33,10 +33,7 @@ impl SixelEncoder {
         // 1. Quantize the image to RGB332 and collect used colors globally
         let mut used_colors = [false; 256];
         for (i, pixel) in rgba.chunks_exact(4).enumerate() {
-            let r = pixel[0] >> 5; // 3 bits (0-7)
-            let g = pixel[1] >> 5; // 3 bits (0-7)
-            let b = pixel[2] >> 6; // 2 bits (0-3)
-            let idx = (r << 5) | (g << 2) | b;
+            let idx = (pixel[0] & 0xE0) | ((pixel[1] & 0xE0) >> 3) | (pixel[2] >> 6);
             quantized[i] = idx;
             used_colors[idx as usize] = true;
         }
@@ -63,11 +60,47 @@ impl SixelEncoder {
 
         let w = width as usize;
         let h = height as usize;
+        let mut band_colors = Vec::with_capacity(32);
 
         // 3. Process 6-pixel high bands
         for band_y in (0..height).step_by(6) {
             let start_y = band_y as usize;
             let max_y = std::cmp::min(start_y + 6, h);
+            let num_rows = (max_y - start_y) as u8;
+
+            // Find distinct colors used in THIS band
+            band_colors.clear();
+            let mut band_used = [false; 256];
+            for y in start_y..max_y {
+                let row = &quantized[y * w..(y + 1) * w];
+                for &color in row {
+                    if !band_used[color as usize] {
+                        band_used[color as usize] = true;
+                        band_colors.push(color);
+                    }
+                }
+            }
+
+            if band_colors.is_empty() {
+                if band_y + 6 < height {
+                    out.push(b'-');
+                }
+                continue;
+            }
+
+            // Fast-path: entire band is a single solid color
+            if band_colors.len() == 1 {
+                let c = band_colors[0];
+                let mask = (1 << num_rows) - 1;
+                out.push(b'#');
+                Self::emit_u32_ascii(out, c as u32);
+                Self::emit_rle(out, mask + 63, w);
+                out.push(b'$');
+                if band_y + 6 < height {
+                    out.push(b'-');
+                }
+                continue;
+            }
 
             // Row slices for this 6-pixel band
             let r0 = &quantized[start_y * w..(start_y + 1) * w];
@@ -77,24 +110,10 @@ impl SixelEncoder {
             let r4 = if start_y + 4 < h { &quantized[(start_y + 4) * w..(start_y + 5) * w] } else { &[] };
             let r5 = if start_y + 5 < h { &quantized[(start_y + 5) * w..(start_y + 6) * w] } else { &[] };
 
-            // Find colors used in THIS band
-            let mut band_used = [false; 256];
-            for y in start_y..max_y {
-                let row = &quantized[y * w..(y + 1) * w];
-                for &color in row {
-                    band_used[color as usize] = true;
-                }
-            }
-
             // Encode each color present in the band
-            for (c, &is_used) in band_used.iter().enumerate() {
-                if !is_used {
-                    continue;
-                }
-                let c_u8 = c as u8;
-
+            for &c_u8 in &band_colors {
                 out.push(b'#');
-                Self::emit_u32_ascii(out, c as u32);
+                Self::emit_u32_ascii(out, c_u8 as u32);
 
                 let mut run_char = 0u8;
                 let mut run_len = 0;

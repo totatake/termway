@@ -564,7 +564,14 @@ impl TermwayCompositor {
                 nix::poll::PollFlags::POLLIN,
             )];
 
-            if let Ok(res) = nix::poll::poll(&mut poll_fds, nix::poll::PollTimeout::try_from(10).unwrap_or(nix::poll::PollTimeout::NONE)) {
+            // When a new frame needs rendering (dirty == true), do not sleep 10ms in poll.
+            let poll_timeout = if self.state.dirty {
+                nix::poll::PollTimeout::ZERO
+            } else {
+                nix::poll::PollTimeout::try_from(10).unwrap_or(nix::poll::PollTimeout::NONE)
+            };
+
+            if let Ok(res) = nix::poll::poll(&mut poll_fds, poll_timeout) {
                 if res > 0 {
                     if let Some(revents) = poll_fds[0].revents() {
                         if revents.contains(nix::poll::PollFlags::POLLIN) {

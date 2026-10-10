@@ -85,3 +85,23 @@ fn test_sixel_performance_1080x720() {
     eprintln!("\n[BENCHMARK] 1080x720 Sixel zero-allocation encode avg took: {:?}, size: {} KB", elapsed, out.len() / 1024);
     assert!(out.len() > 1000);
 }
+
+#[test]
+fn test_sixel_solid_band_fastpath() {
+    let w = 100;
+    let h = 12; // 2 bands of 6 lines
+    let mut rgba = vec![0u8; (w * h * 4) as usize];
+    // Fill completely with solid blue (0, 0, 255)
+    for i in (0..rgba.len()).step_by(4) {
+        rgba[i] = 0;
+        rgba[i + 1] = 0;
+        rgba[i + 2] = 255;
+        rgba[i + 3] = 255;
+    }
+    let encoded = SixelEncoder::encode_fullscreen_frame(&rgba, w, h);
+    // Blue is color 3 (000_000_11)
+    assert!(encoded.contains("#3;2;0;0;100"));
+    // Full 6-row run of 100 width should emit !100~
+    assert!(encoded.contains("!100~"));
+}
+
