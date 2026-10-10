@@ -572,24 +572,25 @@ pub fn dispatch_mouse_event(
 
                 if clicked_content {
                     // Forward press to client surface
-                    let win = state.managed_windows.last().unwrap();
-                    let focus = state.surface_for_managed_window(win).map(|s| (s, Point::from((win.loc.x as f64, win.loc.y as f64))));
+                    if let Some(win) = state.managed_windows.last() {
+                        let focus = state.surface_for_managed_window(win).map(|s| (s, Point::from((win.loc.x as f64, win.loc.y as f64))));
 
-                    let motion = MotionEvent { location: loc, serial, time };
-                    pointer.motion(state, focus.clone(), &motion);
+                        let motion = MotionEvent { location: loc, serial, time };
+                        pointer.motion(state, focus.clone(), &motion);
 
-                    let btn = match ev.button {
-                        MouseButton::Left => 0x110,
-                        MouseButton::Middle => 0x112,
-                        MouseButton::Right => 0x111,
-                        _ => 0x110,
-                    };
-                    let btn_ev = ButtonEvent { serial, time, button: btn, state: ButtonState::Pressed };
-                    pointer.button(state, &btn_ev);
-                    pointer.frame(state);
+                        let btn = match ev.button {
+                            MouseButton::Left => 0x110,
+                            MouseButton::Middle => 0x112,
+                            MouseButton::Right => 0x111,
+                            _ => 0x110,
+                        };
+                        let btn_ev = ButtonEvent { serial, time, button: btn, state: ButtonState::Pressed };
+                        pointer.button(state, &btn_ev);
+                        pointer.frame(state);
 
-                    if let Some((s, _)) = focus {
-                        keyboard.set_focus(state, Some(s), serial);
+                        if let Some((s, _)) = focus {
+                            keyboard.set_focus(state, Some(s), serial);
+                        }
                     }
                     return;
                 }

@@ -33,7 +33,7 @@ impl XvfbServer {
         // Wait for X server to be ready
         let start = Instant::now();
         let mut dpy = std::ptr::null_mut();
-        let c_display = CString::new(display_str.clone()).unwrap();
+        let c_display = CString::new(display_str.clone()).map_err(|e| format!("Invalid display string: {}", e))?;
 
         while start.elapsed() < Duration::from_secs(5) {
             unsafe {
@@ -65,7 +65,7 @@ impl XvfbServer {
 
     /// Connect to an existing X11 display (e.g. :0 or DISPLAY env var)
     pub fn connect_existing(display_str: &str, width: u32, height: u32) -> Result<Self, String> {
-        let c_display = CString::new(display_str).unwrap();
+        let c_display = CString::new(display_str).map_err(|e| format!("Invalid display string: {}", e))?;
         let dpy = unsafe { x11::xlib::XOpenDisplay(c_display.as_ptr()) };
         if dpy.is_null() {
             return Err(format!("Could not open X11 display: {}", display_str));
@@ -116,7 +116,7 @@ impl XvfbServer {
         let mut ewmh_available = false;
 
         let net_client_list_atom = unsafe {
-            let name = std::ffi::CString::new("_NET_CLIENT_LIST").unwrap();
+            let name = c"_NET_CLIENT_LIST";
             x11::xlib::XInternAtom(self.display_ptr, name.as_ptr(), x11::xlib::False)
         };
 

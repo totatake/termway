@@ -81,7 +81,7 @@ pub fn query_graphics_protocol() -> GraphicsProtocol {
             nix::poll::PollFlags::POLLIN,
         )];
 
-        if let Ok(poll_res) = nix::poll::poll(&mut poll_fds, nix::poll::PollTimeout::try_from(40).unwrap()) {
+        if let Ok(poll_res) = nix::poll::poll(&mut poll_fds, nix::poll::PollTimeout::try_from(40).unwrap_or(nix::poll::PollTimeout::NONE)) {
             if poll_res > 0 {
                 if let Some(revents) = poll_fds[0].revents() {
                     if revents.contains(nix::poll::PollFlags::POLLIN) {
@@ -148,7 +148,7 @@ pub fn query_graphics_protocol() -> GraphicsProtocol {
             unsafe { std::os::fd::BorrowedFd::borrow_raw(stdin_fd) },
             nix::poll::PollFlags::POLLIN,
         )];
-        if let Ok(1) = nix::poll::poll(&mut poll_drain, nix::poll::PollTimeout::try_from(0).unwrap()) {
+        if let Ok(1) = nix::poll::poll(&mut poll_drain, nix::poll::PollTimeout::try_from(0).unwrap_or(nix::poll::PollTimeout::NONE)) {
             let mut drain_buf = [0u8; 256];
             let n = unsafe {
                 libc::read(

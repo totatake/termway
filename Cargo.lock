@@ -731,6 +731,7 @@ dependencies = [
  "nix",
  "pixman",
  "smithay",
+ "tempfile",
  "x11",
 ]
 

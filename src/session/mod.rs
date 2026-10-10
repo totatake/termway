@@ -135,11 +135,19 @@ impl PolkitAgent {
             }
             cmd.env("GDK_BACKEND", "x11,wayland");
 
-            if let Ok(file) = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open("/tmp/termway_polkit.log")
-            {
+            let polkit_log_file = if let Ok(runtime_dir) = std::env::var("XDG_RUNTIME_DIR") {
+                let path = std::path::Path::new(&runtime_dir).join("termway_polkit.log");
+                std::fs::OpenOptions::new().create(true).append(true).open(path).ok()
+            } else {
+                tempfile::Builder::new()
+                    .prefix("termway_polkit_")
+                    .suffix(".log")
+                    .tempfile()
+                    .ok()
+                    .and_then(|t| t.reopen().ok())
+            };
+
+            if let Some(file) = polkit_log_file {
                 if let Ok(err_file) = file.try_clone() {
                     cmd.stdout(Stdio::from(file));
                     cmd.stderr(Stdio::from(err_file));
@@ -677,18 +685,13 @@ impl Default for SessionManager {
 pub fn check_x11_unix_writability() -> Result<(), String> {
     let x11_dir = std::path::Path::new("/tmp/.X11-unix");
     if x11_dir.exists() {
-        let test_file = format!("/tmp/.X11-unix/.termway_test_{}", std::process::id());
-        if let Err(e) = std::fs::OpenOptions::new().write(true).create_new(true).open(&test_file) {
+        if let Err(e) = tempfile::Builder::new().prefix(".termway_test_").tempfile_in(x11_dir) {
             return Err(format!("Cannot write to /tmp/.X11-unix ({}). X11/XWayland will not work: {}", e.kind(), e));
-        } else {
-            let _ = std::fs::remove_file(&test_file);
         }
     } else {
-        let test_file = format!("/tmp/.termway_test_{}", std::process::id());
-        if let Err(e) = std::fs::OpenOptions::new().write(true).create_new(true).open(&test_file) {
+        let tmp_dir = std::path::Path::new("/tmp");
+        if let Err(e) = tempfile::Builder::new().prefix(".termway_test_").tempfile_in(tmp_dir) {
             return Err(format!("Cannot write to /tmp ({}). X11/XWayland will not work: {}", e.kind(), e));
-        } else {
-            let _ = std::fs::remove_file(&test_file);
         }
     }
     Ok(())

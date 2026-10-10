@@ -17,6 +17,7 @@ x11 = { version = "2.21", features = ["xlib", "xtest", "xfixes", "dpms"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
 pixman = "0.2"
 smithay = { version = "0.7", default-features = false, features = ["desktop", "renderer_pixman", "wayland_frontend", "xwayland"] }
+tempfile = "3.27"
 
 [[bin]]
 name = "termway"

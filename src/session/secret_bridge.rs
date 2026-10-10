@@ -347,7 +347,7 @@ impl Reader<'_> {
 
     fn u32(&mut self) -> io::Result<u32> {
         self.align(4);
-        let b: [u8; 4] = self.take(4)?.try_into().unwrap();
+        let b: [u8; 4] = self.take(4)?.try_into().map_err(|_| invalid("invalid u32 slice"))?;
         Ok(if self.big_endian { u32::from_be_bytes(b) } else { u32::from_le_bytes(b) })
     }
 

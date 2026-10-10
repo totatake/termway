@@ -9,7 +9,7 @@ impl SixelEncoder {
         let mut out = Vec::with_capacity((width * height) as usize / 2);
         
         // Sixel intro (DCS 7;1;q) with 1:1 pixel aspect ratio and raster attributes
-        write!(&mut out, "\x1bP7;1;q\"1;1;{};{}", width, height).unwrap();
+        let _ = write!(&mut out, "\x1bP7;1;q\"1;1;{};{}", width, height);
 
         // 1. Quantize the image to RGB332 and collect used colors globally
         let mut used_colors = [false; 256];
@@ -33,7 +33,7 @@ impl SixelEncoder {
                 let r_pct = r * 100 / 7;
                 let g_pct = g * 100 / 7;
                 let b_pct = b * 100 / 3;
-                write!(&mut out, "#{};2;{};{};{}", i, r_pct, g_pct, b_pct).unwrap();
+                let _ = write!(&mut out, "#{};2;{};{};{}", i, r_pct, g_pct, b_pct);
             }
         }
 
@@ -56,7 +56,7 @@ impl SixelEncoder {
                     continue;
                 }
 
-                write!(&mut out, "#{}", c).unwrap();
+                let _ = write!(&mut out, "#{}", c);
 
                 let mut run_char = 0u8;
                 let mut run_len = 0;
@@ -92,8 +92,7 @@ impl SixelEncoder {
         // Sixel outro (String Terminator)
         out.extend_from_slice(b"\x1b\\");
 
-        // Sixel output is strictly ASCII, so from_utf8_unchecked is perfectly safe
-        unsafe { String::from_utf8_unchecked(out) }
+        String::from_utf8(out).unwrap_or_default()
     }
 
     #[inline]
@@ -106,7 +105,7 @@ impl SixelEncoder {
                 out.push(ch);
             }
         } else {
-            write!(out, "!{}{}", count, ch as char).unwrap();
+            let _ = write!(out, "!{}{}", count, ch as char);
         }
     }
 }

@@ -44,11 +44,40 @@ use self::renderer::TermwayRenderer;
 use self::state::{send_frames_surface_tree, ClientState, TermwayState};
 use self::window::{WindowSurface, BORDER_WIDTH, TITLEBAR_HEIGHT};
 
+// Helper to find Xwayland binary safely without invoking `which`
+fn find_xwayland_binary() -> Option<std::path::PathBuf> {
+    if let Ok(path_var) = std::env::var("PATH") {
+        for dir in path_var.split(':') {
+            let candidate = std::path::Path::new(dir).join("Xwayland");
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+    }
+    for default_path in &["/usr/bin/Xwayland", "/usr/local/bin/Xwayland", "/usr/lib/xorg/Xwayland"] {
+        let p = std::path::Path::new(default_path);
+        if p.is_file() {
+            return Some(p.to_path_buf());
+        }
+    }
+    None
+}
+
 // Raw mode では `\n` だけだと行頭に戻らず表示が崩れるため、CRLF で出力する。
 pub(crate) fn log_line(msg: impl AsRef<str>) {
     use std::io::Write;
-    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/termway_debug.log") {
-        let _ = writeln!(file, "{}", msg.as_ref());
+    let log_path = if let Ok(path) = std::env::var("TERMWAY_DEBUG_LOG") {
+        Some(std::path::PathBuf::from(path))
+    } else if let Ok(runtime_dir) = std::env::var("XDG_RUNTIME_DIR") {
+        Some(std::path::Path::new(&runtime_dir).join("termway_debug.log"))
+    } else {
+        None
+    };
+
+    if let Some(path) = log_path {
+        if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+            let _ = writeln!(file, "{}", msg.as_ref());
+        }
     }
 }
 
@@ -74,13 +103,14 @@ pub struct TermwayCompositor {
     input_buffer: Vec<u8>,
     pending_command: Option<Vec<String>>,
     client_child: Option<Child>,
+    client_log_file: Option<tempfile::NamedTempFile>,
     has_opened_windows: bool,
     spawn_time: Option<std::time::Instant>,
     xwayland_source: Option<smithay::xwayland::XWayland>,
     _xwayland_client: Option<smithay::reexports::wayland_server::Client>,
     session: crate::session::SessionManager,
     cell_size_queried: bool,
-    wrap_dir: Option<String>,
+    wrap_dir: Option<tempfile::TempDir>,
 }
 
 impl TermwayCompositor {
@@ -159,24 +189,22 @@ impl TermwayCompositor {
         // 5. Try starting XWayland for legacy X11 compatibility
         // Workaround for environments where WAYLAND_SOCKET FD gets closed (e.g. by security wrappers):
         // We create a wrapper script that unsets WAYLAND_SOCKET and uses WAYLAND_DISPLAY instead.
-        let xwayland_real = String::from_utf8(
-            std::process::Command::new("which").arg("Xwayland").output().unwrap().stdout
-        ).unwrap();
-        let xwayland_real = xwayland_real.trim();
-        let uid = unsafe { libc::getuid() };
-        let pid = std::process::id();
-        let wrap_dir = format!("/tmp/termway_wrap_{}_{}", uid, pid);
-        let _ = std::fs::create_dir_all(&wrap_dir);
-        let wrapper_path = format!("{}/Xwayland", wrap_dir);
-        let wrapper_script = format!(
-            "#!/bin/bash\nunset WAYLAND_SOCKET\nexport WAYLAND_DISPLAY={}\nARGS=()\nfor arg in \"$@\"; do\n    if [ \"$arg\" != \"-terminate\" ]; then\n        ARGS+=(\"$arg\")\n    fi\ndone\nexec {} \"${{ARGS[@]}}\" -ac\n",
-            socket_name, xwayland_real
-        );
-        std::fs::write(&wrapper_path, wrapper_script).unwrap();
-        std::fs::set_permissions(&wrapper_path, std::os::unix::fs::PermissionsExt::from_mode(0o700)).unwrap();
-        
-        let old_path = std::env::var("PATH").unwrap_or_default();
-        std::env::set_var("PATH", format!("{}:{}", wrap_dir, old_path));
+        let mut wrap_dir_guard = None;
+        if let Some(xwayland_real) = find_xwayland_binary() {
+            if let Ok(temp_dir) = tempfile::Builder::new().prefix("termway_wrap_").tempdir() {
+                let wrapper_path = temp_dir.path().join("Xwayland");
+                let wrapper_script = format!(
+                    "#!/bin/bash\nunset WAYLAND_SOCKET\nexport WAYLAND_DISPLAY={}\nARGS=()\nfor arg in \"$@\"; do\n    if [ \"$arg\" != \"-terminate\" ]; then\n        ARGS+=(\"$arg\")\n    fi\ndone\nexec {} \"${{ARGS[@]}}\" -ac\n",
+                    socket_name, xwayland_real.display()
+                );
+                if std::fs::write(&wrapper_path, wrapper_script).is_ok() {
+                    let _ = std::fs::set_permissions(&wrapper_path, std::os::unix::fs::PermissionsExt::from_mode(0o700));
+                    let old_path = std::env::var("PATH").unwrap_or_default();
+                    std::env::set_var("PATH", format!("{}:{}", temp_dir.path().display(), old_path));
+                    wrap_dir_guard = Some(temp_dir);
+                }
+            }
+        }
 
         let mut state = state;
         let (xwayland, x11_display) = match smithay::xwayland::XWayland::spawn(
@@ -221,6 +249,7 @@ impl TermwayCompositor {
             renderer,
             backend,
             client_child: None,
+            client_log_file: None,
             has_opened_windows: false,
             spawn_time: None,
             pending_command,
@@ -230,7 +259,7 @@ impl TermwayCompositor {
             x11_display,
             session,
             cell_size_queried,
-            wrap_dir: Some(wrap_dir),
+            wrap_dir: wrap_dir_guard,
             term_cols: term_size.cols.max(1),
             term_rows: term_size.rows.max(1),
             taskbar_chips: Vec::new(),
@@ -256,8 +285,7 @@ impl TermwayCompositor {
         let mut event_loop = smithay::reexports::calloop::EventLoop::<TermwayState>::try_new()?;
         let loop_handle = event_loop.handle();
 
-        if let Some(xwayland) = self.xwayland_source.take() {
-            let client = self._xwayland_client.clone().unwrap();
+        if let (Some(xwayland), Some(client)) = (self.xwayland_source.take(), self._xwayland_client.clone()) {
             let handle = loop_handle.clone();
             let _ = loop_handle.insert_source(xwayland, move |event, _, state| {
                 match event {
@@ -352,17 +380,20 @@ impl TermwayCompositor {
                     if let Some(dbus) = self.session.dbus_address_for_client(&cmd_args[0]) {
                         cmd.env("DBUS_SESSION_BUS_ADDRESS", dbus);
                     }
-                    if let Ok(file) = std::fs::OpenOptions::new()
-                        .create(true)
-                        .truncate(true)
-                        .write(true)
-                        .open("/tmp/termway_client.log")
-                    {
-                        if let Ok(err_file) = file.try_clone() {
-                            cmd.stdout(file);
-                            cmd.stderr(err_file);
+                    let log_temp = tempfile::Builder::new()
+                        .prefix("termway_client_")
+                        .suffix(".log")
+                        .tempfile()
+                        .ok();
+                    if let Some(ref file) = log_temp {
+                        if let Ok(out_file) = file.reopen() {
+                            if let Ok(err_file) = out_file.try_clone() {
+                                cmd.stdout(out_file);
+                                cmd.stderr(err_file);
+                            }
                         }
                     }
+                    self.client_log_file = log_temp;
                     match cmd.spawn() {
                         Ok(child) => {
                             log_line(format!("[termway] Spawned client: {:?}", cmd_args));
@@ -473,7 +504,11 @@ impl TermwayCompositor {
                 match child.try_wait() {
                     Ok(Some(status)) => {
                         if !status.success() {
-                            let err_msg = std::fs::read_to_string("/tmp/termway_client.log").unwrap_or_default();
+                            let err_msg = self
+                                .client_log_file
+                                .as_ref()
+                                .and_then(|f| std::fs::read_to_string(f.path()).ok())
+                                .unwrap_or_default();
                             let preview = err_msg.lines().take(5).collect::<Vec<_>>().join("\n  ");
                             log_line(format!(
                                 "[termway] Client process exited with error ({:?}) before opening any window: {}",
@@ -491,7 +526,11 @@ impl TermwayCompositor {
                         if let Some(st) = self.spawn_time {
                             if st.elapsed() > std::time::Duration::from_secs(6) {
                                 log_line("[termway] Client exited and grace period expired with no window opened.");
-                                let err_msg = std::fs::read_to_string("/tmp/termway_client.log").unwrap_or_default();
+                                let err_msg = self
+                                    .client_log_file
+                                    .as_ref()
+                                    .and_then(|f| std::fs::read_to_string(f.path()).ok())
+                                    .unwrap_or_default();
                                 let preview = err_msg.lines().take(5).collect::<Vec<_>>().join("\n  ");
                                 let msg = if preview.is_empty() {
                                     "Client process exited and grace period expired with no window opened.".to_string()
@@ -521,7 +560,7 @@ impl TermwayCompositor {
                 nix::poll::PollFlags::POLLIN,
             )];
 
-            if let Ok(res) = nix::poll::poll(&mut poll_fds, nix::poll::PollTimeout::try_from(10).unwrap()) {
+            if let Ok(res) = nix::poll::poll(&mut poll_fds, nix::poll::PollTimeout::try_from(10).unwrap_or(nix::poll::PollTimeout::NONE)) {
                 if res > 0 {
                     if let Some(revents) = poll_fds[0].revents() {
                         if revents.contains(nix::poll::PollFlags::POLLIN) {
@@ -990,23 +1029,45 @@ impl TermwayCompositor {
             let uid = unsafe { libc::getuid() };
             let fallback_dir = format!("/tmp/termway-runtime-{}", uid);
             let path = std::path::Path::new(&fallback_dir);
-            if !path.exists() {
-                if let Err(e) = std::fs::create_dir_all(path) {
-                    log_line(format!("[termway] Warning: Failed to create fallback XDG_RUNTIME_DIR {}: {}", fallback_dir, e));
+            
+            // Check if existing path is safe (not a symlink, owned by current user)
+            let is_safe = if path.exists() {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::MetadataExt;
+                    if let Ok(meta) = std::fs::symlink_metadata(path) {
+                        meta.is_dir() && meta.uid() == uid && !meta.file_type().is_symlink()
+                    } else {
+                        false
+                    }
                 }
+                #[cfg(not(unix))]
+                {
+                    path.is_dir()
+                }
+            } else {
+                std::fs::create_dir_all(path).is_ok()
+            };
+
+            if is_safe {
+                // Secure permissions to 0700 (owner read/write/execute only, required by Wayland specs)
+                let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700));
+                std::env::set_var("XDG_RUNTIME_DIR", &fallback_dir);
+                log_line(format!("[termway] Using fallback XDG_RUNTIME_DIR={}", fallback_dir));
+            } else if let Ok(tmp_dir) = tempfile::Builder::new().prefix(&format!("termway-runtime-{}-", uid)).tempdir() {
+                let safe_path = tmp_dir.keep();
+                let _ = std::fs::set_permissions(&safe_path, std::fs::Permissions::from_mode(0o700));
+                let path_str = safe_path.to_string_lossy().to_string();
+                std::env::set_var("XDG_RUNTIME_DIR", &path_str);
+                log_line(format!("[termway] Using secure fallback XDG_RUNTIME_DIR={}", path_str));
             }
-            // Secure permissions to 0700 (owner read/write/execute only, required by Wayland specs)
-            let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700));
-            std::env::set_var("XDG_RUNTIME_DIR", &fallback_dir);
-            log_line(format!("[termway] Using fallback XDG_RUNTIME_DIR={}", fallback_dir));
         }
     }
 }
 
 impl Drop for TermwayCompositor {
     fn drop(&mut self) {
-        if let Some(ref dir) = self.wrap_dir {
-            let _ = std::fs::remove_dir_all(dir);
-        }
+        // TempDir is automatically deleted on drop
+        self.wrap_dir.take();
     }
 }
