@@ -38,7 +38,7 @@ impl DamageTracker {
 
     /// Fast FNV-1a 64-bit hash
     #[inline(always)]
-    fn fnv1a_hash(data: &[u8]) -> u64 {
+    pub fn fnv1a_hash(data: &[u8]) -> u64 {
         let mut hash = 0xcbf29ce484222325u64;
         for &byte in data {
             hash ^= byte as u64;
@@ -47,7 +47,16 @@ impl DamageTracker {
         hash
     }
 
+    /// Resize damage tracker to new resolution
+    pub fn resize(&mut self, width: u32, height: u32) {
+        if self.width == width && self.height == height {
+            return;
+        }
+        *self = Self::new(width, height, self.tile_size);
+    }
+
     /// Compare current frame buffer against previous frame and return modified bounding rectangles.
+    /// Completely zero-allocation: streams FNV-1a hash across tile rows directly from rgba_data.
     pub fn track_damage(&mut self, rgba_data: &[u8]) -> Vec<DamageRect> {
         let stride = (self.width * 4) as usize;
         let mut dirty_tiles = Vec::new();
@@ -61,18 +70,20 @@ impl DamageTracker {
                 let rect_w = (self.tile_size).min(self.width.saturating_sub(rect_x));
                 let rect_h = (self.tile_size).min(self.height.saturating_sub(rect_y));
 
-                // Compute hash of this tile
-                let mut tile_bytes = Vec::with_capacity((rect_w * rect_h * 4) as usize);
+                // Compute hash of this tile in-place with zero allocations
+                let mut current_hash = 0xcbf29ce484222325u64;
                 for y in 0..rect_h {
                     let cur_y = (rect_y + y) as usize;
                     let row_start = cur_y * stride + (rect_x * 4) as usize;
                     let row_end = row_start + (rect_w * 4) as usize;
                     if row_end <= rgba_data.len() {
-                        tile_bytes.extend_from_slice(&rgba_data[row_start..row_end]);
+                        for &byte in &rgba_data[row_start..row_end] {
+                            current_hash ^= byte as u64;
+                            current_hash = current_hash.wrapping_mul(0x100000001b3u64);
+                        }
                     }
                 }
 
-                let current_hash = Self::fnv1a_hash(&tile_bytes);
                 if current_hash != self.prev_tile_hashes[tile_idx] {
                     self.prev_tile_hashes[tile_idx] = current_hash;
                     dirty_tiles.push(DamageRect {

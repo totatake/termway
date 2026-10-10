@@ -42,3 +42,31 @@ fn test_damage_tracker_partial_change() {
     assert_eq!(damage[0].width, 32);
     assert_eq!(damage[0].height, 32);
 }
+
+#[test]
+fn test_damage_tracker_reset() {
+    let mut tracker = DamageTracker::new(64, 64, 32);
+    let mut frame = vec![0u8; 64 * 64 * 4];
+    frame[0] = 50;
+    let _ = tracker.track_damage(&frame);
+
+    // Identical frame produces no damage
+    assert!(tracker.track_damage(&frame).is_empty());
+
+    // Reset forces next frame to be marked as dirty
+    tracker.reset();
+    assert!(!tracker.track_damage(&frame).is_empty());
+}
+
+#[test]
+fn test_damage_tracker_resize() {
+    let mut tracker = DamageTracker::new(64, 64, 32);
+    let frame1 = vec![128u8; 64 * 64 * 4];
+    let _ = tracker.track_damage(&frame1);
+
+    // Resize to 96x96
+    tracker.resize(96, 96);
+    let frame2 = vec![128u8; 96 * 96 * 4];
+    let damage = tracker.track_damage(&frame2);
+    assert!(!damage.is_empty());
+}

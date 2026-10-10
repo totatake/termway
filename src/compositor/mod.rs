@@ -111,6 +111,8 @@ pub struct TermwayCompositor {
     session: crate::session::SessionManager,
     cell_size_queried: bool,
     wrap_dir: Option<tempfile::TempDir>,
+    damage_tracker: crate::display::DamageTracker,
+    prev_taskbar: Option<String>,
 }
 
 impl TermwayCompositor {
@@ -242,29 +244,33 @@ impl TermwayCompositor {
             None => (None, None),
         };
 
-        Ok(Self {
-            display,
-            listener,
-            state,
-            renderer,
-            backend,
-            client_child: None,
-            client_log_file: None,
-            has_opened_windows: false,
-            spawn_time: None,
-            pending_command,
-            xwayland_source,
-            _xwayland_client,
-            socket_name,
-            x11_display,
-            session,
-            cell_size_queried,
-            wrap_dir: wrap_dir_guard,
-            term_cols: term_size.cols.max(1),
-            term_rows: term_size.rows.max(1),
-            taskbar_chips: Vec::new(),
-            input_buffer: Vec::with_capacity(1024),
-        })
+            let damage_tracker = crate::display::DamageTracker::new(renderer.width(), renderer.height(), 32);
+
+            Ok(Self {
+                display,
+                listener,
+                state,
+                renderer,
+                backend,
+                client_child: None,
+                client_log_file: None,
+                has_opened_windows: false,
+                spawn_time: None,
+                pending_command,
+                xwayland_source,
+                _xwayland_client,
+                socket_name,
+                x11_display,
+                session,
+                cell_size_queried,
+                wrap_dir: wrap_dir_guard,
+                term_cols: term_size.cols.max(1),
+                term_rows: term_size.rows.max(1),
+                taskbar_chips: Vec::new(),
+                input_buffer: Vec::with_capacity(1024),
+                damage_tracker,
+                prev_taskbar: None,
+            })
     }
 
     pub fn socket_name(&self) -> &str {
@@ -598,12 +604,19 @@ impl TermwayCompositor {
                 if self.state.needs_clear {
                     self.state.needs_clear = false;
                     self.backend.needs_clear = true;
+                    self.damage_tracker.reset();
                 }
                 let w = self.renderer.width();
                 let h = self.renderer.height();
                 let taskbar = self.build_taskbar();
                 if let Ok(pixels) = self.renderer.render(&self.state) {
-                    let _ = self.backend.render_pixels(pixels, w, h, taskbar.as_deref());
+                    let damage = self.damage_tracker.track_damage(pixels);
+                    let taskbar_changed = taskbar != self.prev_taskbar;
+                    self.prev_taskbar = taskbar.clone();
+
+                    if !damage.is_empty() || taskbar_changed || self.backend.needs_clear {
+                        let _ = self.backend.render_pixels(pixels, w, h, taskbar.as_deref());
+                    }
 
                     let time = self.state.start_time.elapsed().as_millis() as u32;
                     for window in &self.state.managed_windows {
@@ -687,6 +700,7 @@ impl TermwayCompositor {
         self.state.height = new_size.height_px as u32;
 
         let _ = self.renderer.resize(self.state.width, self.state.height);
+        self.damage_tracker.resize(self.state.width, self.state.height);
         self.backend.resize(new_size);
 
         // 端末サイズ変更時は画面をクリアしてリサイズ直後の残骸とカーソル位置をリセット (Sixelのみ、Kittyは画像を上書きするため不要かつ消去を防ぐ)

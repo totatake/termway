@@ -100,9 +100,9 @@ impl TerminalBackend {
                             &mut sixel_out,
                             &mut sixel_quantized,
                         );
-                        let _ = write!(stdout, "{}\x1b[H", clear_seq);
+                        let _ = write!(stdout, "\x1b[?2026h{}\x1b[H", clear_seq);
                         let _ = stdout.write_all(&sixel_out);
-                        let _ = write!(stdout, "{}{}", taskbar_seq, overlay_seq);
+                        let _ = write!(stdout, "{}{}\x1b[?2026l", taskbar_seq, overlay_seq);
                     } else {
                         KittyEncoder::encode_fullscreen_frame_into(
                             &job.pixels,
@@ -114,7 +114,7 @@ impl TerminalBackend {
                             &mut kitty_b64,
                             &mut kitty_out,
                         );
-                        let _ = write!(stdout, "{}{}{}{}", clear_seq, kitty_out, taskbar_seq, overlay_seq);
+                        let _ = write!(stdout, "\x1b[?2026h{}{}{}{}\x1b[?2026l", clear_seq, kitty_out, taskbar_seq, overlay_seq);
                     }
                     let _ = stdout.flush();
 
