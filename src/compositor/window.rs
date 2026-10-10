@@ -436,6 +436,48 @@ impl ManagedWindow {
         }
     }
 
+    /// Update maximized window dimensions when display/terminal resolution changes
+    pub fn update_maximized_size(&mut self, screen_w: u32, screen_h: u32) {
+        if !self.is_maximized {
+            return;
+        }
+        let (new_loc, new_w, new_h) = if self.has_ssd {
+            let loc = Point::from((BORDER_WIDTH, TITLEBAR_HEIGHT + BORDER_WIDTH));
+            let w = (screen_w as i32 - BORDER_WIDTH * 2).max(100);
+            let h = (screen_h as i32 - TITLEBAR_HEIGHT - BORDER_WIDTH * 2).max(60);
+            (loc, w, h)
+        } else {
+            let loc = Point::from((0, 0));
+            let w = (screen_w as i32).max(100);
+            let h = (screen_h as i32).max(60);
+            (loc, w, h)
+        };
+
+        self.loc = new_loc;
+        self.size = (new_w, new_h).into();
+
+        if let Some(ref mut geo) = self.saved_geometry {
+            geo.size.w = geo.size.w.min(screen_w as i32);
+            geo.size.h = geo.size.h.min(screen_h as i32);
+        }
+
+        match &self.surface {
+            WindowSurface::Wayland(win) => {
+                win.with_pending_state(|state| {
+                    state.states.set(smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::State::Maximized);
+                    state.size = Some((new_w, new_h).into());
+                });
+                win.send_configure();
+            }
+            WindowSurface::X11(win) => {
+                let rect = Rectangle::new(self.loc, self.size);
+                let _ = win.configure(rect);
+                let _ = win.set_maximized(true);
+            }
+            WindowSurface::Dummy => {}
+        }
+    }
+
     /// Restore window from maximized state to its previous saved geometry or 80% screen fallback
     pub fn unmaximize(&mut self, screen_w: u32, screen_h: u32) {
         if !self.is_maximized {

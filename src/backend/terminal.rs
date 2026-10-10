@@ -84,9 +84,9 @@ impl TerminalBackend {
                     let taskbar_seq = format!("\x1b[{};1H\x1b[2K{}", overlay_row, taskbar_str);
                     let clear_seq = if job.needs_clear {
                         if use_sixel {
-                            "\x1b[2J"
+                            "\x1b[2J\x1b[H"
                         } else {
-                            "\x1b[2J\x1b_Ga=d,d=a\x1b\\"
+                            "\x1b[2J\x1b[H\x1b_Ga=d,d=a\x1b\\"
                         }
                     } else {
                         ""
@@ -138,6 +138,7 @@ impl TerminalBackend {
 
     pub fn resize(&mut self, term_size: TerminalSize) {
         self.term_size = term_size;
+        self.needs_clear = true;
     }
 
     pub fn term_size(&self) -> TerminalSize {

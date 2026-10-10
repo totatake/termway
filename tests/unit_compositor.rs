@@ -648,6 +648,35 @@ fn test_unmaximize_pending_preserves_target_size_and_requests_clear() {
     assert!(state.needs_clear);
 }
 
+#[test]
+fn test_dynamic_resize_updates_maximized_and_floating_windows() {
+    use termway::compositor::window::{ManagedWindow, BORDER_WIDTH, TITLEBAR_HEIGHT};
+    use smithay::utils::{Point, Size};
+
+    // 1. Maximized CSD window expands to full screen
+    let mut win_csd = ManagedWindow::new_dummy(1, "CSD Win".into(), Point::from((0, 0)), Size::from((800, 600)));
+    win_csd.has_ssd = false;
+    win_csd.is_maximized = true;
+
+    win_csd.update_maximized_size(1280, 720);
+    assert_eq!(win_csd.loc.x, 0);
+    assert_eq!(win_csd.loc.y, 0);
+    assert_eq!(win_csd.size.w, 1280);
+    assert_eq!(win_csd.size.h, 720);
+
+    // 2. Maximized SSD window expands to full screen within server-decorated margins
+    let mut win_ssd = ManagedWindow::new_dummy(2, "SSD Win".into(), Point::from((0, 0)), Size::from((800, 600)));
+    win_ssd.has_ssd = true;
+    win_ssd.is_maximized = true;
+
+    win_ssd.update_maximized_size(1280, 720);
+    assert_eq!(win_ssd.loc.x, BORDER_WIDTH);
+    assert_eq!(win_ssd.loc.y, TITLEBAR_HEIGHT + BORDER_WIDTH);
+    assert_eq!(win_ssd.size.w, 1280 - BORDER_WIDTH * 2);
+    assert_eq!(win_ssd.size.h, 720 - TITLEBAR_HEIGHT - BORDER_WIDTH * 2);
+}
+
+
 
 
 

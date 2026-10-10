@@ -703,37 +703,56 @@ impl TermwayCompositor {
         self.damage_tracker.resize(self.state.width, self.state.height);
         self.backend.resize(new_size);
 
-        // 端末サイズ変更時は画面をクリアしてリサイズ直後の残骸とカーソル位置をリセット (Sixelのみ、Kittyは画像を上書きするため不要かつ消去を防ぐ)
-        if self.backend.is_sixel() {
-            let mut stdout = std::io::stdout();
-            let _ = std::io::Write::write_all(&mut stdout, b"\x1b[2J\x1b[H");
-            let _ = std::io::Write::flush(&mut stdout);
-        }
-
         let new_mode = smithay::output::Mode {
             size: (self.state.width as i32, self.state.height as i32).into(),
             refresh: 60000,
         };
         self.state.output.change_current_state(Some(new_mode), None, None, None);
+        self.state.output.set_preferred(new_mode);
 
         if self.state.enable_wm {
             for m_win in &mut self.state.managed_windows {
-                let top_margin = if m_win.has_ssd { TITLEBAR_HEIGHT + BORDER_WIDTH * 2 } else { 0 };
-                let side_margin = if m_win.has_ssd { BORDER_WIDTH * 2 } else { 0 };
-                let max_w = (self.state.width as i32 - side_margin - 10).max(160);
-                let max_h = (self.state.height as i32 - top_margin - 10).max(100);
-                let new_w = m_win.size.w.min(max_w);
-                let new_h = m_win.size.h.min(max_h);
+                if m_win.is_maximized {
+                    m_win.update_maximized_size(self.state.width, self.state.height);
+                } else {
+                    let top_margin = if m_win.has_ssd { TITLEBAR_HEIGHT + BORDER_WIDTH * 2 } else { 0 };
+                    let side_margin = if m_win.has_ssd { BORDER_WIDTH * 2 } else { 0 };
+                    let max_w = (self.state.width as i32 - side_margin).max(160);
+                    let max_h = (self.state.height as i32 - top_margin).max(100);
+                    let new_w = m_win.size.w.min(max_w);
+                    let new_h = m_win.size.h.min(max_h);
 
-                let min_x = if m_win.has_ssd { BORDER_WIDTH } else { 0 };
-                let max_x = (self.state.width as i32 - new_w - min_x).max(min_x);
-                let min_y = if m_win.has_ssd { TITLEBAR_HEIGHT + BORDER_WIDTH } else { 0 };
-                let max_y = (self.state.height as i32 - new_h - min_x).max(min_y);
-                m_win.loc.x = m_win.loc.x.clamp(min_x, max_x);
-                m_win.loc.y = m_win.loc.y.clamp(min_y, max_y);
+                    let min_x = if m_win.has_ssd { BORDER_WIDTH } else { 0 };
+                    let max_x = (self.state.width as i32 - new_w - min_x).max(min_x);
+                    let min_y = if m_win.has_ssd { TITLEBAR_HEIGHT + BORDER_WIDTH } else { 0 };
+                    let max_y = (self.state.height as i32 - new_h - min_x).max(min_y);
+                    let new_loc = smithay::utils::Point::from((
+                        m_win.loc.x.clamp(min_x, max_x),
+                        m_win.loc.y.clamp(min_y, max_y),
+                    ));
 
-                if new_w != m_win.size.w || new_h != m_win.size.h {
-                    m_win.configure_size(new_w, new_h);
+                    let loc_changed = m_win.loc != new_loc;
+                    let size_changed = new_w != m_win.size.w || new_h != m_win.size.h;
+                    m_win.loc = new_loc;
+                    m_win.size = (new_w, new_h).into();
+
+                    if loc_changed || size_changed {
+                        match &m_win.surface {
+                            WindowSurface::Wayland(win) => {
+                                if size_changed {
+                                    win.with_pending_state(|state| {
+                                        state.size = Some((new_w, new_h).into());
+                                    });
+                                    win.send_configure();
+                                }
+                            }
+                            WindowSurface::X11(win) => {
+                                let rect = smithay::utils::Rectangle::new(m_win.loc, m_win.size);
+                                let _ = win.configure(rect);
+                            }
+                            WindowSurface::Dummy => {}
+                        }
+                    }
                 }
             }
         } else {
