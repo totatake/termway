@@ -56,3 +56,32 @@ fn test_sixel_multiple_bands() {
     // LF separating bands
     assert!(encoded.contains("-"));
 }
+
+#[test]
+fn test_sixel_performance_1080x720() {
+    let w = 1080;
+    let h = 720;
+    let mut rgba = vec![0u8; (w * h * 4) as usize];
+    for y in 0..h {
+        for x in 0..w {
+            let i = ((y * w + x) * 4) as usize;
+            rgba[i] = (x % 256) as u8;
+            rgba[i + 1] = (y % 256) as u8;
+            rgba[i + 2] = ((x + y) % 256) as u8;
+            rgba[i + 3] = 255;
+        }
+    }
+    let mut out = Vec::with_capacity((w * h) as usize / 2);
+    let mut quantized = Vec::with_capacity((w * h) as usize);
+
+    // Warmup
+    SixelEncoder::encode_fullscreen_frame_into(&rgba, w, h, &mut out, &mut quantized);
+
+    let start = std::time::Instant::now();
+    for _ in 0..5 {
+        SixelEncoder::encode_fullscreen_frame_into(&rgba, w, h, &mut out, &mut quantized);
+    }
+    let elapsed = start.elapsed() / 5;
+    eprintln!("\n[BENCHMARK] 1080x720 Sixel zero-allocation encode avg took: {:?}, size: {} KB", elapsed, out.len() / 1024);
+    assert!(out.len() > 1000);
+}

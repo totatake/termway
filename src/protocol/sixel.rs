@@ -1,5 +1,3 @@
-use std::io::Write;
-
 /// Sixel Graphics Protocol encoder.
 pub struct SixelEncoder;
 
@@ -7,14 +5,33 @@ impl SixelEncoder {
     /// Encode a full-screen RGBA frame buffer to Sixel format using an RGB332 fixed palette.
     pub fn encode_fullscreen_frame(rgba: &[u8], width: u32, height: u32) -> String {
         let mut out = Vec::with_capacity((width * height) as usize / 2);
-        
+        let mut quantized = Vec::new();
+        Self::encode_fullscreen_frame_into(rgba, width, height, &mut out, &mut quantized);
+        String::from_utf8(out).unwrap_or_default()
+    }
+
+    /// Optimized version that reuses preallocated output and quantization buffers (zero-allocation).
+    pub fn encode_fullscreen_frame_into(
+        rgba: &[u8],
+        width: u32,
+        height: u32,
+        out: &mut Vec<u8>,
+        quantized: &mut Vec<u8>,
+    ) {
+        out.clear();
+        let total_pixels = (width * height) as usize;
+        if quantized.len() < total_pixels {
+            quantized.resize(total_pixels, 0);
+        }
+
         // Sixel intro (DCS 7;0;q) with 1:1 pixel aspect ratio and raster attributes (P2=0 for non-transparent/clear)
-        let _ = write!(&mut out, "\x1bP7;0;q\"1;1;{};{}", width, height);
+        out.extend_from_slice(b"\x1bP7;0;q\"1;1;");
+        Self::emit_u32_ascii(out, width);
+        out.push(b';');
+        Self::emit_u32_ascii(out, height);
 
         // 1. Quantize the image to RGB332 and collect used colors globally
         let mut used_colors = [false; 256];
-        let mut quantized = vec![0u8; (width * height) as usize];
-        
         for (i, pixel) in rgba.chunks_exact(4).enumerate() {
             let r = pixel[0] >> 5; // 3 bits (0-7)
             let g = pixel[1] >> 5; // 3 bits (0-7)
@@ -33,20 +50,39 @@ impl SixelEncoder {
                 let r_pct = r * 100 / 7;
                 let g_pct = g * 100 / 7;
                 let b_pct = b * 100 / 3;
-                let _ = write!(&mut out, "#{};2;{};{};{}", i, r_pct, g_pct, b_pct);
+                out.push(b'#');
+                Self::emit_u32_ascii(out, i as u32);
+                out.extend_from_slice(b";2;");
+                Self::emit_u32_ascii(out, r_pct as u32);
+                out.push(b';');
+                Self::emit_u32_ascii(out, g_pct as u32);
+                out.push(b';');
+                Self::emit_u32_ascii(out, b_pct as u32);
             }
         }
 
+        let w = width as usize;
+        let h = height as usize;
+
         // 3. Process 6-pixel high bands
         for band_y in (0..height).step_by(6) {
-            let max_y = std::cmp::min(band_y + 6, height);
-            
+            let start_y = band_y as usize;
+            let max_y = std::cmp::min(start_y + 6, h);
+
+            // Row slices for this 6-pixel band
+            let r0 = &quantized[start_y * w..(start_y + 1) * w];
+            let r1 = if start_y + 1 < h { &quantized[(start_y + 1) * w..(start_y + 2) * w] } else { &[] };
+            let r2 = if start_y + 2 < h { &quantized[(start_y + 2) * w..(start_y + 3) * w] } else { &[] };
+            let r3 = if start_y + 3 < h { &quantized[(start_y + 3) * w..(start_y + 4) * w] } else { &[] };
+            let r4 = if start_y + 4 < h { &quantized[(start_y + 4) * w..(start_y + 5) * w] } else { &[] };
+            let r5 = if start_y + 5 < h { &quantized[(start_y + 5) * w..(start_y + 6) * w] } else { &[] };
+
             // Find colors used in THIS band
             let mut band_used = [false; 256];
-            for y in band_y..max_y {
-                let row_start = (y * width) as usize;
-                for x in 0..width as usize {
-                    band_used[quantized[row_start + x] as usize] = true;
+            for y in start_y..max_y {
+                let row = &quantized[y * w..(y + 1) * w];
+                for &color in row {
+                    band_used[color as usize] = true;
                 }
             }
 
@@ -55,33 +91,34 @@ impl SixelEncoder {
                 if !is_used {
                     continue;
                 }
+                let c_u8 = c as u8;
 
-                let _ = write!(&mut out, "#{}", c);
+                out.push(b'#');
+                Self::emit_u32_ascii(out, c as u32);
 
                 let mut run_char = 0u8;
                 let mut run_len = 0;
 
-                for x in 0..width as usize {
-                    let mut mask = 0;
-                    for row in 0..6 {
-                        let y = band_y + row;
-                        if y >= height { break; }
-                        let idx = (y * width) as usize + x;
-                        if quantized[idx] as usize == c {
-                            mask |= 1 << row;
-                        }
-                    }
+                for x in 0..w {
+                    let mut mask = 0u8;
+                    if r0[x] == c_u8 { mask |= 1; }
+                    if !r1.is_empty() && r1[x] == c_u8 { mask |= 2; }
+                    if !r2.is_empty() && r2[x] == c_u8 { mask |= 4; }
+                    if !r3.is_empty() && r3[x] == c_u8 { mask |= 8; }
+                    if !r4.is_empty() && r4[x] == c_u8 { mask |= 16; }
+                    if !r5.is_empty() && r5[x] == c_u8 { mask |= 32; }
+
                     let ch = mask + 63;
 
                     if ch == run_char {
                         run_len += 1;
                     } else {
-                        Self::emit_rle(&mut out, run_char, run_len);
+                        Self::emit_rle(out, run_char, run_len);
                         run_char = ch;
                         run_len = 1;
                     }
                 }
-                Self::emit_rle(&mut out, run_char, run_len);
+                Self::emit_rle(out, run_char, run_len);
                 out.push(b'$'); // Carriage return to start of band
             }
             if band_y + 6 < height {
@@ -91,11 +128,25 @@ impl SixelEncoder {
 
         // Sixel outro (String Terminator)
         out.extend_from_slice(b"\x1b\\");
-
-        String::from_utf8(out).unwrap_or_default()
     }
 
-    #[inline]
+    #[inline(always)]
+    fn emit_u32_ascii(out: &mut Vec<u8>, mut n: u32) {
+        if n == 0 {
+            out.push(b'0');
+            return;
+        }
+        let mut buf = [0u8; 10];
+        let mut i = 10;
+        while n > 0 {
+            i -= 1;
+            buf[i] = b'0' + (n % 10) as u8;
+            n /= 10;
+        }
+        out.extend_from_slice(&buf[i..]);
+    }
+
+    #[inline(always)]
     fn emit_rle(out: &mut Vec<u8>, ch: u8, count: usize) {
         if count == 0 {
             return;
@@ -105,7 +156,10 @@ impl SixelEncoder {
                 out.push(ch);
             }
         } else {
-            let _ = write!(out, "!{}{}", count, ch as char);
+            out.push(b'!');
+            Self::emit_u32_ascii(out, count as u32);
+            out.push(ch);
         }
     }
 }
+

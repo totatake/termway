@@ -21,20 +21,47 @@ impl KittyEncoder {
         term_rows: u16,
         image_id: u32,
     ) -> String {
-        let b64_data = BASE64.encode(rgba);
-        let mut output = String::with_capacity(b64_data.len() + 256);
+        let mut b64_buf = String::new();
+        let mut output = String::new();
+        Self::encode_fullscreen_frame_into(
+            rgba,
+            width,
+            height,
+            term_cols,
+            term_rows,
+            image_id,
+            &mut b64_buf,
+            &mut output,
+        );
+        output
+    }
+
+    /// Optimized zero-allocation version reusing preallocated base64 and output string buffers.
+    pub fn encode_fullscreen_frame_into(
+        rgba: &[u8],
+        width: u32,
+        height: u32,
+        term_cols: u16,
+        term_rows: u16,
+        image_id: u32,
+        b64_buf: &mut String,
+        output: &mut String,
+    ) {
+        b64_buf.clear();
+        BASE64.encode_string(rgba, b64_buf);
+        output.clear();
 
         // Move cursor to top-left (1,1) before displaying
         output.push_str("\x1b[H");
 
         let chunk_size = 4096;
-        let total_len = b64_data.len();
+        let total_len = b64_buf.len();
         let mut offset = 0;
         let mut first = true;
 
         while offset < total_len {
             let next_offset = std::cmp::min(offset + chunk_size, total_len);
-            let chunk = &b64_data[offset..next_offset];
+            let chunk = &b64_buf[offset..next_offset];
             let is_last = next_offset >= total_len;
             let m_flag = if is_last { 0 } else { 1 };
 
@@ -53,8 +80,6 @@ impl KittyEncoder {
 
             offset = next_offset;
         }
-
-        output
     }
 
     /// Encode RGBA pixel data to Kitty Graphics Protocol escape sequence chunks.

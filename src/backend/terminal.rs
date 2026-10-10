@@ -4,6 +4,25 @@ use crate::protocol::{KeyCode, KeyboardParser, KittyEncoder, SixelEncoder, SgrMo
 use crate::terminal::TerminalSize;
 use std::io::{self, Read, Write};
 
+use std::sync::{Arc, Mutex, Condvar};
+use std::thread::JoinHandle;
+
+struct RenderJob {
+    pixels: Vec<u8>,
+    width: u32,
+    height: u32,
+    term_cols: u16,
+    term_rows: u16,
+    taskbar: Option<String>,
+    needs_clear: bool,
+}
+
+struct AsyncRenderState {
+    pending_job: Option<RenderJob>,
+    spare_buffer: Option<Vec<u8>>,
+    shutdown: bool,
+}
+
 pub struct TerminalBackend {
     pub term_size: TerminalSize,
     input_buffer: Vec<u8>,
@@ -11,10 +30,96 @@ pub struct TerminalBackend {
     is_wayland: bool,
     pub screenshot_requested: bool,
     pub needs_clear: bool,
+    async_state: Arc<(Mutex<AsyncRenderState>, Condvar)>,
+    worker_handle: Option<JoinHandle<()>>,
 }
 
 impl TerminalBackend {
     pub fn new(term_size: TerminalSize, use_sixel: bool, is_wayland: bool) -> Self {
+        let async_state = Arc::new((
+            Mutex::new(AsyncRenderState {
+                pending_job: None,
+                spare_buffer: None,
+                shutdown: false,
+            }),
+            Condvar::new(),
+        ));
+
+        let state_clone = Arc::clone(&async_state);
+        let mode_desc = if is_wayland {
+            if use_sixel { "Wayland (Sixel)" } else { "Wayland (Kitty)" }
+        } else {
+            if use_sixel { "X11/Xvfb (Sixel)" } else { "X11/Xvfb (Kitty)" }
+        };
+
+        let worker_handle = std::thread::Builder::new()
+            .name("termway-async-render".into())
+            .spawn(move || {
+                let mut stdout = io::stdout();
+                let mut sixel_out = Vec::new();
+                let mut sixel_quantized = Vec::new();
+                let mut kitty_b64 = String::new();
+                let mut kitty_out = String::new();
+
+                let (lock, cvar) = &*state_clone;
+                loop {
+                    let job = {
+                        let mut guard = lock.lock().unwrap();
+                        while guard.pending_job.is_none() && !guard.shutdown {
+                            guard = cvar.wait(guard).unwrap();
+                        }
+                        if guard.shutdown && guard.pending_job.is_none() {
+                            break;
+                        }
+                        guard.pending_job.take().unwrap()
+                    };
+
+                    let overlay_text = format!("\x1b[40;37m [{}] [Ctrl-Q: Exit] [F12: Screenshot] \x1b[0m", mode_desc);
+                    let overlay_len = mode_desc.len() + 37;
+                    let overlay_row = job.term_rows;
+                    let overlay_col = job.term_cols.saturating_sub(overlay_len as u16 + 2).max(1);
+                    let overlay_seq = format!("\x1b[{};{}H{}", overlay_row, overlay_col, overlay_text);
+
+                    let taskbar_str = job.taskbar.as_deref().unwrap_or("");
+                    let taskbar_seq = format!("\x1b[{};1H\x1b[2K{}", overlay_row, taskbar_str);
+                    let clear_seq = if job.needs_clear {
+                        "\x1b[2J"
+                    } else {
+                        ""
+                    };
+
+                    if use_sixel {
+                        SixelEncoder::encode_fullscreen_frame_into(
+                            &job.pixels,
+                            job.width,
+                            job.height,
+                            &mut sixel_out,
+                            &mut sixel_quantized,
+                        );
+                        let _ = write!(stdout, "{}\x1b[H", clear_seq);
+                        let _ = stdout.write_all(&sixel_out);
+                        let _ = write!(stdout, "{}{}", taskbar_seq, overlay_seq);
+                    } else {
+                        KittyEncoder::encode_fullscreen_frame_into(
+                            &job.pixels,
+                            job.width,
+                            job.height,
+                            job.term_cols,
+                            job.term_rows,
+                            1,
+                            &mut kitty_b64,
+                            &mut kitty_out,
+                        );
+                        let _ = write!(stdout, "{}{}{}{}", clear_seq, kitty_out, taskbar_seq, overlay_seq);
+                    }
+                    let _ = stdout.flush();
+
+                    let mut guard = lock.lock().unwrap();
+                    guard.spare_buffer = Some(job.pixels);
+                }
+            })
+            .ok();
+
         Self {
             term_size,
             input_buffer: Vec::with_capacity(1024),
@@ -22,6 +127,8 @@ impl TerminalBackend {
             is_wayland,
             screenshot_requested: false,
             needs_clear: false,
+            async_state,
+            worker_handle,
         }
     }
 
@@ -57,34 +164,7 @@ impl TerminalBackend {
         if damage.is_empty() {
             return Ok(());
         }
-
-        let mut stdout = io::stdout();
-
-        let mode_desc = self.name();
-        let overlay_text = format!("\x1b[40;37m [{}] [Ctrl-Q: Exit] [F12: Screenshot] \x1b[0m", mode_desc);
-        let overlay_len = mode_desc.len() + 37;
-        let overlay_row = self.term_size.rows;
-        let overlay_col = self.term_size.cols.saturating_sub(overlay_len as u16 + 2).max(1);
-        let overlay_seq = format!("\x1b[{};1H\x1b[2K\x1b[{};{}H{}", overlay_row, overlay_row, overlay_col, overlay_text);
-
-        if self.use_sixel {
-            let encoded = SixelEncoder::encode_fullscreen_frame(&fb.pixels, fb.width, fb.height);
-            // Sixel doesn't inherently position itself at the top left without a cursor move
-            write!(stdout, "\x1b[H{}{}", encoded, overlay_seq)?;
-        } else {
-            // Render full frame with image replacement ID=1 and cursor suppression C=1
-            // to avoid scrolling and flickering
-            let encoded = KittyEncoder::encode_fullscreen_frame(
-                &fb.pixels,
-                fb.width,
-                fb.height,
-                self.term_size.cols,
-                self.term_size.rows,
-                1, // Fixed image ID for the viewport
-            );
-            write!(stdout, "{}{}", encoded, overlay_seq)?;
-        }
-        stdout.flush()
+        self.render_pixels(&fb.pixels, fb.width, fb.height, None)
     }
 
     pub fn render_pixels(
@@ -94,39 +174,41 @@ impl TerminalBackend {
         height: u32,
         taskbar: Option<&str>,
     ) -> io::Result<()> {
-        let mut stdout = io::stdout();
+        let (lock, cvar) = &*self.async_state;
+        let mut guard = lock.lock().unwrap();
 
-        let mode_desc = self.name();
-        let overlay_text = format!("\x1b[40;37m [{}] [Ctrl-Q: Exit] [F12: Screenshot] \x1b[0m", mode_desc);
-        let overlay_len = mode_desc.len() + 37;
-        let overlay_row = self.term_size.rows;
-        let overlay_col = self.term_size.cols.saturating_sub(overlay_len as u16 + 2).max(1);
-        let overlay_seq = format!("\x1b[{};{}H{}", overlay_row, overlay_col, overlay_text);
+        let needs_clear = self.needs_clear;
+        self.needs_clear = false;
 
-        let taskbar_str = taskbar.unwrap_or("");
-        let taskbar_seq = format!("\x1b[{};1H\x1b[2K{}", overlay_row, taskbar_str);
-        let clear_seq = if self.needs_clear {
-            self.needs_clear = false;
-            "\x1b[2J"
+        if let Some(ref mut job) = guard.pending_job {
+            // Worker is still busy encoding/flushing previous frame.
+            // Drop outdated pending frame and replace with this latest frame (Frame Dropping!).
+            job.pixels.clear();
+            job.pixels.extend_from_slice(pixels);
+            job.width = width;
+            job.height = height;
+            job.term_cols = self.term_size.cols;
+            job.term_rows = self.term_size.rows;
+            job.taskbar = taskbar.map(String::from);
+            if needs_clear {
+                job.needs_clear = true;
+            }
         } else {
-            ""
-        };
-
-        if self.use_sixel {
-            let encoded = SixelEncoder::encode_fullscreen_frame(pixels, width, height);
-            write!(stdout, "{}\x1b[H{}{}{}", clear_seq, encoded, taskbar_seq, overlay_seq)?;
-        } else {
-            let encoded = KittyEncoder::encode_fullscreen_frame(
-                pixels,
+            let mut buf = guard.spare_buffer.take().unwrap_or_else(|| Vec::with_capacity(pixels.len()));
+            buf.clear();
+            buf.extend_from_slice(pixels);
+            guard.pending_job = Some(RenderJob {
+                pixels: buf,
                 width,
                 height,
-                self.term_size.cols,
-                self.term_size.rows,
-                1,
-            );
-            write!(stdout, "{}{}{}{}", clear_seq, encoded, taskbar_seq, overlay_seq)?;
+                term_cols: self.term_size.cols,
+                term_rows: self.term_size.rows,
+                taskbar: taskbar.map(String::from),
+                needs_clear,
+            });
         }
-        stdout.flush()
+        cvar.notify_one();
+        Ok(())
     }
 
     pub fn poll_input(
@@ -242,3 +324,18 @@ impl TerminalBackend {
         req
     }
 }
+
+impl Drop for TerminalBackend {
+    fn drop(&mut self) {
+        {
+            let (lock, cvar) = &*self.async_state;
+            let mut guard = lock.lock().unwrap();
+            guard.shutdown = true;
+            cvar.notify_one();
+        }
+        if let Some(handle) = self.worker_handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
