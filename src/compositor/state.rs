@@ -80,9 +80,12 @@ pub struct TermwayState {
     pub unassociated_surfaces: Vec<WlSurface>,
     pub xwayland_shell_state: smithay::wayland::xwayland_shell::XWaylandShellState,
     pub xwm: Option<smithay::xwayland::xwm::X11Wm>,
+    /// Separate X11 client connection to XWayland used to query X Shape regions.
+    pub x11_shape_conn: Option<x11rb::rust_connection::RustConnection>,
     pub xwayland_ready: bool,
     pub xwayland_error: Option<String>,
     pub dirty: bool,
+    pub needs_clear: bool,
     pub running: bool,
     pub width: u32,
     pub height: u32,
@@ -146,9 +149,11 @@ impl TermwayState {
             unassociated_surfaces: Vec::new(),
             xwayland_shell_state,
             xwm: None,
+            x11_shape_conn: None,
             xwayland_ready: false,
             xwayland_error: None,
             dirty: true,
+            needs_clear: false,
             running: true,
             width,
             height,
@@ -183,6 +188,7 @@ impl TermwayState {
             let keyboard = self.keyboard.clone();
             keyboard.set_focus(self, None, smithay::utils::SERIAL_COUNTER.next_serial());
         }
+        self.needs_clear = true;
         self.dirty = true;
     }
 
@@ -203,6 +209,7 @@ impl TermwayState {
             }
         }
         self.raise_window(id);
+        self.needs_clear = true;
         self.dirty = true;
     }
 
@@ -231,9 +238,43 @@ impl TermwayState {
     pub fn surface_for_managed_window(&self, window: &ManagedWindow) -> Option<WlSurface> {
         match &window.surface {
             super::window::WindowSurface::Wayland(w) => Some(w.wl_surface().clone()),
-            super::window::WindowSurface::X11(w) => self.surface_for_x11(w),
+            super::window::WindowSurface::X11(w) => w
+                .wl_surface()
+                .or_else(|| window.cached_wl_surface())
+                .or_else(|| self.surface_for_x11(w)),
             super::window::WindowSurface::Dummy => None,
         }
+    }
+
+    /// Query the X Shape extension bounding region of an X11 window.
+    /// Returns `None` if the window is unshaped (single rect covering the whole window)
+    /// or if the query is unavailable.
+    ///
+    /// Shaped windows (e.g. xeyes) never repaint pixels outside their shape. When XWayland
+    /// (Composite) reallocates the window pixmap on resize, it copies the old contents, so
+    /// pixels outside the shape keep stale data. A real X server hides them via the shape,
+    /// so we must clip rendering to the shape region as well.
+    pub fn query_x11_shape(&self, xwindow: &smithay::xwayland::X11Surface) -> Option<Vec<smithay::utils::Rectangle<i32, smithay::utils::Logical>>> {
+        use x11rb::protocol::shape::{ConnectionExt as _, SK};
+        let conn = self.x11_shape_conn.as_ref()?;
+        let reply = conn
+            .shape_get_rectangles(xwindow.window_id(), SK::BOUNDING)
+            .ok()?
+            .reply()
+            .ok()?;
+        let rects: Vec<smithay::utils::Rectangle<i32, smithay::utils::Logical>> = reply
+            .rectangles
+            .iter()
+            .map(|r| smithay::utils::Rectangle::new((r.x as i32, r.y as i32).into(), (r.width as i32, r.height as i32).into()))
+            .collect();
+        let geo = xwindow.geometry();
+        if rects.len() == 1 && rects[0].loc.x <= 0 && rects[0].loc.y <= 0
+            && rects[0].loc.x + rects[0].size.w >= geo.size.w
+            && rects[0].loc.y + rects[0].size.h >= geo.size.h
+        {
+            return None;
+        }
+        Some(rects)
     }
 
 
@@ -358,8 +399,21 @@ impl CompositorHandler for TermwayState {
         });
 
         // タイトルや状態の更新
-        for w in &mut self.managed_windows {
-            if w.wl_surface().as_ref() == Some(surface) {
+        let matched_win_id = self.managed_windows.iter().find(|w| {
+            w.wl_surface().as_ref() == Some(surface) || self.surface_for_managed_window(w).as_ref() == Some(surface)
+        }).map(|w| w.id);
+
+        if let Some(win_id) = matched_win_id {
+            // X11: remember the resolved surface and refresh the shape region
+            let x11_shape = self.managed_windows.iter().find(|w| w.id == win_id).and_then(|w| match &w.surface {
+                super::window::WindowSurface::X11(x) => Some(self.query_x11_shape(x)),
+                _ => None,
+            });
+            if let Some(w) = self.managed_windows.iter_mut().find(|w| w.id == win_id) {
+                if let Some(shape) = x11_shape {
+                    w.associated_wl_surface = Some(surface.clone());
+                    w.x11_shape = shape;
+                }
                 w.update_title();
                 if self.enable_wm {
                     let bbox = smithay::desktop::utils::bbox_from_surface_tree(surface, (0, 0));
@@ -371,10 +425,13 @@ impl CompositorHandler for TermwayState {
 
                         if !w.is_maximized {
                             if w.pending_unmaximize {
-                                // If client is still committing the in-flight maximized buffer, wait for unmaximized buffer
-                                let is_old_maximized_buffer = bbox.size.w >= max_allowed_w && bbox.size.h >= max_allowed_h;
-                                if is_old_maximized_buffer {
-                                    continue;
+                                // While pending_unmaximize is true, the target unmaximized geometry is already set in w.size/w.loc.
+                                // If the client commits a buffer that is still larger than the target size,
+                                // it is an in-flight buffer from the previous maximized state. Keep target size intact.
+                                let is_old_large_buffer = bbox.size.w > w.size.w + 20 || bbox.size.h > w.size.h + 20;
+                                if is_old_large_buffer {
+                                    // The unmaximize configure was already sent; just wait for the new buffer.
+                                    return;
                                 }
                                 w.pending_unmaximize = false;
 
@@ -622,6 +679,7 @@ impl XdgShellHandler for TermwayState {
             });
             surface.send_configure();
         }
+        self.needs_clear = true;
         self.dirty = true;
     }
 
@@ -640,6 +698,7 @@ impl XdgShellHandler for TermwayState {
             });
             surface.send_configure();
         }
+        self.needs_clear = true;
         self.dirty = true;
     }
 
@@ -650,6 +709,8 @@ impl XdgShellHandler for TermwayState {
         }).map(|w| w.id) {
             self.minimize_window(id);
         }
+        self.needs_clear = true;
+        self.dirty = true;
     }
 
     fn move_request(&mut self, surface: ToplevelSurface, _seat: wl_seat::WlSeat, _serial: Serial) {

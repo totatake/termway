@@ -2,16 +2,13 @@ use smithay::{
     backend::{
         allocator::Fourcc,
         renderer::{
-            element::{
-                surface::{render_elements_from_surface_tree, WaylandSurfaceRenderElement},
-                Kind,
-            },
+            element::surface::{render_elements_from_surface_tree, WaylandSurfaceRenderElement},
             pixman::PixmanRenderer,
             utils::draw_render_elements,
             Bind, Color32F, Frame, Offscreen, Renderer,
         },
     },
-    utils::{Buffer, Physical, Rectangle, Size, Transform},
+    utils::{Buffer, Physical, Point, Rectangle, Size, Transform},
 };
 
 use super::decoration::DecorationRenderer;
@@ -56,13 +53,83 @@ impl TermwayRenderer {
 
     pub fn render(&mut self, state: &TermwayState) -> Result<&[u8], Box<dyn std::error::Error>> {
         let phys_size: Size<i32, Physical> = Size::from((self.width as i32, self.height as i32));
-        let damage: Rectangle<i32, Physical> = Rectangle::from_size(phys_size);
+        let screen_damage: Rectangle<i32, Physical> = Rectangle::from_size(phys_size);
 
-        // 1. Collect render elements from surfaces (Front to Back order for draw_render_elements)
-        let mut elements: Vec<WaylandSurfaceRenderElement<PixmanRenderer>> = Vec::new();
+        // 1. Collect render elements from surfaces with their clipping rectangles
+        // Collect before creating `frame` to avoid multiple mutable borrows of `self.renderer`.
+        let mut window_layers: Vec<(Vec<WaylandSurfaceRenderElement<PixmanRenderer>>, Vec<Rectangle<i32, Physical>>)> = Vec::new();
 
-        // A. Render Wayland XDG popups on top
-        for window in state.managed_windows.iter().rev() {
+        for window in &state.managed_windows {
+            if window.is_minimized {
+                continue;
+            }
+            if let Some(surface) = state.surface_for_managed_window(window) {
+                let win_clip: Rectangle<i32, Physical> = Rectangle::new(
+                    Point::from((window.loc.x, window.loc.y)),
+                    Size::from((window.size.w, window.size.h)),
+                );
+                // Shaped X11 windows: only draw inside the X Shape bounding region
+                let clips: Vec<Rectangle<i32, Physical>> = match &window.x11_shape {
+                    Some(rects) => rects
+                        .iter()
+                        .filter_map(|r| {
+                            Rectangle::<i32, Physical>::new(
+                                Point::from((window.loc.x + r.loc.x, window.loc.y + r.loc.y)),
+                                Size::from((r.size.w, r.size.h)),
+                            )
+                            .intersection(win_clip)
+                        })
+                        .collect(),
+                    None => vec![win_clip],
+                };
+                if clips.is_empty() {
+                    continue;
+                }
+                let elems: Vec<WaylandSurfaceRenderElement<PixmanRenderer>> = render_elements_from_surface_tree(
+                    &mut self.renderer,
+                    &surface,
+                    (window.loc.x, window.loc.y),
+                    1.0,
+                    1.0,
+                    smithay::backend::renderer::element::Kind::Unspecified,
+                );
+                if !elems.is_empty() {
+                    window_layers.push((elems, clips));
+                }
+            }
+        }
+
+        let mut x11_layers: Vec<(Vec<WaylandSurfaceRenderElement<PixmanRenderer>>, Rectangle<i32, Physical>)> = Vec::new();
+        for xwindow in &state.x11_windows {
+            let is_managed = state.managed_windows.iter().any(|mw| matches!(&mw.surface, WindowSurface::X11(w) if w == xwindow));
+            if !is_managed {
+                let geo = xwindow.geometry();
+                if let Some(surface) = state.surface_for_x11(xwindow) {
+                    let bbox = smithay::desktop::utils::bbox_from_surface_tree(&surface, (0, 0));
+                    let w = if geo.size.w > 0 { geo.size.w } else { bbox.size.w };
+                    let h = if geo.size.h > 0 { geo.size.h } else { bbox.size.h };
+                    let x11_clip: Rectangle<i32, Physical> = Rectangle::new(
+                        Point::from((geo.loc.x, geo.loc.y)),
+                        Size::from((w, h)),
+                    );
+
+                    let elems: Vec<WaylandSurfaceRenderElement<PixmanRenderer>> = render_elements_from_surface_tree(
+                        &mut self.renderer,
+                        &surface,
+                        (geo.loc.x, geo.loc.y),
+                        1.0,
+                        1.0,
+                        smithay::backend::renderer::element::Kind::Unspecified,
+                    );
+                    if !elems.is_empty() {
+                        x11_layers.push((elems, x11_clip));
+                    }
+                }
+            }
+        }
+
+        let mut popup_layers: Vec<(Vec<WaylandSurfaceRenderElement<PixmanRenderer>>, Rectangle<i32, Physical>)> = Vec::new();
+        for window in &state.managed_windows {
             if window.is_minimized {
                 continue;
             }
@@ -70,91 +137,82 @@ impl TermwayRenderer {
                 for (popup, popup_offset) in smithay::desktop::PopupManager::popups_for_surface(toplevel.wl_surface()) {
                     let popup_x = window.loc.x + popup_offset.x - popup.geometry().loc.x;
                     let popup_y = window.loc.y + popup_offset.y - popup.geometry().loc.y;
-                    let elems = render_elements_from_surface_tree(
+                    let bbox = smithay::desktop::utils::bbox_from_surface_tree(popup.wl_surface(), (0, 0));
+                    let popup_clip: Rectangle<i32, Physical> = Rectangle::new(
+                        Point::from((popup_x, popup_y)),
+                        Size::from((bbox.size.w, bbox.size.h)),
+                    );
+                    let elems: Vec<WaylandSurfaceRenderElement<PixmanRenderer>> = render_elements_from_surface_tree(
                         &mut self.renderer,
                         popup.wl_surface(),
                         (popup_x, popup_y),
                         1.0,
                         1.0,
-                        Kind::Unspecified,
+                        smithay::backend::renderer::element::Kind::Unspecified,
                     );
-                    elements.extend(elems);
+                    if !elems.is_empty() {
+                        popup_layers.push((elems, popup_clip));
+                    }
                 }
             }
         }
 
-        // B. Render unmanaged X11 popup/override-redirect surfaces on top
-        for xwindow in state.x11_windows.iter().rev() {
-            let is_managed = state.managed_windows.iter().any(|mw| matches!(&mw.surface, WindowSurface::X11(w) if w == xwindow));
-            if !is_managed {
-                let geo = xwindow.geometry();
-                if let Some(surface) = state.surface_for_x11(xwindow) {
-                    let elems = render_elements_from_surface_tree(
-                        &mut self.renderer,
-                        &surface,
-                        (geo.loc.x, geo.loc.y),
-                        1.0,
-                        1.0,
-                        Kind::Unspecified,
-                    );
-                    elements.extend(elems);
-                }
-            }
-        }
-
-        // B. Render managed windows in top-to-bottom order (rev() since managed_windows last is front)
-        for window in state.managed_windows.iter().rev() {
-            if window.is_minimized {
-                continue;
-            }
-            if let Some(surface) = state.surface_for_managed_window(window) {
-                let elems = render_elements_from_surface_tree(
-                    &mut self.renderer,
-                    &surface,
-                    (window.loc.x, window.loc.y),
-                    1.0,
-                    1.0,
-                    Kind::Unspecified,
-                );
-                elements.extend(elems);
-            }
-        }
-
-        // C. Fallback: if no elements collected from managed or X11 windows, render unassociated surfaces at (0, 0)
         let any_managed = !state.managed_windows.is_empty();
         let all_managed_minimized = any_managed && state.managed_windows.iter().all(|w| w.is_minimized);
+        let mut fallback_layers: Vec<(Vec<WaylandSurfaceRenderElement<PixmanRenderer>>, Rectangle<i32, Physical>)> = Vec::new();
 
-        if elements.is_empty() && !all_managed_minimized {
-            let minimized_surfaces: Vec<smithay::reexports::wayland_server::protocol::wl_surface::WlSurface> = state
+        if window_layers.is_empty() && !all_managed_minimized {
+            let managed_surfaces: Vec<smithay::reexports::wayland_server::protocol::wl_surface::WlSurface> = state
                 .managed_windows
                 .iter()
-                .filter(|w| w.is_minimized)
                 .filter_map(|w| state.surface_for_managed_window(w))
                 .collect();
 
             for surface in &state.unassociated_surfaces {
-                if minimized_surfaces.contains(surface) {
+                if managed_surfaces.contains(surface) {
                     continue;
                 }
-                let elems = render_elements_from_surface_tree(
+                let elems: Vec<WaylandSurfaceRenderElement<PixmanRenderer>> = render_elements_from_surface_tree(
                     &mut self.renderer,
                     surface,
                     (0, 0),
                     1.0,
                     1.0,
-                    Kind::Unspecified,
+                    smithay::backend::renderer::element::Kind::Unspecified,
                 );
-                elements.extend(elems);
+                if !elems.is_empty() {
+                    fallback_layers.push((elems, screen_damage));
+                }
             }
         }
 
-        // 2. Bind and render to offscreen pixman buffer
+        // 2. Bind offscreen target and start frame
         let mut target = self.renderer.bind(&mut self.buffer)?;
         let mut frame = self.renderer.render(&mut target, phys_size, Transform::Normal)?;
-        
+
         // Clear background to dark gray (#14141a)
-        frame.clear(Color32F::new(0.08, 0.08, 0.10, 1.0), &[damage])?;
-        draw_render_elements(&mut frame, 1.0, &elements, &[damage]).map_err(|e| format!("{:?}", e))?;
+        frame.clear(Color32F::new(0.08, 0.08, 0.10, 1.0), &[screen_damage])?;
+
+        // 3. Draw managed windows (bottom to top), each clipped strictly to its content_geometry()
+        for (elems, win_clips) in &window_layers {
+            draw_render_elements(&mut frame, 1.0, elems, win_clips).map_err(|e| format!("{:?}", e))?;
+        }
+
+        // 4. Draw unmanaged X11 popup/override-redirect surfaces on top
+        for (elems, x11_clip) in &x11_layers {
+            draw_render_elements(&mut frame, 1.0, elems, &[*x11_clip]).map_err(|e| format!("{:?}", e))?;
+        }
+
+        // 5. Draw Wayland XDG popups on top
+        for (elems, popup_clip) in &popup_layers {
+            draw_render_elements(&mut frame, 1.0, elems, &[*popup_clip]).map_err(|e| format!("{:?}", e))?;
+        }
+
+        // 6. Draw fallback unassociated surfaces if active
+        for (elems, clip) in &fallback_layers {
+            draw_render_elements(&mut frame, 1.0, elems, &[*clip]).map_err(|e| format!("{:?}", e))?;
+        }
+
         let _ = frame.finish()?;
 
         // 3. Draw Openbox/Fluxbox window decorations (Bottom to Top order) if WM is enabled

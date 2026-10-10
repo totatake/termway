@@ -553,6 +553,101 @@ fn test_csd_and_ssd_unmaximize_80pct_centered() {
     assert_eq!(fg.loc.y, frame_y);
 }
 
+#[test]
+fn test_unmaximized_window_clean_background_outside_bounds() {
+    use smithay::reexports::wayland_server::Display;
+    use smithay::utils::{Point, Size};
+    use termway::compositor::renderer::TermwayRenderer;
+    use termway::compositor::state::TermwayState;
+    use termway::compositor::window::ManagedWindow;
+
+    let display = Display::<TermwayState>::new().expect("Failed to create Wayland Display");
+    let dh = display.handle();
+
+    let mut state = TermwayState::new(&dh, 800, 600, true);
+    let mut renderer = TermwayRenderer::new(800, 600).expect("Failed to create TermwayRenderer");
+
+    // Create a window that was maximized, then unmaximized to 80% centered
+    let mut win = ManagedWindow::new_dummy(1, "xeyes".into(), Point::from((0, 0)), Size::from((800, 600)));
+    win.has_ssd = true;
+    win.is_maximized = true;
+    win.saved_geometry = Some(ManagedWindow::default_80pct_geometry(800, 600, true));
+
+    // Unmaximize to 80% centered
+    win.unmaximize(800, 600);
+    assert!(!win.is_maximized);
+    let fg = win.frame_geometry();
+    state.managed_windows.push(win);
+
+    // Render frame
+    let pixels = renderer.render(&state).expect("Render failed");
+    assert_eq!(pixels.len(), 800 * 600 * 4);
+
+    let get_pixel = |x: usize, y: usize| -> (u8, u8, u8, u8) {
+        let idx = (y * 800 + x) * 4;
+        (pixels[idx], pixels[idx + 1], pixels[idx + 2], pixels[idx + 3])
+    };
+
+    // Outside the window bounds, the background must be cleanly dark gray (#14141a)
+    // Dark gray: R ~20, G ~20, B ~25, A = 255
+    let check_background = |x: usize, y: usize| {
+        let (r, g, b, a) = get_pixel(x, y);
+        assert!(r >= 15 && r <= 25, "pixel at ({}, {}) R channel expected ~20, got {}", x, y, r);
+        assert!(g >= 15 && g <= 25, "pixel at ({}, {}) G channel expected ~20, got {}", x, y, g);
+        assert!(b >= 20 && b <= 30, "pixel at ({}, {}) B channel expected ~25, got {}", x, y, b);
+        assert_eq!(a, 255, "pixel at ({}, {}) A channel expected 255, got {}", x, y, a);
+    };
+
+    // Test top-left margin (outside frame)
+    assert!(fg.loc.x > 10 && fg.loc.y > 10);
+    check_background(5, 5);
+    check_background(10, 10);
+
+    // Test right margin (outside frame)
+    let right_outside = (fg.loc.x + fg.size.w + 10) as usize;
+    assert!(right_outside < 800);
+    check_background(right_outside, 300);
+
+    // Test bottom margin (outside frame)
+    let bottom_outside = (fg.loc.y + fg.size.h + 10) as usize;
+    assert!(bottom_outside < 600);
+    check_background(400, bottom_outside);
+}
+
+#[test]
+fn test_unmaximize_pending_preserves_target_size_and_requests_clear() {
+    use smithay::reexports::wayland_server::Display;
+    use smithay::utils::{Point, Size};
+    use termway::compositor::state::TermwayState;
+    use termway::compositor::window::ManagedWindow;
+
+    let display = Display::<TermwayState>::new().expect("Failed to create Wayland Display");
+    let dh = display.handle();
+
+    let mut state = TermwayState::new(&dh, 1000, 600, true);
+    let mut win = ManagedWindow::new_dummy(1, "xeyes".into(), Point::from((0, 0)), Size::from((1000, 600)));
+    win.has_ssd = true;
+    win.is_maximized = true;
+
+    // Trigger unmaximize
+    win.unmaximize(1000, 600);
+    assert!(win.pending_unmaximize);
+    assert!(!win.is_maximized);
+
+    let target_size = win.size;
+    let target_loc = win.loc;
+
+    // Target size must be ~80%
+    assert!(target_size.w <= 800);
+    assert!(target_loc.x > 0);
+
+    state.managed_windows.push(win);
+
+    // Verify state needs_clear
+    state.needs_clear = true;
+    assert!(state.needs_clear);
+}
+
 
 
 

@@ -733,6 +733,7 @@ dependencies = [
  "smithay",
  "tempfile",
  "x11",
+ "x11rb",
 ]
 
 [[package]]

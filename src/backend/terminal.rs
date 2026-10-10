@@ -10,6 +10,7 @@ pub struct TerminalBackend {
     use_sixel: bool,
     is_wayland: bool,
     pub screenshot_requested: bool,
+    pub needs_clear: bool,
 }
 
 impl TerminalBackend {
@@ -20,6 +21,7 @@ impl TerminalBackend {
             use_sixel,
             is_wayland,
             screenshot_requested: false,
+            needs_clear: false,
         }
     }
 
@@ -103,10 +105,16 @@ impl TerminalBackend {
 
         let taskbar_str = taskbar.unwrap_or("");
         let taskbar_seq = format!("\x1b[{};1H\x1b[2K{}", overlay_row, taskbar_str);
+        let clear_seq = if self.needs_clear {
+            self.needs_clear = false;
+            "\x1b[2J"
+        } else {
+            ""
+        };
 
         if self.use_sixel {
             let encoded = SixelEncoder::encode_fullscreen_frame(pixels, width, height);
-            write!(stdout, "\x1b[H{}{}{}", encoded, taskbar_seq, overlay_seq)?;
+            write!(stdout, "{}\x1b[H{}{}{}", clear_seq, encoded, taskbar_seq, overlay_seq)?;
         } else {
             let encoded = KittyEncoder::encode_fullscreen_frame(
                 pixels,
@@ -116,7 +124,7 @@ impl TerminalBackend {
                 self.term_size.rows,
                 1,
             );
-            write!(stdout, "{}{}{}", encoded, taskbar_seq, overlay_seq)?;
+            write!(stdout, "{}{}{}{}", clear_seq, encoded, taskbar_seq, overlay_seq)?;
         }
         stdout.flush()
     }

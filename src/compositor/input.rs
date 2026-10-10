@@ -511,6 +511,7 @@ pub fn dispatch_mouse_event(
                                 }
                             }
                         }
+                        state.needs_clear = true;
                         state.dirty = true;
                     }
                     return;
@@ -521,6 +522,7 @@ pub fn dispatch_mouse_event(
                         win.toggle_maximize(renderer_width, renderer_height);
                     }
                     state.raise_window(id);
+                    state.needs_clear = true;
                     state.dirty = true;
                     return;
                 }
@@ -543,6 +545,7 @@ pub fn dispatch_mouse_event(
                             }
                             state.last_titlebar_click = None;
                             state.drag_state = WindowDragState::None;
+                            state.needs_clear = true;
                             state.dirty = true;
                             return;
                         }

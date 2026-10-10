@@ -39,6 +39,9 @@ pub struct ManagedWindow {
     pub is_minimized: bool,
     pub pending_unmaximize: bool,
     pub saved_geometry: Option<Rectangle<i32, Logical>>,
+    pub associated_wl_surface: Option<WlSurface>,
+    /// X11 Shape extension bounding rectangles (window-local). `None` means unshaped.
+    pub x11_shape: Option<Vec<Rectangle<i32, Logical>>>,
 }
 
 pub const TITLEBAR_HEIGHT: i32 = 22;
@@ -64,6 +67,7 @@ impl ManagedWindow {
         has_ssd: bool,
     ) -> Self {
         let title = get_wayland_title(&surface).unwrap_or_else(|| "Wayland Application".to_string());
+        let wl_surf = Some(surface.wl_surface().clone());
         Self {
             id,
             title,
@@ -76,6 +80,8 @@ impl ManagedWindow {
             is_minimized: false,
             pending_unmaximize: false,
             saved_geometry: None,
+            associated_wl_surface: wl_surf,
+            x11_shape: None,
         }
     }
 
@@ -83,6 +89,7 @@ impl ManagedWindow {
         let t = surface.title();
         let title = if t.is_empty() { "X11 Application".to_string() } else { t };
         let has_ssd = !surface.is_decorated();
+        let wl_surf = surface.wl_surface();
         Self {
             id,
             title,
@@ -95,6 +102,8 @@ impl ManagedWindow {
             is_minimized: false,
             pending_unmaximize: false,
             saved_geometry: None,
+            associated_wl_surface: wl_surf,
+            x11_shape: None,
         }
     }
 
@@ -141,16 +150,27 @@ impl ManagedWindow {
             is_minimized: false,
             pending_unmaximize: false,
             saved_geometry: None,
+            associated_wl_surface: None,
+            x11_shape: None,
         }
     }
 
     pub fn wl_surface(&self) -> Option<WlSurface> {
         match &self.surface {
             WindowSurface::Wayland(w) => Some(w.wl_surface().clone()),
-            WindowSurface::X11(w) => w.wl_surface(),
+            WindowSurface::X11(w) => w.wl_surface().or_else(|| self.cached_wl_surface()),
             WindowSurface::Dummy => None,
         }
     }
+
+    /// Returns the cached associated WlSurface if it is still alive.
+    pub fn cached_wl_surface(&self) -> Option<WlSurface> {
+        self.associated_wl_surface
+            .as_ref()
+            .filter(|s| smithay::reexports::wayland_server::Resource::is_alive(*s))
+            .cloned()
+    }
+
 
     /// Full frame geometry including titlebar and border (if has_ssd is true)
     pub fn frame_geometry(&self) -> Rectangle<i32, Logical> {

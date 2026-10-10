@@ -18,6 +18,7 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 pixman = "0.2"
 smithay = { version = "0.7", default-features = false, features = ["desktop", "renderer_pixman", "wayland_frontend", "xwayland"] }
 tempfile = "3.27"
+x11rb = { version = "0.13", features = ["shape"] }
 
 [[bin]]
 name = "termway"

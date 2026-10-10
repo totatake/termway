@@ -303,6 +303,10 @@ impl TermwayCompositor {
                             state.xwm = Some(wm);
                             state.xwayland_ready = true;
                             log_line("[termway] XWM started successfully.");
+                            match x11rb::rust_connection::RustConnection::connect(Some(&disp_str)) {
+                                Ok((conn, _)) => state.x11_shape_conn = Some(conn),
+                                Err(e) => log_line(format!("[termway] X11 shape connection failed: {}", e)),
+                            }
                         } else {
                             state.xwayland_ready = true;
                             log_line("[termway] Failed to start XWM.");
@@ -584,6 +588,10 @@ impl TermwayCompositor {
 
             // F. Render if damaged
             if self.state.dirty {
+                if self.state.needs_clear {
+                    self.state.needs_clear = false;
+                    self.backend.needs_clear = true;
+                }
                 let w = self.renderer.width();
                 let h = self.renderer.height();
                 let taskbar = self.build_taskbar();

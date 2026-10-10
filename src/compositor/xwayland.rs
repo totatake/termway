@@ -179,7 +179,8 @@ impl XwmHandler for TermwayState {
         }
 
         let rect = if self.enable_wm {
-            let cur_loc = self.managed_windows.iter().find(|mw| matches!(&mw.surface, WindowSurface::X11(ref xwin) if xwin == &window))
+            let managed = self.managed_windows.iter().find(|mw| matches!(&mw.surface, WindowSurface::X11(ref xwin) if xwin == &window));
+            let cur_loc = managed
                 .map(|mw| mw.loc)
                 .unwrap_or_else(|| {
                     smithay::utils::Point::from((
@@ -187,10 +188,18 @@ impl XwmHandler for TermwayState {
                         y.unwrap_or(TITLEBAR_HEIGHT + BORDER_WIDTH).max(TITLEBAR_HEIGHT + BORDER_WIDTH),
                     ))
                 });
-            let max_w = (self.width as i32 - cur_loc.x - BORDER_WIDTH * 2).max(160);
-            let max_h = (self.height as i32 - cur_loc.y - BORDER_WIDTH * 2).max(100);
-            let target_w = w.map(|v| (v as i32).min(max_w)).unwrap_or(max_w);
-            let target_h = h.map(|v| (v as i32).min(max_h)).unwrap_or(max_h);
+            let mut max_w = (self.width as i32 - cur_loc.x - BORDER_WIDTH * 2).max(160);
+            let mut max_h = (self.height as i32 - cur_loc.y - BORDER_WIDTH * 2).max(100);
+            if let Some(mw) = managed.filter(|mw| mw.pending_unmaximize) {
+                // Do not allow in-flight configure requests to enlarge the window back to maximized
+                max_w = max_w.min(mw.size.w);
+                max_h = max_h.min(mw.size.h);
+            }
+            // Unspecified width/height keeps the current size (e.g. move-only requests)
+            let cur_w = managed.map(|mw| mw.size.w).unwrap_or(max_w);
+            let cur_h = managed.map(|mw| mw.size.h).unwrap_or(max_h);
+            let target_w = w.map(|v| v as i32).unwrap_or(cur_w).min(max_w);
+            let target_h = h.map(|v| v as i32).unwrap_or(cur_h).min(max_h);
             Rectangle::new(cur_loc, (target_w, target_h).into())
         } else {
             Rectangle::new(
@@ -223,6 +232,12 @@ impl XwmHandler for TermwayState {
             if matches!(&w.surface, WindowSurface::X11(x) if x == &window) {
                 w.update_title();
                 if self.enable_wm {
+                    if w.pending_unmaximize {
+                        // While waiting for unmaximize to complete, ignore in-flight old maximized geometry from X11!
+                        if geometry.size.w > w.size.w + 20 || geometry.size.h > w.size.h + 20 {
+                            continue;
+                        }
+                    }
                     let top_margin = if w.has_ssd { TITLEBAR_HEIGHT + BORDER_WIDTH } else { 0 };
                     let side_margin = if w.has_ssd { BORDER_WIDTH } else { 0 };
                     let max_w = (self.width as i32 - w.loc.x - side_margin * 2).max(160);
