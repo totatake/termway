@@ -123,12 +123,39 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         config.use_sixel = false;
     } else {
         use termway::terminal::query::{query_graphics_protocol, GraphicsProtocol};
+        let is_atty = unsafe { libc::isatty(libc::STDIN_FILENO) == 1 };
         match query_graphics_protocol() {
             GraphicsProtocol::Kitty => {
                 config.use_sixel = false;
             }
-            GraphicsProtocol::Sixel | GraphicsProtocol::None => {
+            GraphicsProtocol::Sixel => {
                 config.use_sixel = true;
+            }
+            GraphicsProtocol::None => {
+                if is_atty {
+                    eprintln!(
+                        r#"Error: No supported graphics protocol detected in current terminal.
+termway requires inline graphics support (Kitty Graphics Protocol or Sixel).
+
+Supported terminals:
+  - Ghostty (macOS / Linux)
+  - WezTerm (Windows / macOS / Linux)
+  - Kitty (macOS / Linux)
+  - Windows Terminal (Windows)
+  - foot (Linux Wayland)
+  - iTerm2 (macOS)
+  - xterm (with Sixel support: -ti vt340)
+
+Note: Standard GNOME Terminal, standard Alacritty, and standard Apple Terminal do not support Sixel/Kitty graphics.
+If your terminal supports Sixel or Kitty but auto-detection failed, you can explicitly force the protocol:
+  termway --sixel [COMMAND...]
+  termway --kitty [COMMAND...]"#
+                    );
+                    std::process::exit(1);
+                } else {
+                    // Non-TTY (e.g. piped tests/automated capture), default to Sixel
+                    config.use_sixel = true;
+                }
             }
         }
     }

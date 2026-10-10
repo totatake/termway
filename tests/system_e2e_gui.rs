@@ -64,7 +64,7 @@ root.mainloop()
     let mut g_init = 0;
 
     // Poll until Tkinter maps its window and draws the red canvas
-    for _ in 0..25 {
+    for _ in 0..40 {
         thread::sleep(Duration::from_millis(100));
         let ximage = xvfb.get_image();
         if !ximage.is_null() {
