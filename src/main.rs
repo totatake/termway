@@ -15,7 +15,8 @@ OPTIONS:
     --height <PIXELS>         Virtual display height (default: auto from terminal)
     --cell-size <WxH>         Font cell pixel size (e.g. 10x20, default: auto/env/10x20)
     --fps <FPS>               Target frame rate (default: 30)
-    --wm                      Start a lightweight Window Manager (openbox in X11 mode)
+    --wm                      Start lightweight Window Manager in legacy X11 mode (openbox)
+                              (Built-in WM is always active in native Wayland mode)
     --sixel                   Force Sixel graphics protocol
     --kitty                   Force Kitty graphics protocol
     --demo                    Run built-in demo GUI application
@@ -111,6 +112,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             break;
         }
         i += 1;
+    }
+
+    // In native Wayland mode, the built-in Window Manager is always active.
+    if use_wayland {
+        config.enable_wm = true;
     }
 
     // グラフィックスプロトコルの決定:

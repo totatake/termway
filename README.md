@@ -21,7 +21,7 @@
 - **Hybrid D-Bus Session & Snap Support (Firefox, gnome-terminal & gparted ready)**:
   - **Dual D-Bus Architecture**: Automatically spawns an isolated D-Bus session bus for single-instance applications (e.g. `gnome-terminal`) to guarantee dedicated server instances on Termway's display, while transparently routing the host's ambient `systemd --user` session bus to strictly confined Snap applications (e.g. Ubuntu's Snap-packaged `firefox`) and URL openers (`xdg-open`) for cgroup scope creation. (See [ADR-0001](docs/adr/0001-hybrid-dbus-session-routing.md) for detailed architecture decisions and trade-offs).
   - **Integrated Polkit Authentication Agent**: Automatically discovers and runs background authentication agents (`policykit-1-gnome` or `lxpolkit`). Elevation prompts for privileged tools like `gparted` or `pkexec` pop up seamlessly inside your terminal window.
-- **Built-in Floating Window Manager (Openbox / Fluxbox Style)** (`--wm`):
+- **Built-in Floating Window Manager (Openbox / Fluxbox Style)**:
   - Self-contained window management without requiring external window managers.
   - Minimalist, distraction-free decorations: 22px title bar, 1px border, window control buttons (Close `[×]`, Maximize/Restore `[□]`, Minimize `[-]`), bottom-right resize handle, and 8x8 bitmap font window titles.
   - Full support for window **Maximization** (via `[□]` button or titlebar double-click) and **Minimization** (via `[-]` button into the bottom row taskbar).
@@ -166,35 +166,28 @@ The examples below use the compiled binary `./target/release/termway` (or `termw
 ```bash
 ./target/release/termway --demo
 ```
-To enable the built-in window manager with title bars and borders:
-```bash
-./target/release/termway --wm --demo
-```
 To force Sixel graphics mode:
 ```bash
-./target/release/termway --sixel --wm --demo
+./target/release/termway --sixel --demo
 ```
 
 ### 2. Run Any GUI Application
 Specify the target command and arguments after `--`:
 
 ```bash
-# Run GUI application (default: Wayland compositor + auto-detected graphics protocol)
+# Run GUI application (Wayland compositor + auto-detected graphics protocol + built-in WM)
 ./target/release/termway -- gvim
 
-# Run with floating window manager (title bar, resize handle, close button)
-./target/release/termway --wm -- gvim
-
 # Run web browser (supports Ubuntu Snap-packaged Firefox out-of-the-box)
-./target/release/termway --wm -- firefox
+./target/release/termway -- firefox
 
 # Run gnome-terminal (isolated D-Bus session ensures window opens inside termway)
-./target/release/termway --wm -- gnome-terminal
+./target/release/termway -- gnome-terminal
 
 # Run privileged administrative tools (Polkit password dialog prompts inside termway)
-./target/release/termway --wm -- gparted
+./target/release/termway -- gparted
 
-# Run in legacy X11 / Xvfb mode
+# Run in legacy X11 / Xvfb mode with openbox
 ./target/release/termway --x11 --wm -- xclock
 ```
 
@@ -219,10 +212,10 @@ You can explicitly override the protocol using `--kitty` or `--sixel`:
 
 ```bash
 # Force Sixel protocol
-./target/release/termway --sixel --wm -- gvim
+./target/release/termway --sixel -- gvim
 
 # Force Kitty protocol
-./target/release/termway --kitty --wm -- gvim
+./target/release/termway --kitty -- gvim
 ```
 
 ### 4. Font Cell Size Optimization (`--cell-size`, `TERMWAY_CELL_SIZE`)
@@ -230,11 +223,11 @@ For pixel-perfect mouse tracking, `termway` automatically sends `\x1b[16t` and `
 
 ```bash
 # CLI option: width x height
-./target/release/termway --cell-size 10x22 --wm -- gvim
+./target/release/termway --cell-size 10x22 -- gvim
 
 # Or via environment variable
 export TERMWAY_CELL_SIZE=10x22
-./target/release/termway --wm -- gvim
+./target/release/termway -- gvim
 ```
 
 ### 5. Shortcuts & Built-in Features
@@ -253,8 +246,8 @@ export TERMWAY_CELL_SIZE=10x22
 | `--wayland` | - | Use Smithay headless Wayland compositor mode (default) | Enabled |
 | `--x11`, `--xvfb` | - | Use legacy X11 / Xvfb capture mode | - |
 | `--kitty` | - | Force Kitty Graphics Protocol | Auto-detected |
-| `--sixel` | - | Force Sixel Graphics Protocol (`KITTY_WINDOW_ID` unset defaults to Sixel) | Auto-detected |
-| `--wm` | - | Enable internal floating window manager decorations and controls | - |
+| `--sixel` | - | Force Sixel Graphics Protocol | Auto-detected |
+| `--wm` | - | Start window manager in legacy X11 mode (openbox). Built-in WM is always active in Wayland mode | - |
 | `--cell-size` | `<WxH>` | Specify font cell dimensions in pixels (e.g. `10x22`) | Auto-detected via SGR 14t |
 | `--width` | `<PIXELS>` | Virtual display resolution width | Auto-calculated from terminal |
 | `--height` | `<PIXELS>` | Virtual display resolution height | Auto-calculated from terminal |

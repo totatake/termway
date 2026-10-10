@@ -21,7 +21,7 @@
 - **ハイブリッド D-Bus セッションと Snap アプリ対応 (Firefox / gnome-terminal / gparted 対応)**:
   - **デュアル D-Bus 管理機構**: `gnome-terminal` などの単一インスタンス型アプリに対しては独立した専用 D-Bus セッションバスを起動し、ホスト側の常駐サーバーとの競合を防いで確実に Termway 内で起動。一方で Ubuntu 標準の Snap 版 `firefox` や `xdg-open` などの厳格なサンドボックス（`snap-confine`）アプリには、cgroup スコープ生成に必要なホストの `systemd --user` セッションバスを自動でルーティング。（設計判断・トレードオフの詳細は [ADR-0001](docs/adr/0001-hybrid-dbus-session-routing.md) を参照）
   - **Polkit 認証エージェント自動連携**: `policykit-1-gnome` または `lxpolkit` などの認証エージェントを自動検知してセッション内に常駐。`gparted` や `pkexec` などの管理者権限アプリの起動時に、ターミナル画面内にパスワード入力ダイアログが正しく表示されます。
-- **組み込みウィンドウマネージャ (Openbox / Fluxbox スタイル)** (`--wm`):
+- **組み込みウィンドウマネージャ (Openbox / Fluxbox スタイル)**:
   - 外部 WM プロセス不要で動作する内蔵フローティングウィンドウマネージャ。
   - スリムタイトルバー、1px シャープボーダー、各種ウィンドウ操作ボタン（閉じる `[×]`、最大化/復元 `[□]`、最小化 `[-]`）、右下リサイズハンドル、内蔵 8x8 ビットマップフォントによるタイトル描画。
   - ウィンドウの**最大化**（`[□]` ボタンまたはタイトルバーのダブルクリック）および**最小化**（`[-]` ボタンで最下部タスクバーへ退避）に完全対応。
@@ -166,31 +166,28 @@ cargo build --release
 ```bash
 ./target/release/termway --demo
 ```
-Sixelを使いたい場合は `--sixel` を追加します。ウィンドウの枠が欲しい場合は `--wm` を追加します。
+Sixelを使いたい場合は `--sixel` を追加します：
 ```bash
-./target/release/termway --sixel --wm --demo
+./target/release/termway --sixel --demo
 ```
 
 ### 2. 任意のアプリケーションの実行
-`--` の後に実行したいコマンドと引数を指定します（デフォルトで Wayland コンポジタが立ち上がり、XWayland により X11 アプリもそのまま動作します）：
+`--` の後に実行したいコマンドと引数を指定します（デフォルトで Wayland コンポジタが立ち上がり、組み込みウィンドウマネージャおよび XWayland により Wayland/X11 アプリがそのまま快適に動作します）：
 
 ```bash
-# GUI アプリケーションを起動（デフォルト: Wayland コンポジタ + Kitty/Sixel 自動検出）
+# GUI アプリケーションを起動（Wayland コンポジタ + Kitty/Sixel 自動検出 + 組み込み WM）
 ./target/release/termway -- gvim
 
-# ウィンドウ枠（タイトルバー・リサイズ枠・閉じるボタン）をつけて起動
-./target/release/termway --wm -- gvim
-
 # Webブラウザを起動（Ubuntu 標準の Snap 版 Firefox にも完全対応）
-./target/release/termway --wm -- firefox
+./target/release/termway -- firefox
 
 # gnome-terminal (D-Bus セッション分離により Termway 内で確実に起動)
-./target/release/termway --wm -- gnome-terminal
+./target/release/termway -- gnome-terminal
 
 # 管理者権限 GUI ツール（Polkit 認証ダイアログがターミナル内に表示されます）
-./target/release/termway --wm -- gparted
+./target/release/termway -- gparted
 
-# レガシーな X11/Xvfb モードで実行する場合
+# レガシーな X11/Xvfb モードで実行する場合（openbox を利用）
 ./target/release/termway --x11 --wm -- xclock
 ```
 
@@ -216,10 +213,10 @@ termway は起動時に端末エミュレータのプロトコル対応状況を
 
 ```bash
 # Sixel プロトコルを明示指定
-./target/release/termway --sixel --wm -- gvim
+./target/release/termway --sixel -- gvim
 
 # Kitty プロトコルを明示指定
-./target/release/termway --kitty --wm -- gvim
+./target/release/termway --kitty -- gvim
 ```
 
 ### 4. フォントセルサイズの動的測定と補正 (`--cell-size`, `TERMWAY_CELL_SIZE`)
@@ -232,7 +229,7 @@ Sixel および SGR マウスプロトコルでのピクセルパーフェクト
 
 ```bash
 # セルサイズを指定して起動
-./target/release/termway --cell-size 10x22 --wm -- gvim
+./target/release/termway --cell-size 10x22 -- gvim
 ```
 
 ### 5. ショートカットキーと便利機能
@@ -251,8 +248,8 @@ Sixel および SGR マウスプロトコルでのピクセルパーフェクト
 | `--wayland` | - | Smithay ベースのヘッドレス Wayland コンポジタモードを使用する（デフォルト） | 有効 |
 | `--x11`, `--xvfb` | - | 従来の X11/Xvfb + XTest 注入モードを使用する | - |
 | `--kitty` | - | Kitty Graphics Protocol を明示的に使用する | 自動検出 |
-| `--sixel` | - | Sixel Graphics Protocol を明示的に使用する（`KITTY_WINDOW_ID` 未設定時は自動有効化） | 自動検出 |
-| `--wm` | - | 組み込みフローティングウィンドウマネージャ（Openbox/Fluxbox スタイル）を有効化（なし時は全画面単一アプリ表示） | - |
+| `--sixel` | - | Sixel Graphics Protocol を明示的に使用する | 自動検出 |
+| `--wm` | - | レガシー X11 モードでウィンドウマネージャ (openbox) を起動（Wayland モードでは常に組み込み WM が有効） | - |
 | `--cell-size` | `<WxH>` | フォントセル寸法（幅x高さ）をピクセル単位で明示指定 (例: `10x22`) | SGR 14t 自動測定 |
 | `--width` | `<PIXELS>` | 仮想ディスプレイ解像度の幅 | 端末サイズから自動算出 |
 | `--height` | `<PIXELS>` | 仮想ディスプレイ解像度の高さ | 端末サイズから自動算出 |

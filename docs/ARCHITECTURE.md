@@ -338,7 +338,7 @@ flowchart TD
 
 ### 6.8 組み込みフローティングウィンドウマネージャ (`src/compositor/window.rs`, `decoration.rs`)
 
-`--wm` オプション指定時、termway は外部プロセス（openbox 等）に依存せず、コンポジタ内部に統合された Openbox / Fluxbox スタイルの軽量フローティングウィンドウマネージャを起動します（`--wm` 未指定時は画面全体にフィットするフレームレス単一アプリモードとして動作）。
+termway は外部プロセス（openbox 等）に依存せず、コンポジタ内部に統合された Openbox / Fluxbox スタイルの軽量フローティングウィンドウマネージャを常時稼働します（Wayland モードでは常に標準有効。レガシー X11 モードでは `--wm` 指定時に外部 openbox を起動）。
 
 #### 1. ウィンドウ管理モデル (`ManagedWindow`)
 Wayland の `ToplevelSurface` と XWayland の `X11Surface` を `WindowSurface` 列挙型によって単一の `ManagedWindow` 構造体に抽象化し、以下の統一管理を行います：
