@@ -297,6 +297,12 @@ cargo test -- --test-threads=1
 
 ---
 
+## ロードマップ
+
+今後のアーキテクチャ改善、リファクタリング計画、マイルストーンについては [docs/ROADMAP.md](docs/ROADMAP.md) を参照してください。
+
+---
+
 ## ライセンス
 
 本プロジェクトは [MIT License](LICENSE) の下で公開されています。

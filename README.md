@@ -298,6 +298,12 @@ Traditional remote GUI solutions (X11 Forwarding via `ssh -X`, VNC, RDP, or web-
 
 ---
 
+## Roadmap
+
+Planned architectural improvements, refactoring goals, and future milestones are documented in [docs/ROADMAP.md](docs/ROADMAP.md).
+
+---
+
 ## License
 
 This project is licensed under the [MIT License](LICENSE).
