@@ -37,6 +37,7 @@ pub struct ManagedWindow {
     pub has_ssd: bool,
     pub is_maximized: bool,
     pub is_minimized: bool,
+    pub pending_unmaximize: bool,
     pub saved_geometry: Option<Rectangle<i32, Logical>>,
 }
 
@@ -73,6 +74,7 @@ impl ManagedWindow {
             has_ssd,
             is_maximized: false,
             is_minimized: false,
+            pending_unmaximize: false,
             saved_geometry: None,
         }
     }
@@ -91,6 +93,7 @@ impl ManagedWindow {
             has_ssd,
             is_maximized: false,
             is_minimized: false,
+            pending_unmaximize: false,
             saved_geometry: None,
         }
     }
@@ -136,6 +139,7 @@ impl ManagedWindow {
             has_ssd: true,
             is_maximized: false,
             is_minimized: false,
+            pending_unmaximize: false,
             saved_geometry: None,
         }
     }
@@ -373,6 +377,7 @@ impl ManagedWindow {
         }
         self.saved_geometry = Some(Rectangle::new(self.loc, self.size));
         self.is_maximized = true;
+        self.pending_unmaximize = false;
 
         let (new_loc, new_w, new_h) = if self.has_ssd {
             let loc = Point::from((BORDER_WIDTH, TITLEBAR_HEIGHT + BORDER_WIDTH));
@@ -387,13 +392,22 @@ impl ManagedWindow {
         };
 
         self.loc = new_loc;
-        self.configure_size(new_w, new_h);
+        self.size = (new_w, new_h).into();
 
-        if let WindowSurface::Wayland(ref win) = self.surface {
-            win.with_pending_state(|state| {
-                state.states.set(smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::State::Maximized);
-            });
-            win.send_configure();
+        match &self.surface {
+            WindowSurface::Wayland(win) => {
+                win.with_pending_state(|state| {
+                    state.states.set(smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::State::Maximized);
+                    state.size = Some((new_w, new_h).into());
+                });
+                win.send_configure();
+            }
+            WindowSurface::X11(win) => {
+                let rect = Rectangle::new(self.loc, self.size);
+                let _ = win.configure(rect);
+                let _ = win.set_maximized(true);
+            }
+            WindowSurface::Dummy => {}
         }
     }
 
@@ -403,18 +417,28 @@ impl ManagedWindow {
             return;
         }
         self.is_maximized = false;
+        self.pending_unmaximize = true;
         let target_geo = self.saved_geometry.take().unwrap_or_else(|| {
             Self::default_80pct_geometry(screen_w, screen_h, self.has_ssd)
         });
 
         self.loc = target_geo.loc;
-        self.configure_size(target_geo.size.w, target_geo.size.h);
+        self.size = target_geo.size;
 
-        if let WindowSurface::Wayland(ref win) = self.surface {
-            win.with_pending_state(|state| {
-                state.states.unset(smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::State::Maximized);
-            });
-            win.send_configure();
+        match &self.surface {
+            WindowSurface::Wayland(win) => {
+                win.with_pending_state(|state| {
+                    state.states.unset(smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::State::Maximized);
+                    state.size = Some(target_geo.size);
+                });
+                win.send_configure();
+            }
+            WindowSurface::X11(win) => {
+                let rect = Rectangle::new(self.loc, self.size);
+                let _ = win.configure(rect);
+                let _ = win.set_maximized(false);
+            }
+            WindowSurface::Dummy => {}
         }
     }
 

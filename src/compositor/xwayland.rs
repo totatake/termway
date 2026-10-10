@@ -60,9 +60,11 @@ impl XwmHandler for TermwayState {
                 self.next_window_id += 1;
                 let geo = window.geometry();
                 let is_first_window = self.managed_windows.is_empty();
+                let is_transient_or_popup = window.is_popup() || window.is_transient_for().is_some();
+                let should_maximize = is_first_window || !is_transient_or_popup;
                 let has_ssd = !window.is_decorated();
                 let (loc, size, is_maximized, saved_geometry) = if self.enable_wm {
-                    if is_first_window {
+                    if should_maximize {
                         let saved_geo = ManagedWindow::default_80pct_geometry(self.width, self.height, has_ssd);
                         let (max_loc, max_w, max_h) = if has_ssd {
                             let loc = smithay::utils::Point::from((BORDER_WIDTH, TITLEBAR_HEIGHT + BORDER_WIDTH));

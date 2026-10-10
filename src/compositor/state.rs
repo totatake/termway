@@ -368,20 +368,48 @@ impl CompositorHandler for TermwayState {
                         let side_margin = if w.has_ssd { BORDER_WIDTH * 2 } else { 0 };
                         let max_allowed_w = (self.width as i32 - side_margin - 10).max(160);
                         let max_allowed_h = (self.height as i32 - top_margin - 10).max(100);
-                        let clamped_w = bbox.size.w.min(max_allowed_w);
-                        let clamped_h = bbox.size.h.min(max_allowed_h);
-                        w.size = (clamped_w, clamped_h).into();
 
-                        // 画面枠内に確実に収まるよう位置を調整
-                        let min_x = if w.has_ssd { BORDER_WIDTH } else { 0 };
-                        let max_x = (self.width as i32 - w.size.w - min_x).max(min_x);
-                        let min_y = if w.has_ssd { TITLEBAR_HEIGHT + BORDER_WIDTH } else { 0 };
-                        let max_y = (self.height as i32 - w.size.h - min_x).max(min_y);
-                        w.loc.x = w.loc.x.clamp(min_x, max_x);
-                        w.loc.y = w.loc.y.clamp(min_y, max_y);
+                        if !w.is_maximized {
+                            if w.pending_unmaximize {
+                                // If client is still committing the in-flight maximized buffer, wait for unmaximized buffer
+                                let is_old_maximized_buffer = bbox.size.w >= max_allowed_w && bbox.size.h >= max_allowed_h;
+                                if is_old_maximized_buffer {
+                                    continue;
+                                }
+                                w.pending_unmaximize = false;
 
-                        if clamped_w != bbox.size.w || clamped_h != bbox.size.h {
-                            w.configure_size(clamped_w, clamped_h);
+                                let clamped_w = bbox.size.w.min(max_allowed_w);
+                                let clamped_h = bbox.size.h.min(max_allowed_h);
+                                w.size = (clamped_w, clamped_h).into();
+
+                                // Center the unmaximized window based on its actual frame size
+                                let total_frame_w = if w.has_ssd { w.size.w + BORDER_WIDTH * 2 } else { w.size.w };
+                                let total_frame_h = if w.has_ssd { w.size.h + TITLEBAR_HEIGHT + BORDER_WIDTH * 2 } else { w.size.h };
+                                let frame_x = ((self.width as i32 - total_frame_w) / 2).max(0);
+                                let frame_y = ((self.height as i32 - total_frame_h) / 2).max(0);
+                                w.loc.x = if w.has_ssd { frame_x + BORDER_WIDTH } else { frame_x };
+                                w.loc.y = if w.has_ssd { frame_y + TITLEBAR_HEIGHT + BORDER_WIDTH } else { frame_y };
+
+                                if clamped_w != bbox.size.w || clamped_h != bbox.size.h {
+                                    w.configure_size(clamped_w, clamped_h);
+                                }
+                            } else {
+                                let clamped_w = bbox.size.w.min(max_allowed_w);
+                                let clamped_h = bbox.size.h.min(max_allowed_h);
+                                w.size = (clamped_w, clamped_h).into();
+
+                                // 画面枠内に確実に収まるよう位置を調整
+                                let min_x = if w.has_ssd { BORDER_WIDTH } else { 0 };
+                                let max_x = (self.width as i32 - w.size.w - min_x).max(min_x);
+                                let min_y = if w.has_ssd { TITLEBAR_HEIGHT + BORDER_WIDTH } else { 0 };
+                                let max_y = (self.height as i32 - w.size.h - min_x).max(min_y);
+                                w.loc.x = w.loc.x.clamp(min_x, max_x);
+                                w.loc.y = w.loc.y.clamp(min_y, max_y);
+
+                                if clamped_w != bbox.size.w || clamped_h != bbox.size.h {
+                                    w.configure_size(clamped_w, clamped_h);
+                                }
+                            }
                         }
                     }
                 } else {
@@ -456,9 +484,11 @@ impl XdgShellHandler for TermwayState {
         let wl_id = surface.wl_surface().id().protocol_id();
         crate::compositor::log_line(format!("[compositor] new_toplevel id={} surface={}", id, wl_id));
 
-        let is_first_window = self.managed_windows.is_empty();
+        let has_parent = surface.parent().is_some();
+        let should_maximize = !has_parent;
+
         let (loc, configure_size, init_window_size, is_maximized, saved_geometry) = if self.enable_wm {
-            if is_first_window {
+            if should_maximize {
                 let saved_geo = ManagedWindow::default_80pct_geometry(self.width, self.height, false);
                 let loc = smithay::utils::Point::from((0, 0));
                 let configure_size = smithay::utils::Size::from((self.width as i32, self.height as i32));
@@ -810,6 +840,40 @@ delegate_output!(TermwayState);
 delegate_data_device!(TermwayState);
 smithay::delegate_xdg_decoration!(TermwayState);
 
+impl TermwayState {
+    fn update_toplevel_decoration_mode(&mut self, toplevel: &ToplevelSurface, mode: DecorationMode) {
+        let new_has_ssd = self.enable_wm && mode == DecorationMode::ServerSide;
+        for w in &mut self.managed_windows {
+            if let WindowSurface::Wayland(ref s) = w.surface {
+                if s == toplevel && w.has_ssd != new_has_ssd {
+                    w.has_ssd = new_has_ssd;
+                    if w.is_maximized {
+                        let (new_loc, new_w, new_h) = if w.has_ssd {
+                            (
+                                smithay::utils::Point::from((BORDER_WIDTH, TITLEBAR_HEIGHT + BORDER_WIDTH)),
+                                (self.width as i32 - BORDER_WIDTH * 2).max(100),
+                                (self.height as i32 - TITLEBAR_HEIGHT - BORDER_WIDTH * 2).max(60),
+                            )
+                        } else {
+                            (
+                                smithay::utils::Point::from((0, 0)),
+                                (self.width as i32).max(100),
+                                (self.height as i32).max(60),
+                            )
+                        };
+                        w.loc = new_loc;
+                        w.size = (new_w, new_h).into();
+                        w.saved_geometry = Some(ManagedWindow::default_80pct_geometry(self.width, self.height, w.has_ssd));
+                        toplevel.with_pending_state(|state| {
+                            state.size = Some((new_w, new_h).into());
+                        });
+                    }
+                }
+            }
+        }
+    }
+}
+
 impl XdgDecorationHandler for TermwayState {
     fn new_decoration(&mut self, toplevel: ToplevelSurface) {
         let mode = if self.enable_wm {
@@ -820,15 +884,8 @@ impl XdgDecorationHandler for TermwayState {
         toplevel.with_pending_state(|state| {
             state.decoration_mode = Some(mode);
         });
+        self.update_toplevel_decoration_mode(&toplevel, mode);
         toplevel.send_configure();
-
-        for w in &mut self.managed_windows {
-            if let WindowSurface::Wayland(ref s) = w.surface {
-                if s == &toplevel {
-                    w.has_ssd = self.enable_wm && mode == DecorationMode::ServerSide;
-                }
-            }
-        }
     }
 
     fn request_mode(&mut self, toplevel: ToplevelSurface, mode: DecorationMode) {
@@ -844,15 +901,8 @@ impl XdgDecorationHandler for TermwayState {
         toplevel.with_pending_state(|state| {
             state.decoration_mode = Some(chosen_mode);
         });
+        self.update_toplevel_decoration_mode(&toplevel, chosen_mode);
         toplevel.send_configure();
-
-        for w in &mut self.managed_windows {
-            if let WindowSurface::Wayland(ref s) = w.surface {
-                if s == &toplevel {
-                    w.has_ssd = self.enable_wm && chosen_mode == DecorationMode::ServerSide;
-                }
-            }
-        }
     }
 
     fn unset_mode(&mut self, toplevel: ToplevelSurface) {
@@ -864,14 +914,7 @@ impl XdgDecorationHandler for TermwayState {
         toplevel.with_pending_state(|state| {
             state.decoration_mode = Some(mode);
         });
+        self.update_toplevel_decoration_mode(&toplevel, mode);
         toplevel.send_configure();
-
-        for w in &mut self.managed_windows {
-            if let WindowSurface::Wayland(ref s) = w.surface {
-                if s == &toplevel {
-                    w.has_ssd = self.enable_wm && mode == DecorationMode::ServerSide;
-                }
-            }
-        }
     }
 }

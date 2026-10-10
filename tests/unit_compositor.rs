@@ -508,5 +508,51 @@ fn test_minimized_window_renderer_suppression() {
     assert_eq!(pixels_restored.len(), 800 * 600 * 4);
 }
 
+#[test]
+fn test_csd_and_ssd_unmaximize_80pct_centered() {
+    use smithay::utils::{Point, Size};
+    use termway::compositor::window::ManagedWindow;
+
+    let screen_w = 1000;
+    let screen_h = 800;
+
+    // 1. CSD window (like Firefox) initialized maximized
+    let saved_geo = ManagedWindow::default_80pct_geometry(screen_w, screen_h, false);
+    let mut win_csd = ManagedWindow::new_dummy(1, "Firefox".into(), Point::from((0, 0)), Size::from((screen_w as i32, screen_h as i32)));
+    win_csd.has_ssd = false;
+    win_csd.is_maximized = true;
+    win_csd.saved_geometry = Some(saved_geo);
+
+    // Unmaximize CSD window
+    win_csd.unmaximize(screen_w, screen_h);
+    assert!(!win_csd.is_maximized);
+    assert!(win_csd.pending_unmaximize);
+    assert_eq!(win_csd.size.w, 800); // 80% of 1000
+    assert_eq!(win_csd.size.h, 640); // 80% of 800
+    assert_eq!(win_csd.loc.x, (1000 - 800) / 2); // 100 (centered)
+    assert_eq!(win_csd.loc.y, (800 - 640) / 2); // 80 (centered)
+
+    // 2. SSD window initialized maximized
+    let saved_geo_ssd = ManagedWindow::default_80pct_geometry(screen_w, screen_h, true);
+    let mut win_ssd = ManagedWindow::new_dummy(2, "Gnome-Terminal".into(), Point::from((0, 0)), Size::from((screen_w as i32, screen_h as i32)));
+    win_ssd.has_ssd = true;
+    win_ssd.is_maximized = true;
+    win_ssd.saved_geometry = Some(saved_geo_ssd);
+
+    // Unmaximize SSD window
+    win_ssd.unmaximize(screen_w, screen_h);
+    assert!(!win_ssd.is_maximized);
+    assert!(win_ssd.pending_unmaximize);
+    assert_eq!(win_ssd.size.w, 800); // 80% of 1000
+    assert_eq!(win_ssd.size.h, 640); // 80% of 800
+    let fg = win_ssd.frame_geometry();
+    // Frame including SSD titlebar and border should be centered
+    let frame_x = (1000 - fg.size.w) / 2;
+    let frame_y = (800 - fg.size.h) / 2;
+    assert_eq!(fg.loc.x, frame_x);
+    assert_eq!(fg.loc.y, frame_y);
+}
+
+
 
 
