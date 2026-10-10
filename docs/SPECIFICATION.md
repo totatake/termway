@@ -105,6 +105,7 @@ flowchart LR
 | **FR-22** | `/tmp/.X11-unix` 書込権限事前検査 | Xvfb 起動前に `/tmp/.X11-unix` ディレクトリへの書込可否をテストし、パーミッション不足やリードオンリー環境によるハングアップやエラー発生を防止すること。 | `tests/system_e2e_gui.rs` | **PASS** |
 | **FR-23** | Wayland データデバイスフォーカス & シリアル整合性 | Wayland Seat においてウィンドウ・サーフェスのフォーカス切り替え時に `set_data_device_focus` を通知してクリップボード操作の整合性を保つこと。また、キー押下・解放イベント発行時に単調増加（monotonic）なシリアル番号を保証すること。 | `tests/unit_compositor.rs` | **PASS** |
 | **FR-24** | Wayland XDG Popup & X11 Override-Redirect メニュー対応 | Wireshark や各種 GUI アプリケーションのドロップダウンメニュー・コンテキストメニュー等を表示・操作可能とするため、(1) Wayland `xdg_popup` を `PopupManager` で追跡・ジオメトリ計算・描画・最前面ヒットテスト・非アクティブクリック時の `send_done` 破棄を行うこと。(2) XWayland の override-redirect ウィンドウを通常ウィンドウマネージャの配置クランプからバイパスし、クライアント要求座標での表示・描画・クリック入力転送を行うこと。 | `tests/unit_compositor.rs` | **PASS** |
+| **FR-25** | ウィンドウ最小化・最大化・タスクバー管理 | Wayland モードにおいて、ウィンドウタイトルバーに最小化ボタン `[-]` および最大化ボタン `[□]`（タイトルバーダブルクリック含む）を実装し、最大化・通常復元・最小化（非表示化・フォーカス再割当）をサポートすること。また、ターミナル最下行にチップ形式のタスクバー `[id: title]` / `[id: title _]` を表示し、クリックによる最小化・復元・前面化を行えること。閉じたウィンドウのチップは `\x1b[2K` により即時消去されること。なお、`--x11 --wm` モードでは外部 WM である Openbox の仕様に準拠した動作となること。 | `tests/unit_compositor.rs` | **PASS** |
 
 ### 2.2 非機能要件 (Non-Functional Requirements)
 
