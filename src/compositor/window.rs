@@ -456,10 +456,8 @@ impl ManagedWindow {
         self.loc = new_loc;
         self.size = (new_w, new_h).into();
 
-        if let Some(ref mut geo) = self.saved_geometry {
-            geo.size.w = geo.size.w.min(screen_w as i32);
-            geo.size.h = geo.size.h.min(screen_h as i32);
-        }
+        // When display resolution changes while maximized, update saved_geometry to 80% centered on the new resolution
+        self.saved_geometry = Some(Self::default_80pct_geometry(screen_w, screen_h, self.has_ssd));
 
         match &self.surface {
             WindowSurface::Wayland(win) => {
@@ -486,9 +484,14 @@ impl ManagedWindow {
         self.is_maximized = false;
         self.pending_unmaximize = true;
         self.unmaximize_in_flight_count = 0;
-        let target_geo = self.saved_geometry.take().unwrap_or_else(|| {
+        let raw_geo = self.saved_geometry.take().unwrap_or_else(|| {
             Self::default_80pct_geometry(screen_w, screen_h, self.has_ssd)
         });
+        let target_geo = if raw_geo.size.w >= screen_w as i32 - 10 || raw_geo.size.h >= screen_h as i32 - 40 {
+            Self::default_80pct_geometry(screen_w, screen_h, self.has_ssd)
+        } else {
+            raw_geo
+        };
 
         self.loc = target_geo.loc;
         self.size = target_geo.size;

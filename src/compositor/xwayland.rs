@@ -195,7 +195,7 @@ impl XwmHandler for TermwayState {
             if let Some(mw) = managed.filter(|mw| mw.pending_unmaximize) {
                 // Do not allow in-flight configure requests to enlarge the window back to maximized
                 let is_old_maximized = w.map(|v| v as i32 >= self.width as i32 - 10).unwrap_or(false);
-                if is_old_maximized && mw.unmaximize_in_flight_count < 2 {
+                if is_old_maximized && mw.unmaximize_in_flight_count < 30 {
                     max_w = max_w.min(mw.size.w);
                     max_h = max_h.min(mw.size.h);
                 }
@@ -239,23 +239,34 @@ impl XwmHandler for TermwayState {
                 if self.enable_wm {
                     let top_margin = if w.has_ssd { TITLEBAR_HEIGHT + BORDER_WIDTH } else { 0 };
                     let side_margin = if w.has_ssd { BORDER_WIDTH } else { 0 };
+                    let mut was_pending_unmaximize = false;
                     if w.pending_unmaximize {
                         // While waiting for unmaximize to complete, ignore in-flight old maximized geometry from X11!
                         let is_old_max = (geometry.size.w >= self.width as i32 - 10 && geometry.size.h >= self.height as i32 - top_margin - 10)
-                            && w.unmaximize_in_flight_count < 2;
+                            && w.unmaximize_in_flight_count < 30;
                         if is_old_max {
                             w.unmaximize_in_flight_count += 1;
                             continue;
                         }
                         w.pending_unmaximize = false;
+                        was_pending_unmaximize = true;
                     }
-                    let max_w = (self.width as i32 - w.loc.x - side_margin * 2).max(160);
-                    let max_h = (self.height as i32 - w.loc.y - top_margin - side_margin).max(100);
+                    let max_w = (self.width as i32 - side_margin * 2).max(160);
+                    let max_h = (self.height as i32 - top_margin - side_margin).max(100);
                     w.size = (geometry.size.w.min(max_w), geometry.size.h.min(max_h)).into();
-                    let max_x = (self.width as i32 - w.size.w - side_margin).max(side_margin);
-                    let max_y = (self.height as i32 - w.size.h - side_margin).max(top_margin);
-                    if w.loc.x > max_x { w.loc.x = max_x; }
-                    if w.loc.y > max_y { w.loc.y = max_y; }
+                    if was_pending_unmaximize {
+                        let total_frame_w = if w.has_ssd { w.size.w + BORDER_WIDTH * 2 } else { w.size.w };
+                        let total_frame_h = if w.has_ssd { w.size.h + TITLEBAR_HEIGHT + BORDER_WIDTH * 2 } else { w.size.h };
+                        let frame_x = ((self.width as i32 - total_frame_w) / 2).max(0);
+                        let frame_y = ((self.height as i32 - total_frame_h) / 2).max(0);
+                        w.loc.x = if w.has_ssd { frame_x + BORDER_WIDTH } else { frame_x };
+                        w.loc.y = if w.has_ssd { frame_y + TITLEBAR_HEIGHT + BORDER_WIDTH } else { frame_y };
+                    } else {
+                        let max_x = (self.width as i32 - w.size.w - side_margin).max(side_margin);
+                        let max_y = (self.height as i32 - w.size.h - side_margin).max(top_margin);
+                        if w.loc.x > max_x { w.loc.x = max_x; }
+                        if w.loc.y > max_y { w.loc.y = max_y; }
+                    }
                 } else {
                     w.loc = (0, 0).into();
                     w.size = (geometry.size.w.min(self.width as i32), geometry.size.h.min(self.height as i32)).into();

@@ -664,6 +664,15 @@ fn test_dynamic_resize_updates_maximized_and_floating_windows() {
     assert_eq!(win_csd.size.w, 1280);
     assert_eq!(win_csd.size.h, 720);
 
+    // Unmaximizing after resize MUST restore to 80% and centered on the NEW screen (1280x720)!
+    win_csd.unmaximize(1280, 720);
+    assert!(!win_csd.is_maximized);
+    assert!(win_csd.pending_unmaximize);
+    assert_eq!(win_csd.size.w, (1280 * 8) / 10);
+    assert_eq!(win_csd.size.h, (720 * 8) / 10);
+    assert_eq!(win_csd.loc.x, (1280 - win_csd.size.w) / 2);
+    assert_eq!(win_csd.loc.y, (720 - win_csd.size.h) / 2);
+
     // 2. Maximized SSD window expands to full screen within server-decorated margins
     let mut win_ssd = ManagedWindow::new_dummy(2, "SSD Win".into(), Point::from((0, 0)), Size::from((800, 600)));
     win_ssd.has_ssd = true;
@@ -674,6 +683,14 @@ fn test_dynamic_resize_updates_maximized_and_floating_windows() {
     assert_eq!(win_ssd.loc.y, TITLEBAR_HEIGHT + BORDER_WIDTH);
     assert_eq!(win_ssd.size.w, 1280 - BORDER_WIDTH * 2);
     assert_eq!(win_ssd.size.h, 720 - TITLEBAR_HEIGHT - BORDER_WIDTH * 2);
+
+    // Unmaximizing SSD after resize MUST restore to 80% and centered on the NEW screen (1280x720)!
+    win_ssd.unmaximize(1280, 720);
+    assert!(!win_ssd.is_maximized);
+    assert!(win_ssd.pending_unmaximize);
+    let expected_ssd = ManagedWindow::default_80pct_geometry(1280, 720, true);
+    assert_eq!(win_ssd.size, expected_ssd.size);
+    assert_eq!(win_ssd.loc, expected_ssd.loc);
 }
 
 

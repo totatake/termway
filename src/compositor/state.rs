@@ -429,7 +429,7 @@ impl CompositorHandler for TermwayState {
                                 // If the client commits a buffer that is still approximately the maximized size,
                                 // it is an in-flight buffer from the previous maximized state. Skip at most 2 frames.
                                 let is_old_large_buffer = (bbox.size.w >= self.width as i32 - 10 && bbox.size.h >= self.height as i32 - top_margin - 10)
-                                    && w.unmaximize_in_flight_count < 2;
+                                    && w.unmaximize_in_flight_count < 30;
                                 if is_old_large_buffer {
                                     w.unmaximize_in_flight_count += 1;
                                     return;
