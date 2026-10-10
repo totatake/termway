@@ -16,7 +16,7 @@ src/
 ├── backend/                  # ターミナル描画・非同期I/O層
 │   ├── mod.rs                # モジュールエクスポート
 │   └── terminal.rs           # TerminalBackend (Kitty/Sixel + SGR + 非同期I/O)
-├── compositor/               # Smithay Wayland コンポジタコア層 (v0.2)
+├── compositor/               # Smithay Wayland コンポジタコア層 (v0.2.0)
 │   ├── mod.rs                # TermwayCompositor ライフサイクル・イベントループ
 │   ├── input.rs              # マウス・キー入力イベントディスパッチ & evdev 変換
 │   ├── state.rs              # Smithay CompositorHandler / Seat / DataDevice 状態管理
@@ -184,10 +184,10 @@ impl Drop for RawModeGuard {
 
 ---
 
-## 6. Smithay + XWayland 自立型コンポジタ（v0.2 実装済み）
+## 6. Smithay + XWayland 自立型コンポジタ（v0.2.0 実装済み）
 
-### 6.1 v0.1 (Xkitty方式) の成果と課題
-v0.1 では、外部の `Xvfb` および `openbox` を子プロセスとして立ち上げ、MIT-SHM によるフレームバッファの定周期キャプチャと XTest による入力注入を行う方式（Xkitty と同様の構造）を採用しました。
+### 6.1 v0.1.0 (Xkitty方式) の成果と課題
+v0.1.0 では、外部の `Xvfb` および `openbox` を子プロセスとして立ち上げ、MIT-SHM によるフレームバッファの定周期キャプチャと XTest による入力注入を行う方式（Xkitty と同様の構造）を採用しました。
 このアプローチにより、「端末内に Kitty/Sixel で高速描画し、SGR マウスで対話する」というフロントエンドのプロトコル制御やピクセル追従（SGR 14t）の検証（PoC）には成功しました。
 
 しかしながら、以下の本質的な課題が存在します：
@@ -201,7 +201,7 @@ flowchart TD
         App["GUI アプリケーション (xclock, gvim 等)"]
     end
 
-    subgraph termway["termway (v0.1 / Xvfb Mode)"]
+    subgraph termway["termway (v0.1.0 / Xvfb Mode)"]
         Xvfb["Xvfb サーバー (ディスプレイ :99)"]
         Engine["TermwayEngine (30 FPS ループ)"]
         Tracker["DamageTracker (差分計算)"]
@@ -225,7 +225,7 @@ flowchart TD
     Injector -->|XTestFakeEvent| Xvfb
 ```
 
-### 6.2 v0.2: Smithay ベースの自立型 Headless Wayland コンポジタ（実装済み）
+### 6.2 v0.2.0: Smithay ベースの自立型 Headless Wayland コンポジタ（実装済み）
 
 `--wayland` フラグにより、`termway` 自体が **Smithay (Rust製Waylandコンポジタフレームワーク)** を用いた自立型コンポジタとして動作します。
 
@@ -236,7 +236,7 @@ flowchart TD
         XApp["レガシー X11 アプリ (xclock, xeyes 等)"]
     end
 
-    subgraph termway["termway v0.2 (Smithay Wayland Compositor)"]
+    subgraph termway["termway v0.2.0 (Smithay Wayland Compositor)"]
         XWL["XWayland サーバーマネージャ (DISPLAY=:1)"]
         Wrap["ラッパースクリプト (/tmp/termway_wrap/Xwayland)"]
         WLS["Wayland サーバー (WAYLAND_DISPLAY=wayland-1)"]
@@ -323,7 +323,7 @@ flowchart TD
 
 ### 6.7 アーキテクチャ比較表
 
-| 観点 | v0.1 (Xkitty方式) | v0.2 (Smithay + XWayland方式) |
+| 観点 | v0.1.0 (Xkitty方式) | v0.2.0 (Smithay + XWayland方式) |
 | :--- | :--- | :--- |
 | **位置づけ** | 外部 X サーバーのキャプチャ＆転送 PoC | **自立型 Wayland コンポジタ ＋ 表示基盤** |
 | **描画トリガー** | タイマーループ (30 FPS) による定周期キャプチャ | **`wl_surface.commit` やダメージに連動する完全イベント駆動** |
