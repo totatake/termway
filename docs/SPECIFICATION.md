@@ -218,7 +218,7 @@ flowchart LR
 
 ```bash
 $ cargo test -- --test-threads=1
-   Compiling termway v0.3.0 (/path/to/termway)
+   Compiling termway v0.4.0 (/path/to/termway)
     Finished `test` profile [unoptimized + debuginfo] target(s)
      Running tests/integration_pipeline.rs (5 tests) ... ok
      Running tests/system_e2e_gui.rs (1 test) ... ok
