@@ -68,7 +68,9 @@ impl TermwayRenderer {
                     Point::from((window.loc.x, window.loc.y)),
                     Size::from((window.size.w, window.size.h)),
                 );
-                // Shaped X11 windows: only draw inside the X Shape bounding region
+                // Shaped X11 windows: only draw inside the X Shape bounding region.
+                // SSD windows: constrain client drawing inside the server-rendered window frame.
+                // CSD windows: allow full client surface tree rendering (including decorations and shadows) clipped to screen.
                 let clips: Vec<Rectangle<i32, Physical>> = match &window.x11_shape {
                     Some(rects) => rects
                         .iter()
@@ -80,7 +82,13 @@ impl TermwayRenderer {
                             .intersection(win_clip)
                         })
                         .collect(),
-                    None => vec![win_clip],
+                    None => {
+                        if window.has_ssd {
+                            vec![win_clip]
+                        } else {
+                            vec![screen_damage]
+                        }
+                    }
                 };
                 if clips.is_empty() {
                     continue;

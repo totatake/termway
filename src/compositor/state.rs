@@ -420,17 +420,18 @@ impl CompositorHandler for TermwayState {
                     if bbox.size.w > 0 && bbox.size.h > 0 {
                         let top_margin = if w.has_ssd { TITLEBAR_HEIGHT + BORDER_WIDTH * 2 } else { 0 };
                         let side_margin = if w.has_ssd { BORDER_WIDTH * 2 } else { 0 };
-                        let max_allowed_w = (self.width as i32 - side_margin - 10).max(160);
-                        let max_allowed_h = (self.height as i32 - top_margin - 10).max(100);
+                        let max_allowed_w = (self.width as i32 - side_margin).max(160);
+                        let max_allowed_h = (self.height as i32 - top_margin).max(100);
 
                         if !w.is_maximized {
                             if w.pending_unmaximize {
                                 // While pending_unmaximize is true, the target unmaximized geometry is already set in w.size/w.loc.
-                                // If the client commits a buffer that is still larger than the target size,
-                                // it is an in-flight buffer from the previous maximized state. Keep target size intact.
-                                let is_old_large_buffer = bbox.size.w > w.size.w + 20 || bbox.size.h > w.size.h + 20;
+                                // If the client commits a buffer that is still approximately the maximized size,
+                                // it is an in-flight buffer from the previous maximized state. Skip at most 2 frames.
+                                let is_old_large_buffer = (bbox.size.w >= self.width as i32 - 10 && bbox.size.h >= self.height as i32 - top_margin - 10)
+                                    && w.unmaximize_in_flight_count < 2;
                                 if is_old_large_buffer {
-                                    // The unmaximize configure was already sent; just wait for the new buffer.
+                                    w.unmaximize_in_flight_count += 1;
                                     return;
                                 }
                                 w.pending_unmaximize = false;

@@ -188,12 +188,17 @@ impl XwmHandler for TermwayState {
                         y.unwrap_or(TITLEBAR_HEIGHT + BORDER_WIDTH).max(TITLEBAR_HEIGHT + BORDER_WIDTH),
                     ))
                 });
-            let mut max_w = (self.width as i32 - cur_loc.x - BORDER_WIDTH * 2).max(160);
-            let mut max_h = (self.height as i32 - cur_loc.y - BORDER_WIDTH * 2).max(100);
+            let side_margin = managed.map(|mw| if mw.has_ssd { BORDER_WIDTH * 2 } else { 0 }).unwrap_or(0);
+            let top_margin = managed.map(|mw| if mw.has_ssd { TITLEBAR_HEIGHT + BORDER_WIDTH * 2 } else { 0 }).unwrap_or(0);
+            let mut max_w = (self.width as i32 - cur_loc.x - side_margin).max(160);
+            let mut max_h = (self.height as i32 - cur_loc.y - top_margin).max(100);
             if let Some(mw) = managed.filter(|mw| mw.pending_unmaximize) {
                 // Do not allow in-flight configure requests to enlarge the window back to maximized
-                max_w = max_w.min(mw.size.w);
-                max_h = max_h.min(mw.size.h);
+                let is_old_maximized = w.map(|v| v as i32 >= self.width as i32 - 10).unwrap_or(false);
+                if is_old_maximized && mw.unmaximize_in_flight_count < 2 {
+                    max_w = max_w.min(mw.size.w);
+                    max_h = max_h.min(mw.size.h);
+                }
             }
             // Unspecified width/height keeps the current size (e.g. move-only requests)
             let cur_w = managed.map(|mw| mw.size.w).unwrap_or(max_w);
@@ -232,14 +237,18 @@ impl XwmHandler for TermwayState {
             if matches!(&w.surface, WindowSurface::X11(x) if x == &window) {
                 w.update_title();
                 if self.enable_wm {
-                    if w.pending_unmaximize {
-                        // While waiting for unmaximize to complete, ignore in-flight old maximized geometry from X11!
-                        if geometry.size.w > w.size.w + 20 || geometry.size.h > w.size.h + 20 {
-                            continue;
-                        }
-                    }
                     let top_margin = if w.has_ssd { TITLEBAR_HEIGHT + BORDER_WIDTH } else { 0 };
                     let side_margin = if w.has_ssd { BORDER_WIDTH } else { 0 };
+                    if w.pending_unmaximize {
+                        // While waiting for unmaximize to complete, ignore in-flight old maximized geometry from X11!
+                        let is_old_max = (geometry.size.w >= self.width as i32 - 10 && geometry.size.h >= self.height as i32 - top_margin - 10)
+                            && w.unmaximize_in_flight_count < 2;
+                        if is_old_max {
+                            w.unmaximize_in_flight_count += 1;
+                            continue;
+                        }
+                        w.pending_unmaximize = false;
+                    }
                     let max_w = (self.width as i32 - w.loc.x - side_margin * 2).max(160);
                     let max_h = (self.height as i32 - w.loc.y - top_margin - side_margin).max(100);
                     w.size = (geometry.size.w.min(max_w), geometry.size.h.min(max_h)).into();

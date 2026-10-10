@@ -38,6 +38,7 @@ pub struct ManagedWindow {
     pub is_maximized: bool,
     pub is_minimized: bool,
     pub pending_unmaximize: bool,
+    pub unmaximize_in_flight_count: u8,
     pub saved_geometry: Option<Rectangle<i32, Logical>>,
     pub associated_wl_surface: Option<WlSurface>,
     /// X11 Shape extension bounding rectangles (window-local). `None` means unshaped.
@@ -79,6 +80,7 @@ impl ManagedWindow {
             is_maximized: false,
             is_minimized: false,
             pending_unmaximize: false,
+            unmaximize_in_flight_count: 0,
             saved_geometry: None,
             associated_wl_surface: wl_surf,
             x11_shape: None,
@@ -101,6 +103,7 @@ impl ManagedWindow {
             is_maximized: false,
             is_minimized: false,
             pending_unmaximize: false,
+            unmaximize_in_flight_count: 0,
             saved_geometry: None,
             associated_wl_surface: wl_surf,
             x11_shape: None,
@@ -149,6 +152,7 @@ impl ManagedWindow {
             is_maximized: false,
             is_minimized: false,
             pending_unmaximize: false,
+            unmaximize_in_flight_count: 0,
             saved_geometry: None,
             associated_wl_surface: None,
             x11_shape: None,
@@ -398,6 +402,7 @@ impl ManagedWindow {
         self.saved_geometry = Some(Rectangle::new(self.loc, self.size));
         self.is_maximized = true;
         self.pending_unmaximize = false;
+        self.unmaximize_in_flight_count = 0;
 
         let (new_loc, new_w, new_h) = if self.has_ssd {
             let loc = Point::from((BORDER_WIDTH, TITLEBAR_HEIGHT + BORDER_WIDTH));
@@ -438,6 +443,7 @@ impl ManagedWindow {
         }
         self.is_maximized = false;
         self.pending_unmaximize = true;
+        self.unmaximize_in_flight_count = 0;
         let target_geo = self.saved_geometry.take().unwrap_or_else(|| {
             Self::default_80pct_geometry(screen_w, screen_h, self.has_ssd)
         });
