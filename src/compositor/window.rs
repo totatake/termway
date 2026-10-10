@@ -338,6 +338,34 @@ impl ManagedWindow {
         }
     }
 
+    /// Computes the default 80% centered geometry for a window within the given screen dimensions
+    pub fn default_80pct_geometry(screen_w: u32, screen_h: u32, has_ssd: bool) -> Rectangle<i32, Logical> {
+        let max_w = if has_ssd {
+            (screen_w as i32 - BORDER_WIDTH * 2).max(100)
+        } else {
+            (screen_w as i32).max(100)
+        };
+        let max_h = if has_ssd {
+            (screen_h as i32 - TITLEBAR_HEIGHT - BORDER_WIDTH * 2).max(60)
+        } else {
+            (screen_h as i32).max(60)
+        };
+
+        let w = ((screen_w as i32 * 8) / 10).clamp(320.min(max_w), max_w);
+        let h = ((screen_h as i32 * 8) / 10).clamp(240.min(max_h), max_h);
+
+        let total_frame_w = if has_ssd { w + BORDER_WIDTH * 2 } else { w };
+        let total_frame_h = if has_ssd { h + TITLEBAR_HEIGHT + BORDER_WIDTH * 2 } else { h };
+
+        let frame_x = ((screen_w as i32 - total_frame_w) / 2).max(0);
+        let frame_y = ((screen_h as i32 - total_frame_h) / 2).max(0);
+
+        let loc_x = if has_ssd { frame_x + BORDER_WIDTH } else { frame_x };
+        let loc_y = if has_ssd { frame_y + TITLEBAR_HEIGHT + BORDER_WIDTH } else { frame_y };
+
+        Rectangle::new(Point::from((loc_x, loc_y)), Size::from((w, h)))
+    }
+
     /// Maximize window to fill the available display area
     pub fn maximize(&mut self, screen_w: u32, screen_h: u32) {
         if self.is_maximized {
@@ -369,29 +397,31 @@ impl ManagedWindow {
         }
     }
 
-    /// Restore window from maximized state to its previous saved geometry
-    pub fn unmaximize(&mut self) {
+    /// Restore window from maximized state to its previous saved geometry or 80% screen fallback
+    pub fn unmaximize(&mut self, screen_w: u32, screen_h: u32) {
         if !self.is_maximized {
             return;
         }
         self.is_maximized = false;
-        if let Some(saved) = self.saved_geometry.take() {
-            self.loc = saved.loc;
-            self.configure_size(saved.size.w, saved.size.h);
+        let target_geo = self.saved_geometry.take().unwrap_or_else(|| {
+            Self::default_80pct_geometry(screen_w, screen_h, self.has_ssd)
+        });
 
-            if let WindowSurface::Wayland(ref win) = self.surface {
-                win.with_pending_state(|state| {
-                    state.states.unset(smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::State::Maximized);
-                });
-                win.send_configure();
-            }
+        self.loc = target_geo.loc;
+        self.configure_size(target_geo.size.w, target_geo.size.h);
+
+        if let WindowSurface::Wayland(ref win) = self.surface {
+            win.with_pending_state(|state| {
+                state.states.unset(smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::State::Maximized);
+            });
+            win.send_configure();
         }
     }
 
     /// Toggle maximized state
     pub fn toggle_maximize(&mut self, screen_w: u32, screen_h: u32) {
         if self.is_maximized {
-            self.unmaximize();
+            self.unmaximize(screen_w, screen_h);
         } else {
             self.maximize(screen_w, screen_h);
         }

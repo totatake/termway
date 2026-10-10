@@ -59,34 +59,59 @@ impl XwmHandler for TermwayState {
                 let id = self.next_window_id;
                 self.next_window_id += 1;
                 let geo = window.geometry();
-                let (loc, size) = if self.enable_wm {
-                    let loc = if geo.loc.x == 0 && geo.loc.y == 0 {
-                        let offset = ((self.managed_windows.len() % 8) as i32) * 20;
-                        smithay::utils::Point::from((10 + offset, TITLEBAR_HEIGHT + 6 + offset))
+                let is_first_window = self.managed_windows.is_empty();
+                let has_ssd = !window.is_decorated();
+                let (loc, size, is_maximized, saved_geometry) = if self.enable_wm {
+                    if is_first_window {
+                        let saved_geo = ManagedWindow::default_80pct_geometry(self.width, self.height, has_ssd);
+                        let (max_loc, max_w, max_h) = if has_ssd {
+                            let loc = smithay::utils::Point::from((BORDER_WIDTH, TITLEBAR_HEIGHT + BORDER_WIDTH));
+                            let w = (self.width as i32 - BORDER_WIDTH * 2).max(100);
+                            let h = (self.height as i32 - TITLEBAR_HEIGHT - BORDER_WIDTH * 2).max(60);
+                            (loc, w, h)
+                        } else {
+                            let loc = smithay::utils::Point::from((0, 0));
+                            let w = (self.width as i32).max(100);
+                            let h = (self.height as i32).max(60);
+                            (loc, w, h)
+                        };
+                        (max_loc, smithay::utils::Size::from((max_w, max_h)), true, Some(saved_geo))
                     } else {
-                        smithay::utils::Point::from((
-                            geo.loc.x.max(BORDER_WIDTH),
-                            geo.loc.y.max(TITLEBAR_HEIGHT + BORDER_WIDTH),
-                        ))
-                    };
-                    let max_w = (self.width as i32 - loc.x - BORDER_WIDTH * 2 - 20).max(160);
-                    let max_h = (self.height as i32 - loc.y - BORDER_WIDTH * 2 - 20).max(100);
-                    let init_w = if geo.size.w > 0 { geo.size.w.min(max_w) } else { max_w };
-                    let init_h = if geo.size.h > 0 { geo.size.h.min(max_h) } else { max_h };
-                    (loc, smithay::utils::Size::from((init_w, init_h)))
+                        let loc = if geo.loc.x == 0 && geo.loc.y == 0 {
+                            let offset = ((self.managed_windows.len() % 8) as i32) * 20;
+                            smithay::utils::Point::from((10 + offset, TITLEBAR_HEIGHT + 6 + offset))
+                        } else {
+                            smithay::utils::Point::from((
+                                geo.loc.x.max(BORDER_WIDTH),
+                                geo.loc.y.max(TITLEBAR_HEIGHT + BORDER_WIDTH),
+                            ))
+                        };
+                        let max_w = (self.width as i32 - loc.x - BORDER_WIDTH * 2 - 20).max(160);
+                        let max_h = (self.height as i32 - loc.y - BORDER_WIDTH * 2 - 20).max(100);
+                        let init_w = if geo.size.w > 0 { geo.size.w.min(max_w) } else { max_w };
+                        let init_h = if geo.size.h > 0 { geo.size.h.min(max_h) } else { max_h };
+                        (loc, smithay::utils::Size::from((init_w, init_h)), false, None)
+                    }
                 } else {
                     (
                         smithay::utils::Point::from((0, 0)),
                         smithay::utils::Size::from((self.width as i32, self.height as i32)),
+                        true,
+                        None,
                     )
                 };
 
                 for w in &mut self.managed_windows {
                     w.active = false;
                 }
-                let win = ManagedWindow::new_x11(id, window.clone(), loc, size);
+                let mut win = ManagedWindow::new_x11(id, window.clone(), loc, size);
+                win.is_maximized = is_maximized;
+                win.saved_geometry = saved_geometry;
                 let rect = Rectangle::new(loc, size);
                 let _ = window.configure(rect);
+                if is_maximized {
+                    let _ = window.set_maximized(true);
+                }
                 self.managed_windows.push(win);
             }
         }
@@ -269,7 +294,7 @@ impl XwmHandler for TermwayState {
                 WindowSurface::X11(t) => t == &window,
                 _ => false,
             }) {
-                win.unmaximize();
+                win.unmaximize(self.width, self.height);
                 let _ = window.set_maximized(false);
             }
         }

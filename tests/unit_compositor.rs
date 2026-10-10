@@ -368,7 +368,7 @@ fn test_window_maximize_and_unmaximize() {
     assert_eq!(win.size.h, 600 - TITLEBAR_HEIGHT - BORDER_WIDTH * 2);
 
     // Unmaximize restores original geometry
-    win.unmaximize();
+    win.unmaximize(800, 600);
     assert!(!win.is_maximized);
     assert!(win.saved_geometry.is_none());
     assert_eq!(win.loc.x, orig_loc.x);
@@ -381,6 +381,22 @@ fn test_window_maximize_and_unmaximize() {
     assert!(win.is_maximized);
     win.toggle_maximize(800, 600);
     assert!(!win.is_maximized);
+
+    // Test unmaximize without saved_geometry uses 80% screen fallback
+    win.is_maximized = true;
+    win.saved_geometry = None;
+    win.unmaximize(800, 600);
+    assert!(!win.is_maximized);
+    let expected_80 = ManagedWindow::default_80pct_geometry(800, 600, true);
+    assert_eq!(win.loc, expected_80.loc);
+    assert_eq!(win.size, expected_80.size);
+    // Verify 80% bounds
+    assert_eq!(win.size.w, 640);
+    assert_eq!(win.size.h, 480);
+    let fg = win.frame_geometry();
+    assert!(fg.loc.x >= 0 && fg.loc.y >= 0);
+    assert!(fg.loc.x + fg.size.w <= 800);
+    assert!(fg.loc.y + fg.size.h <= 600);
 }
 
 #[test]

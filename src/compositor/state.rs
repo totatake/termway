@@ -456,29 +456,38 @@ impl XdgShellHandler for TermwayState {
         let wl_id = surface.wl_surface().id().protocol_id();
         crate::compositor::log_line(format!("[compositor] new_toplevel id={} surface={}", id, wl_id));
 
-        let (loc, configure_size, init_window_size) = if self.enable_wm {
-            let offset = ((self.managed_windows.len() % 8) as i32) * 20;
-            let loc_x = (20 + offset).max(0);
-            let loc_y = (10 + offset).max(0);
-            let loc = smithay::utils::Point::from((loc_x, loc_y));
+        let is_first_window = self.managed_windows.is_empty();
+        let (loc, configure_size, init_window_size, is_maximized, saved_geometry) = if self.enable_wm {
+            if is_first_window {
+                let saved_geo = ManagedWindow::default_80pct_geometry(self.width, self.height, false);
+                let loc = smithay::utils::Point::from((0, 0));
+                let configure_size = smithay::utils::Size::from((self.width as i32, self.height as i32));
+                let init_window_size = configure_size;
+                (loc, configure_size, init_window_size, true, Some(saved_geo))
+            } else {
+                let offset = ((self.managed_windows.len() % 8) as i32) * 20;
+                let loc_x = (20 + offset).max(0);
+                let loc_y = (10 + offset).max(0);
+                let loc = smithay::utils::Point::from((loc_x, loc_y));
 
-            let max_w = (self.width as i32 - loc_x - 10).max(320);
-            let max_h = (self.height as i32 - loc_y - 10).max(200);
+                let max_w = (self.width as i32 - loc_x - 10).max(320);
+                let max_h = (self.height as i32 - loc_y - 10).max(200);
 
-            let init_w = (self.width as i32 * 8 / 10).clamp(320, max_w);
-            let init_h = (self.height as i32 * 8 / 10).clamp(240, max_h);
-            let configure_size = smithay::utils::Size::from((init_w, init_h));
-            let init_window_size = configure_size;
+                let init_w = (self.width as i32 * 8 / 10).clamp(320, max_w);
+                let init_h = (self.height as i32 * 8 / 10).clamp(240, max_h);
+                let configure_size = smithay::utils::Size::from((init_w, init_h));
+                let init_window_size = configure_size;
 
-            (loc, configure_size, init_window_size)
+                (loc, configure_size, init_window_size, false, None)
+            }
         } else {
             let s = smithay::utils::Size::from((self.width as i32, self.height as i32));
-            (smithay::utils::Point::from((0, 0)), s, s)
+            (smithay::utils::Point::from((0, 0)), s, s, true, None)
         };
 
         surface.with_pending_state(|state| {
             state.states.set(xdg_toplevel::State::Activated);
-            if !self.enable_wm {
+            if is_maximized {
                 state.states.set(xdg_toplevel::State::Maximized);
             }
             state.size = Some(configure_size);
@@ -493,7 +502,9 @@ impl XdgShellHandler for TermwayState {
             w.active = false;
         }
         // Wayland clients default to CSD unless ServerSide is negotiated via zxdg_decoration
-        let win = ManagedWindow::new_wayland(id, surface, loc, init_window_size, false);
+        let mut win = ManagedWindow::new_wayland(id, surface, loc, init_window_size, false);
+        win.is_maximized = is_maximized;
+        win.saved_geometry = saved_geometry;
         self.managed_windows.push(win);
 
         let keyboard = self.keyboard.clone();
@@ -590,7 +601,7 @@ impl XdgShellHandler for TermwayState {
                 super::window::WindowSurface::Wayland(t) => t == &surface,
                 _ => false,
             }) {
-                win.unmaximize();
+                win.unmaximize(self.width, self.height);
             }
         } else {
             surface.with_pending_state(|state| {
