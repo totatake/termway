@@ -252,6 +252,48 @@ impl XwmHandler for TermwayState {
         }
     }
 
+    fn maximize_request(&mut self, _xwm: XwmId, window: X11Surface) {
+        if let Some(win) = self.managed_windows.iter_mut().find(|w| match &w.surface {
+            WindowSurface::X11(t) => t == &window,
+            _ => false,
+        }) {
+            win.maximize(self.width, self.height);
+            let _ = window.set_maximized(true);
+        }
+        self.dirty = true;
+    }
+
+    fn unmaximize_request(&mut self, _xwm: XwmId, window: X11Surface) {
+        if self.enable_wm {
+            if let Some(win) = self.managed_windows.iter_mut().find(|w| match &w.surface {
+                WindowSurface::X11(t) => t == &window,
+                _ => false,
+            }) {
+                win.unmaximize();
+                let _ = window.set_maximized(false);
+            }
+        }
+        self.dirty = true;
+    }
+
+    fn minimize_request(&mut self, _xwm: XwmId, window: X11Surface) {
+        if let Some(id) = self.managed_windows.iter().find(|w| match &w.surface {
+            WindowSurface::X11(t) => t == &window,
+            _ => false,
+        }).map(|w| w.id) {
+            self.minimize_window(id);
+        }
+    }
+
+    fn unminimize_request(&mut self, _xwm: XwmId, window: X11Surface) {
+        if let Some(id) = self.managed_windows.iter().find(|w| match &w.surface {
+            WindowSurface::X11(t) => t == &window,
+            _ => false,
+        }).map(|w| w.id) {
+            self.restore_window(id);
+        }
+    }
+
     fn send_selection(&mut self, _xwm: XwmId, _selection: SelectionTarget, _mime_type: String, _fd: OwnedFd) {}
 }
 

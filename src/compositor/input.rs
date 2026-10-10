@@ -277,9 +277,20 @@ fn find_pointer_focus(
         }
     }
 
-    // Fallback: unassociated surfaces
-    if let Some(surface) = state.unassociated_surfaces.last() {
-        return Some((surface.clone(), Point::from((0.0, 0.0))));
+    // Fallback: unassociated surfaces (do not focus if all managed windows are minimized)
+    let any_managed = !state.managed_windows.is_empty();
+    let all_managed_minimized = any_managed && state.managed_windows.iter().all(|w| w.is_minimized);
+    if !all_managed_minimized {
+        let minimized_surfaces: Vec<WlSurface> = state
+            .managed_windows
+            .iter()
+            .filter(|w| w.is_minimized)
+            .filter_map(|w| state.surface_for_managed_window(w))
+            .collect();
+
+        if let Some(surface) = state.unassociated_surfaces.iter().rev().find(|s| !minimized_surfaces.contains(s)) {
+            return Some((surface.clone(), Point::from((0.0, 0.0))));
+        }
     }
 
     None

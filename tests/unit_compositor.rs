@@ -458,5 +458,39 @@ fn test_window_minimize_and_restore() {
     assert!(win2_restored.active);
 }
 
+#[test]
+fn test_minimized_window_renderer_suppression() {
+    use smithay::utils::{Point, Size};
+    use termway::compositor::window::ManagedWindow;
+    use termway::compositor::renderer::TermwayRenderer;
+
+    let display = Display::<TermwayState>::new().expect("Failed to create Wayland Display");
+    let dh = display.handle();
+
+    let mut state = TermwayState::new(&dh, 800, 600, true);
+    let mut renderer = TermwayRenderer::new(800, 600).expect("Failed to create TermwayRenderer");
+
+    let win = ManagedWindow::new_dummy(1, "Test App".into(), Point::from((50, 50)), Size::from((300, 200)));
+    state.managed_windows.push(win);
+
+    // Initial render when not minimized succeeds
+    let pixels_normal = renderer.render(&state).expect("Render normal failed");
+    assert_eq!(pixels_normal.len(), 800 * 600 * 4);
+
+    // Minimize window -> all managed windows are minimized
+    state.minimize_window(1);
+    assert!(state.managed_windows[0].is_minimized);
+
+    // Rendering when minimized should succeed without errors and not render unassociated fallback
+    let pixels_min = renderer.render(&state).expect("Render minimized failed");
+    assert_eq!(pixels_min.len(), 800 * 600 * 4);
+
+    // Restore window
+    state.restore_window(1);
+    assert!(!state.managed_windows[0].is_minimized);
+    let pixels_restored = renderer.render(&state).expect("Render restored failed");
+    assert_eq!(pixels_restored.len(), 800 * 600 * 4);
+}
+
 
 

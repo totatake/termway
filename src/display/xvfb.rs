@@ -110,8 +110,53 @@ impl XvfbServer {
         }
     }
 
-    /// Query the number of mapped client windows on the root window
+    /// Query the number of active/open client windows (including minimized ones managed by WM)
     pub fn count_client_windows(&self) -> usize {
+        let mut ewmh_count = 0;
+        let mut ewmh_available = false;
+
+        let net_client_list_atom = unsafe {
+            let name = std::ffi::CString::new("_NET_CLIENT_LIST").unwrap();
+            x11::xlib::XInternAtom(self.display_ptr, name.as_ptr(), x11::xlib::False)
+        };
+
+        if net_client_list_atom != 0 {
+            let mut actual_type = 0;
+            let mut actual_format = 0;
+            let mut nitems = 0;
+            let mut bytes_after = 0;
+            let mut prop_data: *mut u8 = std::ptr::null_mut();
+
+            let res = unsafe {
+                x11::xlib::XGetWindowProperty(
+                    self.display_ptr,
+                    self.root_window,
+                    net_client_list_atom,
+                    0,
+                    1024,
+                    x11::xlib::False,
+                    x11::xlib::XA_WINDOW,
+                    &mut actual_type,
+                    &mut actual_format,
+                    &mut nitems,
+                    &mut bytes_after,
+                    &mut prop_data,
+                )
+            };
+
+            if res == x11::xlib::Success as i32 && !prop_data.is_null() {
+                ewmh_available = true;
+                ewmh_count = nitems as usize;
+                unsafe {
+                    x11::xlib::XFree(prop_data as *mut std::ffi::c_void);
+                }
+            }
+        }
+
+        if ewmh_available && ewmh_count > 0 {
+            return ewmh_count;
+        }
+
         let mut root_return = 0;
         let mut parent_return = 0;
         let mut children_return: *mut x11::xlib::Window = std::ptr::null_mut();
@@ -128,7 +173,7 @@ impl XvfbServer {
             )
         };
 
-        let mut count = 0;
+        let mut tree_count = 0;
         if status != 0 && !children_return.is_null() {
             let slice = unsafe { std::slice::from_raw_parts(children_return, nchildren_return as usize) };
             for &win in slice {
@@ -140,7 +185,7 @@ impl XvfbServer {
                         && attrs.width > 1
                         && attrs.height > 1
                     {
-                        count += 1;
+                        tree_count += 1;
                     }
                 }
             }
@@ -148,7 +193,12 @@ impl XvfbServer {
                 x11::xlib::XFree(children_return as *mut std::ffi::c_void);
             }
         }
-        count
+
+        if ewmh_available {
+            std::cmp::max(ewmh_count, tree_count)
+        } else {
+            tree_count
+        }
     }
 
     fn find_free_display() -> u32 {

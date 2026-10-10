@@ -162,6 +162,18 @@ impl TermwayState {
         if let Some(win) = self.managed_windows.iter_mut().find(|w| w.id == id) {
             win.is_minimized = true;
             win.active = false;
+            match &win.surface {
+                super::window::WindowSurface::Wayland(toplevel) => {
+                    toplevel.with_pending_state(|state| {
+                        state.states.unset(xdg_toplevel::State::Activated);
+                    });
+                    toplevel.send_configure();
+                }
+                super::window::WindowSurface::X11(xsurface) => {
+                    let _ = xsurface.set_activated(false);
+                }
+                _ => {}
+            }
         }
         // Focus the next available non-minimized window (from top to bottom of Z-order)
         let top_non_min = self.managed_windows.iter().rev().find(|w| !w.is_minimized).map(|w| w.id);
@@ -177,6 +189,18 @@ impl TermwayState {
     pub fn restore_window(&mut self, id: usize) {
         if let Some(win) = self.managed_windows.iter_mut().find(|w| w.id == id) {
             win.is_minimized = false;
+            match &win.surface {
+                super::window::WindowSurface::Wayland(toplevel) => {
+                    toplevel.with_pending_state(|state| {
+                        state.states.set(xdg_toplevel::State::Activated);
+                    });
+                    toplevel.send_configure();
+                }
+                super::window::WindowSurface::X11(xsurface) => {
+                    let _ = xsurface.set_activated(true);
+                }
+                _ => {}
+            }
         }
         self.raise_window(id);
         self.dirty = true;
@@ -389,7 +413,7 @@ impl CompositorHandler for TermwayState {
             }
         }
         for w in &self.managed_windows {
-            if w.wl_surface().as_ref() == Some(surface) {
+            if w.wl_surface().as_ref() == Some(surface) || self.surface_for_managed_window(w).as_ref() == Some(surface) {
                 tracked = true; break;
             }
         }
@@ -578,6 +602,15 @@ impl XdgShellHandler for TermwayState {
         self.dirty = true;
     }
 
+    fn minimize_request(&mut self, surface: ToplevelSurface) {
+        if let Some(id) = self.managed_windows.iter().find(|w| match &w.surface {
+            super::window::WindowSurface::Wayland(t) => t == &surface,
+            _ => false,
+        }).map(|w| w.id) {
+            self.minimize_window(id);
+        }
+    }
+
     fn move_request(&mut self, surface: ToplevelSurface, _seat: wl_seat::WlSeat, _serial: Serial) {
         if !self.enable_wm {
             return;
@@ -616,6 +649,21 @@ impl XdgShellHandler for TermwayState {
                 start_window_geo: win_geo,
             };
         }
+    }
+
+    fn toplevel_destroyed(&mut self, surface: ToplevelSurface) {
+        self.windows.retain(|w| w != &surface);
+        self.managed_windows.retain(|w| !matches!(&w.surface, WindowSurface::Wayland(t) if t == &surface));
+        if let Some(top) = self.managed_windows.last_mut() {
+            top.active = true;
+        }
+        let top_surface = self.managed_windows.last().and_then(|top| self.surface_for_managed_window(top));
+        if let Some(s) = top_surface {
+            let keyboard = self.keyboard.clone();
+            let serial = smithay::utils::SERIAL_COUNTER.next_serial();
+            keyboard.set_focus(self, Some(s), serial);
+        }
+        self.dirty = true;
     }
 }
 

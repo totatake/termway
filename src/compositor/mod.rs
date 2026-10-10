@@ -378,10 +378,23 @@ impl TermwayCompositor {
             }
 
             // Clean up destroyed windows/surfaces
-            self.state.windows.retain(|w| smithay::reexports::wayland_server::Resource::is_alive(w.wl_surface()));
+            self.state.windows.retain(|w| w.alive() && smithay::reexports::wayland_server::Resource::is_alive(w.wl_surface()));
+            let prev_count = self.state.managed_windows.len();
             self.state.managed_windows.retain(|w| {
-                w.wl_surface().as_ref().map(smithay::reexports::wayland_server::Resource::is_alive).unwrap_or(true)
+                match &w.surface {
+                    WindowSurface::Wayland(t) => {
+                        t.alive() && smithay::reexports::wayland_server::Resource::is_alive(t.wl_surface())
+                    }
+                    WindowSurface::X11(x) => x.alive(),
+                    WindowSurface::Dummy => true,
+                }
             });
+            if self.state.managed_windows.len() != prev_count {
+                if let Some(top) = self.state.managed_windows.last_mut() {
+                    top.active = true;
+                }
+                self.state.dirty = true;
+            }
 
             let polkit_pid = self.session.polkit_pid();
             let is_x11_polkit = |xwin: &smithay::xwayland::xwm::X11Surface| -> bool {

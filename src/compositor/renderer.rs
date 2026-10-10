@@ -121,8 +121,21 @@ impl TermwayRenderer {
         }
 
         // C. Fallback: if no elements collected from managed or X11 windows, render unassociated surfaces at (0, 0)
-        if elements.is_empty() {
+        let any_managed = !state.managed_windows.is_empty();
+        let all_managed_minimized = any_managed && state.managed_windows.iter().all(|w| w.is_minimized);
+
+        if elements.is_empty() && !all_managed_minimized {
+            let minimized_surfaces: Vec<smithay::reexports::wayland_server::protocol::wl_surface::WlSurface> = state
+                .managed_windows
+                .iter()
+                .filter(|w| w.is_minimized)
+                .filter_map(|w| state.surface_for_managed_window(w))
+                .collect();
+
             for surface in &state.unassociated_surfaces {
+                if minimized_surfaces.contains(surface) {
+                    continue;
+                }
                 let elems = render_elements_from_surface_tree(
                     &mut self.renderer,
                     surface,

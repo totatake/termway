@@ -63,7 +63,7 @@ impl TerminalBackend {
         let overlay_len = mode_desc.len() + 37;
         let overlay_row = self.term_size.rows;
         let overlay_col = self.term_size.cols.saturating_sub(overlay_len as u16 + 2).max(1);
-        let overlay_seq = format!("\x1b[{};{}H{}", overlay_row, overlay_col, overlay_text);
+        let overlay_seq = format!("\x1b[{};1H\x1b[2K\x1b[{};{}H{}", overlay_row, overlay_row, overlay_col, overlay_text);
 
         if self.use_sixel {
             let encoded = SixelEncoder::encode_fullscreen_frame(&fb.pixels, fb.width, fb.height);
@@ -101,15 +101,8 @@ impl TerminalBackend {
         let overlay_col = self.term_size.cols.saturating_sub(overlay_len as u16 + 2).max(1);
         let overlay_seq = format!("\x1b[{};{}H{}", overlay_row, overlay_col, overlay_text);
 
-        let taskbar_seq = if let Some(tb) = taskbar {
-            if !tb.is_empty() {
-                format!("\x1b[{};1H{}", overlay_row, tb)
-            } else {
-                String::new()
-            }
-        } else {
-            String::new()
-        };
+        let taskbar_str = taskbar.unwrap_or("");
+        let taskbar_seq = format!("\x1b[{};1H\x1b[2K{}", overlay_row, taskbar_str);
 
         if self.use_sixel {
             let encoded = SixelEncoder::encode_fullscreen_frame(pixels, width, height);
