@@ -88,6 +88,7 @@ pub struct TermwayState {
     pub height: u32,
     pub enable_wm: bool,
     pub start_time: std::time::Instant,
+    pub last_titlebar_click: Option<(std::time::Instant, usize)>,
 }
 
 impl TermwayState {
@@ -153,7 +154,32 @@ impl TermwayState {
             height,
             enable_wm,
             start_time: std::time::Instant::now(),
+            last_titlebar_click: None,
         }
+    }
+
+    pub fn minimize_window(&mut self, id: usize) {
+        if let Some(win) = self.managed_windows.iter_mut().find(|w| w.id == id) {
+            win.is_minimized = true;
+            win.active = false;
+        }
+        // Focus the next available non-minimized window (from top to bottom of Z-order)
+        let top_non_min = self.managed_windows.iter().rev().find(|w| !w.is_minimized).map(|w| w.id);
+        if let Some(top_id) = top_non_min {
+            self.raise_window(top_id);
+        } else {
+            let keyboard = self.keyboard.clone();
+            keyboard.set_focus(self, None, smithay::utils::SERIAL_COUNTER.next_serial());
+        }
+        self.dirty = true;
+    }
+
+    pub fn restore_window(&mut self, id: usize) {
+        if let Some(win) = self.managed_windows.iter_mut().find(|w| w.id == id) {
+            win.is_minimized = false;
+        }
+        self.raise_window(id);
+        self.dirty = true;
     }
 
     pub fn raise_window(&mut self, id: usize) {
@@ -246,8 +272,8 @@ impl TermwayState {
             let title_escaped = win.title.replace('\\', "\\\\").replace('\"', "\\\"");
             let comma = if i + 1 < self.managed_windows.len() { "," } else { "" };
             out.push_str(&format!(
-                "    {{\"id\": {}, \"kind\": \"{}\", \"title\": \"{}\", \"active\": {}, \"x\": {}, \"y\": {}, \"width\": {}, \"height\": {}}}{}\n",
-                win.id, kind, title_escaped, win.active, content_geo.loc.x, content_geo.loc.y, content_geo.size.w, content_geo.size.h, comma
+                "    {{\"id\": {}, \"kind\": \"{}\", \"title\": \"{}\", \"active\": {}, \"is_maximized\": {}, \"is_minimized\": {}, \"x\": {}, \"y\": {}, \"width\": {}, \"height\": {}}}{}\n",
+                win.id, kind, title_escaped, win.active, win.is_maximized, win.is_minimized, content_geo.loc.x, content_geo.loc.y, content_geo.size.w, content_geo.size.h, comma
             ));
         }
         out.push_str("  ],\n");
@@ -519,21 +545,37 @@ impl XdgShellHandler for TermwayState {
     }
 
     fn maximize_request(&mut self, surface: ToplevelSurface) {
-        surface.with_pending_state(|state| {
-            state.states.set(xdg_toplevel::State::Maximized);
-            state.size = Some((self.width as i32, self.height as i32).into());
-        });
-        surface.send_configure();
-    }
-
-    fn unmaximize_request(&mut self, surface: ToplevelSurface) {
-        if !self.enable_wm {
+        if let Some(win) = self.managed_windows.iter_mut().find(|w| match &w.surface {
+            super::window::WindowSurface::Wayland(t) => t == &surface,
+            _ => false,
+        }) {
+            win.maximize(self.width, self.height);
+        } else {
             surface.with_pending_state(|state| {
                 state.states.set(xdg_toplevel::State::Maximized);
                 state.size = Some((self.width as i32, self.height as i32).into());
             });
             surface.send_configure();
         }
+        self.dirty = true;
+    }
+
+    fn unmaximize_request(&mut self, surface: ToplevelSurface) {
+        if self.enable_wm {
+            if let Some(win) = self.managed_windows.iter_mut().find(|w| match &w.surface {
+                super::window::WindowSurface::Wayland(t) => t == &surface,
+                _ => false,
+            }) {
+                win.unmaximize();
+            }
+        } else {
+            surface.with_pending_state(|state| {
+                state.states.set(xdg_toplevel::State::Maximized);
+                state.size = Some((self.width as i32, self.height as i32).into());
+            });
+            surface.send_configure();
+        }
+        self.dirty = true;
     }
 
     fn move_request(&mut self, surface: ToplevelSurface, _seat: wl_seat::WlSeat, _serial: Serial) {

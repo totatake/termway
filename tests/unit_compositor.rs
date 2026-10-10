@@ -346,5 +346,117 @@ fn test_compositor_mouse_wheel_dispatch() {
     assert!(state.dirty, "WheelDown should set state.dirty = true");
 }
 
+#[test]
+fn test_window_maximize_and_unmaximize() {
+    use smithay::utils::{Point, Size};
+    use termway::compositor::window::{ManagedWindow, BORDER_WIDTH, TITLEBAR_HEIGHT};
+
+    let orig_loc = Point::from((50, 60));
+    let orig_size = Size::from((400, 300));
+    let mut win = ManagedWindow::new_dummy(1, "Test Win".into(), orig_loc, orig_size);
+
+    assert!(!win.is_maximized);
+    assert!(win.saved_geometry.is_none());
+
+    // Maximize on 800x600 screen
+    win.maximize(800, 600);
+    assert!(win.is_maximized);
+    assert!(win.saved_geometry.is_some());
+    assert_eq!(win.loc.x, BORDER_WIDTH);
+    assert_eq!(win.loc.y, TITLEBAR_HEIGHT + BORDER_WIDTH);
+    assert_eq!(win.size.w, 800 - BORDER_WIDTH * 2);
+    assert_eq!(win.size.h, 600 - TITLEBAR_HEIGHT - BORDER_WIDTH * 2);
+
+    // Unmaximize restores original geometry
+    win.unmaximize();
+    assert!(!win.is_maximized);
+    assert!(win.saved_geometry.is_none());
+    assert_eq!(win.loc.x, orig_loc.x);
+    assert_eq!(win.loc.y, orig_loc.y);
+    assert_eq!(win.size.w, orig_size.w);
+    assert_eq!(win.size.h, orig_size.h);
+
+    // Toggle maximize
+    win.toggle_maximize(800, 600);
+    assert!(win.is_maximized);
+    win.toggle_maximize(800, 600);
+    assert!(!win.is_maximized);
+}
+
+#[test]
+fn test_titlebar_buttons_geometry_and_hit_testing() {
+    use smithay::utils::{Point, Size};
+    use termway::compositor::window::ManagedWindow;
+
+    let loc = Point::from((100, 100));
+    let size = Size::from((500, 400));
+    let win = ManagedWindow::new_dummy(1, "Test Window".into(), loc, size);
+
+    let close_hit = win.close_button_hit_geometry();
+    let max_hit = win.maximize_button_hit_geometry();
+    let min_hit = win.minimize_button_hit_geometry();
+
+    // Verify non-overlapping distinct hit regions from right to left
+    assert_eq!(close_hit.size.w, 24);
+    assert_eq!(max_hit.size.w, 24);
+    assert_eq!(min_hit.size.w, 24);
+
+    assert_eq!(max_hit.loc.x + max_hit.size.w, close_hit.loc.x);
+    assert_eq!(min_hit.loc.x + min_hit.size.w, max_hit.loc.x);
+
+    // Test hit detection with points inside each button
+    let close_pt = Point::from((close_hit.loc.x + 5, close_hit.loc.y + 5));
+    let max_pt = Point::from((max_hit.loc.x + 5, max_hit.loc.y + 5));
+    let min_pt = Point::from((min_hit.loc.x + 5, min_hit.loc.y + 5));
+
+    assert!(close_hit.contains(close_pt));
+    assert!(!max_hit.contains(close_pt));
+    assert!(!min_hit.contains(close_pt));
+
+    assert!(max_hit.contains(max_pt));
+    assert!(!close_hit.contains(max_pt));
+    assert!(!min_hit.contains(max_pt));
+
+    assert!(min_hit.contains(min_pt));
+    assert!(!close_hit.contains(min_pt));
+    assert!(!max_hit.contains(min_pt));
+}
+
+#[test]
+fn test_window_minimize_and_restore() {
+    use smithay::utils::{Point, Size};
+    use termway::compositor::window::ManagedWindow;
+
+    let display = Display::<TermwayState>::new().expect("Failed to create Wayland Display");
+    let dh = display.handle();
+
+    let mut state = TermwayState::new(&dh, 800, 600, true);
+
+    let win1 = ManagedWindow::new_dummy(1, "App 1".into(), Point::from((10, 10)), Size::from((200, 150)));
+    let win2 = ManagedWindow::new_dummy(2, "App 2".into(), Point::from((50, 50)), Size::from((200, 150)));
+    state.managed_windows.push(win1);
+    state.managed_windows.push(win2);
+
+    // Win 2 is on top and active
+    assert_eq!(state.managed_windows.last().unwrap().id, 2);
+
+    // Minimize Win 2 -> Win 1 becomes active
+    state.minimize_window(2);
+    let win2_ref = state.managed_windows.iter().find(|w| w.id == 2).unwrap();
+    assert!(win2_ref.is_minimized);
+    assert!(!win2_ref.active);
+
+    let win1_ref = state.managed_windows.iter().find(|w| w.id == 1).unwrap();
+    assert!(!win1_ref.is_minimized);
+    assert!(win1_ref.active);
+
+    // Restore Win 2 -> Win 2 becomes un-minimized, active, and top of Z-order
+    state.restore_window(2);
+    let win2_restored = state.managed_windows.last().unwrap();
+    assert_eq!(win2_restored.id, 2);
+    assert!(!win2_restored.is_minimized);
+    assert!(win2_restored.active);
+}
+
 
 

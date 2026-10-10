@@ -23,7 +23,9 @@
   - **Integrated Polkit Authentication Agent**: Automatically discovers and runs background authentication agents (`policykit-1-gnome` or `lxpolkit`). Elevation prompts for privileged tools like `gparted` or `pkexec` pop up seamlessly inside your terminal window.
 - **Built-in Floating Window Manager (Openbox / Fluxbox Style)** (`--wm`):
   - Self-contained window management without requiring external window managers.
-  - Minimalist, distraction-free decorations: 22px title bar, 1px border, close button `[×]`, bottom-right resize handle, and 8x8 bitmap font window titles.
+  - Minimalist, distraction-free decorations: 22px title bar, 1px border, window control buttons (Close `[×]`, Maximize/Restore `[□]`, Minimize `[-]`), bottom-right resize handle, and 8x8 bitmap font window titles.
+  - Full support for window **Maximization** (via `[□]` button or titlebar double-click) and **Minimization** (via `[-]` button into the bottom row taskbar).
+  - Integrated bottom taskbar with interactive clickable chips (`[1: AppName]` / `[1: AppName _]`) allowing instant un-minimizing, raising, and toggling of active windows.
   - Screen boundary clamping mechanism prevents windows and Sixel graphics from being clipped at the right or bottom terminal edges.
 - **Bidirectional Host Clipboard Synchronization (`Ctrl-C` / `Ctrl-V`)**:
   - Full support for OSC 52 and Bracketed Paste protocols. Seamless bidirectional copy-and-paste between in-terminal GUI apps and the host OS (Windows, macOS, Linux), including full multibyte / UTF-8 text support.

@@ -266,6 +266,9 @@ fn find_pointer_focus(
 
     // Check managed windows content
     for win in state.managed_windows.iter().rev() {
+        if win.is_minimized {
+            continue;
+        }
         let content_geo = win.content_geometry();
         if content_geo.contains(loc_i32) {
             if let Some(surface) = state.surface_for_managed_window(win) {
@@ -312,6 +315,9 @@ pub fn dispatch_mouse_event(
                 WindowDragState::Moving { start_cursor, start_window_pos } => {
                     let dx = (px - start_cursor.0).round() as i32;
                     let dy = (py - start_cursor.1).round() as i32;
+                    if dx.abs() > 3 || dy.abs() > 3 {
+                        state.last_titlebar_click = None;
+                    }
                     if let Some(top_win) = state.managed_windows.last_mut() {
                         let min_x = if top_win.has_ssd { BORDER_WIDTH } else { 0 };
                         let max_x = (renderer_width as i32 - top_win.size.w - min_x).max(min_x);
@@ -410,6 +416,8 @@ pub fn dispatch_mouse_event(
             // Hit test managed windows from front to back
             let mut hit_window_id = None;
             let mut clicked_close = false;
+            let mut clicked_maximize = false;
+            let mut clicked_minimize = false;
             let mut clicked_titlebar = false;
             let mut clicked_resize = false;
             let mut clicked_content = false;
@@ -417,13 +425,26 @@ pub fn dispatch_mouse_event(
             let mut win_geo = smithay::utils::Rectangle::new((0, 0).into(), (0, 0).into());
 
             for win in state.managed_windows.iter().rev() {
+                if win.is_minimized {
+                    continue;
+                }
                 if state.enable_wm && win.has_ssd {
                     if is_left && win.close_button_hit_geometry().contains(loc_i32) {
                         hit_window_id = Some(win.id);
                         clicked_close = true;
                         break;
                     }
-                    if is_left && win.resize_handle_hit_geometry().contains(loc_i32) {
+                    if is_left && win.maximize_button_hit_geometry().contains(loc_i32) {
+                        hit_window_id = Some(win.id);
+                        clicked_maximize = true;
+                        break;
+                    }
+                    if is_left && win.minimize_button_hit_geometry().contains(loc_i32) {
+                        hit_window_id = Some(win.id);
+                        clicked_minimize = true;
+                        break;
+                    }
+                    if is_left && !win.is_maximized && win.resize_handle_hit_geometry().contains(loc_i32) {
                         hit_window_id = Some(win.id);
                         clicked_resize = true;
                         win_geo = win.content_geometry();
@@ -484,21 +505,52 @@ pub fn dispatch_mouse_event(
                     return;
                 }
 
+                if clicked_maximize {
+                    if let Some(win) = state.managed_windows.iter_mut().find(|w| w.id == id) {
+                        win.toggle_maximize(renderer_width, renderer_height);
+                    }
+                    state.raise_window(id);
+                    state.dirty = true;
+                    return;
+                }
+
+                if clicked_minimize {
+                    state.minimize_window(id);
+                    return;
+                }
+
                 // Raise clicked window to top of Z-order & activate
                 state.raise_window(id);
 
                 if clicked_titlebar && is_left {
-                    // Begin window drag/move
-                    state.drag_state = WindowDragState::Moving {
-                        start_cursor: (px, py),
-                        start_window_pos: (win_loc.x, win_loc.y),
-                    };
+                    // Check titlebar double-click for maximize/restore toggle
+                    let now = std::time::Instant::now();
+                    if let Some((last_time, last_id)) = state.last_titlebar_click {
+                        if last_id == id && now.duration_since(last_time).as_millis() < 400 {
+                            if let Some(win) = state.managed_windows.iter_mut().find(|w| w.id == id) {
+                                win.toggle_maximize(renderer_width, renderer_height);
+                            }
+                            state.last_titlebar_click = None;
+                            state.drag_state = WindowDragState::None;
+                            state.dirty = true;
+                            return;
+                        }
+                    }
+                    state.last_titlebar_click = Some((now, id));
+
+                    // Begin window drag/move only if not maximized
+                    let is_max = state.managed_windows.iter().find(|w| w.id == id).map(|w| w.is_maximized).unwrap_or(false);
+                    if !is_max {
+                        state.drag_state = WindowDragState::Moving {
+                            start_cursor: (px, py),
+                            start_window_pos: (win_loc.x, win_loc.y),
+                        };
+                    }
                     state.dirty = true;
                     return;
                 }
 
                 if clicked_resize && is_left {
-                    // Begin window resize
                     state.drag_state = WindowDragState::Resizing {
                         start_cursor: (px, py),
                         start_window_geo: win_geo,

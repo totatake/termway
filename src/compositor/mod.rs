@@ -52,6 +52,13 @@ pub(crate) fn log_line(msg: impl AsRef<str>) {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct TaskbarChip {
+    pub window_id: usize,
+    pub start_col: u16,
+    pub end_col: u16,
+}
+
 pub struct TermwayCompositor {
     display: Display<TermwayState>,
     listener: ListeningSocket,
@@ -63,6 +70,7 @@ pub struct TermwayCompositor {
     // ターミナルのセル数（マウス座標変換に使用）
     term_cols: u16,
     term_rows: u16,
+    taskbar_chips: Vec<TaskbarChip>,
     input_buffer: Vec<u8>,
     pending_command: Option<Vec<String>>,
     client_child: Option<Child>,
@@ -225,6 +233,7 @@ impl TermwayCompositor {
             wrap_dir: Some(wrap_dir),
             term_cols: term_size.cols.max(1),
             term_rows: term_size.rows.max(1),
+            taskbar_chips: Vec::new(),
             input_buffer: Vec::with_capacity(1024),
         })
     }
@@ -525,8 +534,9 @@ impl TermwayCompositor {
             if self.state.dirty {
                 let w = self.renderer.width();
                 let h = self.renderer.height();
+                let taskbar = self.build_taskbar();
                 if let Ok(pixels) = self.renderer.render(&self.state) {
-                    let _ = self.backend.render_pixels(pixels, w, h);
+                    let _ = self.backend.render_pixels(pixels, w, h, taskbar.as_deref());
 
                     let time = self.state.start_time.elapsed().as_millis() as u32;
                     for window in &self.state.managed_windows {
@@ -824,7 +834,99 @@ impl TermwayCompositor {
         }
     }
 
+    /// Builds the bottom row taskbar chip string and records chip click bounds
+    fn build_taskbar(&mut self) -> Option<String> {
+        if !self.state.enable_wm || self.state.managed_windows.is_empty() {
+            self.taskbar_chips.clear();
+            return None;
+        }
+
+        let mode_desc = self.backend.name();
+        let overlay_len = mode_desc.len() + 37;
+        let overlay_col = self.term_cols.saturating_sub(overlay_len as u16 + 2).max(1);
+        let max_cols = overlay_col.saturating_sub(2);
+        if max_cols < 6 {
+            self.taskbar_chips.clear();
+            return None;
+        }
+
+        let mut chips = Vec::new();
+        let mut out = String::new();
+        let mut cur_col: u16 = 2;
+
+        let mut sorted_windows = self.state.managed_windows.clone();
+        sorted_windows.sort_by_key(|w| w.id);
+
+        for win in &sorted_windows {
+            let raw_title = if win.title.trim().is_empty() {
+                "Window"
+            } else {
+                win.title.trim()
+            };
+            let short_title: String = raw_title.chars().take(8).collect();
+            let state_suffix = if win.is_minimized { " _" } else { "" };
+            let chip_label = format!("[{}: {}{}]", win.id, short_title, state_suffix);
+            let chip_len = chip_label.chars().count() as u16;
+
+            if cur_col + chip_len > max_cols {
+                break;
+            }
+
+            // Colors:
+            // Minimized: cyan bg (\x1b[46;30m)
+            // Active: blue bg (\x1b[44;37;1m)
+            // Inactive: dark gray bg (\x1b[100;37m)
+            let color_code = if win.is_minimized {
+                "\x1b[46;30m"
+            } else if win.active {
+                "\x1b[44;37;1m"
+            } else {
+                "\x1b[100;37m"
+            };
+
+            out.push_str(&format!(" {}{}\x1b[0m", color_code, chip_label));
+
+            chips.push(TaskbarChip {
+                window_id: win.id,
+                start_col: cur_col,
+                end_col: cur_col + chip_len - 1,
+            });
+
+            cur_col += chip_len + 1;
+        }
+
+        self.taskbar_chips = chips;
+        if out.is_empty() {
+            None
+        } else {
+            Some(out)
+        }
+    }
+
     fn dispatch_mouse_event(&mut self, ev: &crate::protocol::MouseEvent) {
+        // Check taskbar click on the bottom row
+        if ev.action == crate::protocol::MouseAction::Press
+            && matches!(ev.button, crate::protocol::MouseButton::Left)
+            && ev.row == self.term_rows
+        {
+            for chip in &self.taskbar_chips {
+                if ev.col >= chip.start_col && ev.col <= chip.end_col {
+                    let chip_id = chip.window_id;
+                    if let Some(win) = self.state.managed_windows.iter().find(|w| w.id == chip_id) {
+                        if win.is_minimized {
+                            self.state.restore_window(chip_id);
+                        } else if win.active {
+                            self.state.minimize_window(chip_id);
+                        } else {
+                            self.state.raise_window(chip_id);
+                        }
+                    }
+                    self.state.dirty = true;
+                    return;
+                }
+            }
+        }
+
         let avail_rows = if self.backend.is_sixel() {
             self.term_rows.saturating_sub(1).max(1)
         } else {

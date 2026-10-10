@@ -35,6 +35,9 @@ pub struct ManagedWindow {
     pub size: Size<i32, Logical>,
     pub active: bool,
     pub has_ssd: bool,
+    pub is_maximized: bool,
+    pub is_minimized: bool,
+    pub saved_geometry: Option<Rectangle<i32, Logical>>,
 }
 
 pub const TITLEBAR_HEIGHT: i32 = 22;
@@ -68,6 +71,9 @@ impl ManagedWindow {
             size,
             active: true,
             has_ssd,
+            is_maximized: false,
+            is_minimized: false,
+            saved_geometry: None,
         }
     }
 
@@ -83,6 +89,9 @@ impl ManagedWindow {
             size,
             active: true,
             has_ssd,
+            is_maximized: false,
+            is_minimized: false,
+            saved_geometry: None,
         }
     }
 
@@ -125,6 +134,9 @@ impl ManagedWindow {
             size,
             active: true,
             has_ssd: true,
+            is_maximized: false,
+            is_minimized: false,
+            saved_geometry: None,
         }
     }
 
@@ -174,19 +186,63 @@ impl ManagedWindow {
             return Rectangle::new((0, 0).into(), (0, 0).into());
         }
         let tb = self.titlebar_geometry();
-        let btn_x = tb.loc.x + tb.size.w - BUTTON_SIZE - 4;
+        let btn_x = tb.loc.x + tb.size.w - (BUTTON_SIZE + 4);
         let btn_y = tb.loc.y + (TITLEBAR_HEIGHT - BUTTON_SIZE) / 2;
         Rectangle::new((btn_x, btn_y).into(), (BUTTON_SIZE, BUTTON_SIZE).into())
     }
 
-    /// Expanded hit test area for close button (generous 32px width and full titlebar height for terminal mouse cells)
+    /// Expanded hit test area for close button (24px width and full titlebar height for terminal mouse cells)
     pub fn close_button_hit_geometry(&self) -> Rectangle<i32, Logical> {
         if !self.has_ssd {
             return Rectangle::new((0, 0).into(), (0, 0).into());
         }
         let tb = self.titlebar_geometry();
-        let hit_w = 32;
+        let hit_w = 24;
         let btn_x = tb.loc.x + tb.size.w - hit_w;
+        Rectangle::new((btn_x, tb.loc.y).into(), (hit_w, TITLEBAR_HEIGHT).into())
+    }
+
+    /// Maximize / Restore button geometry (to the left of close button)
+    pub fn maximize_button_geometry(&self) -> Rectangle<i32, Logical> {
+        if !self.has_ssd {
+            return Rectangle::new((0, 0).into(), (0, 0).into());
+        }
+        let tb = self.titlebar_geometry();
+        let btn_x = tb.loc.x + tb.size.w - (BUTTON_SIZE + 4) * 2;
+        let btn_y = tb.loc.y + (TITLEBAR_HEIGHT - BUTTON_SIZE) / 2;
+        Rectangle::new((btn_x, btn_y).into(), (BUTTON_SIZE, BUTTON_SIZE).into())
+    }
+
+    /// Expanded hit test area for maximize button (24px width)
+    pub fn maximize_button_hit_geometry(&self) -> Rectangle<i32, Logical> {
+        if !self.has_ssd {
+            return Rectangle::new((0, 0).into(), (0, 0).into());
+        }
+        let tb = self.titlebar_geometry();
+        let hit_w = 24;
+        let btn_x = tb.loc.x + tb.size.w - hit_w * 2;
+        Rectangle::new((btn_x, tb.loc.y).into(), (hit_w, TITLEBAR_HEIGHT).into())
+    }
+
+    /// Minimize button geometry (to the left of maximize button)
+    pub fn minimize_button_geometry(&self) -> Rectangle<i32, Logical> {
+        if !self.has_ssd {
+            return Rectangle::new((0, 0).into(), (0, 0).into());
+        }
+        let tb = self.titlebar_geometry();
+        let btn_x = tb.loc.x + tb.size.w - (BUTTON_SIZE + 4) * 3;
+        let btn_y = tb.loc.y + (TITLEBAR_HEIGHT - BUTTON_SIZE) / 2;
+        Rectangle::new((btn_x, btn_y).into(), (BUTTON_SIZE, BUTTON_SIZE).into())
+    }
+
+    /// Expanded hit test area for minimize button (24px width)
+    pub fn minimize_button_hit_geometry(&self) -> Rectangle<i32, Logical> {
+        if !self.has_ssd {
+            return Rectangle::new((0, 0).into(), (0, 0).into());
+        }
+        let tb = self.titlebar_geometry();
+        let hit_w = 24;
+        let btn_x = tb.loc.x + tb.size.w - hit_w * 3;
         Rectangle::new((btn_x, tb.loc.y).into(), (hit_w, TITLEBAR_HEIGHT).into())
     }
 
@@ -279,6 +335,65 @@ impl ManagedWindow {
                 let _ = win.configure(rect);
             }
             WindowSurface::Dummy => {}
+        }
+    }
+
+    /// Maximize window to fill the available display area
+    pub fn maximize(&mut self, screen_w: u32, screen_h: u32) {
+        if self.is_maximized {
+            return;
+        }
+        self.saved_geometry = Some(Rectangle::new(self.loc, self.size));
+        self.is_maximized = true;
+
+        let (new_loc, new_w, new_h) = if self.has_ssd {
+            let loc = Point::from((BORDER_WIDTH, TITLEBAR_HEIGHT + BORDER_WIDTH));
+            let w = (screen_w as i32 - BORDER_WIDTH * 2).max(100);
+            let h = (screen_h as i32 - TITLEBAR_HEIGHT - BORDER_WIDTH * 2).max(60);
+            (loc, w, h)
+        } else {
+            let loc = Point::from((0, 0));
+            let w = (screen_w as i32).max(100);
+            let h = (screen_h as i32).max(60);
+            (loc, w, h)
+        };
+
+        self.loc = new_loc;
+        self.configure_size(new_w, new_h);
+
+        if let WindowSurface::Wayland(ref win) = self.surface {
+            win.with_pending_state(|state| {
+                state.states.set(smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::State::Maximized);
+            });
+            win.send_configure();
+        }
+    }
+
+    /// Restore window from maximized state to its previous saved geometry
+    pub fn unmaximize(&mut self) {
+        if !self.is_maximized {
+            return;
+        }
+        self.is_maximized = false;
+        if let Some(saved) = self.saved_geometry.take() {
+            self.loc = saved.loc;
+            self.configure_size(saved.size.w, saved.size.h);
+
+            if let WindowSurface::Wayland(ref win) = self.surface {
+                win.with_pending_state(|state| {
+                    state.states.unset(smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::State::Maximized);
+                });
+                win.send_configure();
+            }
+        }
+    }
+
+    /// Toggle maximized state
+    pub fn toggle_maximize(&mut self, screen_w: u32, screen_h: u32) {
+        if self.is_maximized {
+            self.unmaximize();
+        } else {
+            self.maximize(screen_w, screen_h);
         }
     }
 }

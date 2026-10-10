@@ -11,6 +11,8 @@ pub struct WindowTheme {
     pub inactive_text_color: [u8; 4],
     pub close_button_bg: [u8; 4],
     pub close_icon_color: [u8; 4],
+    pub button_bg: [u8; 4],
+    pub button_icon_color: [u8; 4],
     pub resize_grip_color: [u8; 4],
 }
 
@@ -25,6 +27,8 @@ impl Default for WindowTheme {
             inactive_text_color: [140, 145, 155, 255], // Muted text
             close_button_bg: [190, 55, 55, 255],       // Openbox/Fluxbox red button
             close_icon_color: [255, 255, 255, 255],
+            button_bg: [52, 65, 88, 255],              // Dark slate button bg
+            button_icon_color: [230, 235, 245, 255],   // Bright icon
             resize_grip_color: [110, 125, 145, 255],
         }
     }
@@ -118,22 +122,77 @@ impl DecorationRenderer {
             self.theme.close_icon_color,
         );
 
-        // 4. Draw resize grip handle at bottom-right corner
-        let grip = window.resize_handle_geometry();
-        canvas.draw_resize_grip(
-            grip.loc.x,
-            grip.loc.y,
-            grip.size.w,
-            self.theme.resize_grip_color,
+        // 4. Draw Maximize / Restore button [□]
+        let max_btn = window.maximize_button_geometry();
+        canvas.fill_rect(
+            max_btn.loc.x,
+            max_btn.loc.y,
+            max_btn.size.w,
+            max_btn.size.h,
+            self.theme.button_bg,
+        );
+        if window.is_maximized {
+            // Restore icon (two overlapping boxes)
+            canvas.draw_rect_outline(
+                max_btn.loc.x + 5,
+                max_btn.loc.y + 3,
+                max_btn.size.w - 8,
+                max_btn.size.h - 8,
+                self.theme.button_icon_color,
+            );
+            canvas.draw_rect_outline(
+                max_btn.loc.x + 3,
+                max_btn.loc.y + 5,
+                max_btn.size.w - 8,
+                max_btn.size.h - 8,
+                self.theme.button_icon_color,
+            );
+        } else {
+            // Single square outline
+            canvas.draw_rect_outline(
+                max_btn.loc.x + 3,
+                max_btn.loc.y + 3,
+                max_btn.size.w - 6,
+                max_btn.size.h - 6,
+                self.theme.button_icon_color,
+            );
+        }
+
+        // 5. Draw Minimize button [-]
+        let min_btn = window.minimize_button_geometry();
+        canvas.fill_rect(
+            min_btn.loc.x,
+            min_btn.loc.y,
+            min_btn.size.w,
+            min_btn.size.h,
+            self.theme.button_bg,
+        );
+        canvas.fill_rect(
+            min_btn.loc.x + 3,
+            min_btn.loc.y + min_btn.size.h - 5,
+            min_btn.size.w - 6,
+            2,
+            self.theme.button_icon_color,
         );
 
-        // 5. Draw Title text with 8x8 font
+        // 6. Draw resize grip handle at bottom-right corner (only if not maximized)
+        if !window.is_maximized {
+            let grip = window.resize_handle_geometry();
+            canvas.draw_resize_grip(
+                grip.loc.x,
+                grip.loc.y,
+                grip.size.w,
+                self.theme.resize_grip_color,
+            );
+        }
+
+        // 7. Draw Title text with 8x8 font
         let text_color = if active {
             self.theme.title_text_color
         } else {
             self.theme.inactive_text_color
         };
-        let max_chars = ((titlebar.size.w - BUTTON_SIZE - 20).max(0) / 8) as usize;
+        let max_chars = ((titlebar.size.w - (BUTTON_SIZE + 4) * 3 - 20).max(0) / 8) as usize;
         canvas.inner.render_text(
             titlebar.loc.x + 8,
             titlebar.loc.y + (TITLEBAR_HEIGHT - 8) / 2,

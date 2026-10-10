@@ -63,6 +63,9 @@ impl TermwayRenderer {
 
         // A. Render Wayland XDG popups on top
         for window in state.managed_windows.iter().rev() {
+            if window.is_minimized {
+                continue;
+            }
             if let WindowSurface::Wayland(ref toplevel) = window.surface {
                 for (popup, popup_offset) in smithay::desktop::PopupManager::popups_for_surface(toplevel.wl_surface()) {
                     let popup_x = window.loc.x + popup_offset.x - popup.geometry().loc.x;
@@ -101,6 +104,9 @@ impl TermwayRenderer {
 
         // B. Render managed windows in top-to-bottom order (rev() since managed_windows last is front)
         for window in state.managed_windows.iter().rev() {
+            if window.is_minimized {
+                continue;
+            }
             if let Some(surface) = state.surface_for_managed_window(window) {
                 let elems = render_elements_from_surface_tree(
                     &mut self.renderer,
@@ -141,6 +147,9 @@ impl TermwayRenderer {
         // 3. Draw Openbox/Fluxbox window decorations (Bottom to Top order) if WM is enabled
         if state.enable_wm {
             for window in &state.managed_windows {
+                if window.is_minimized {
+                    continue;
+                }
                 if window.has_ssd() {
                     self.decoration_renderer.draw_decorations(
                         &mut self.buffer,

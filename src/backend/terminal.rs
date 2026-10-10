@@ -85,7 +85,13 @@ impl TerminalBackend {
         stdout.flush()
     }
 
-    pub fn render_pixels(&mut self, pixels: &[u8], width: u32, height: u32) -> io::Result<()> {
+    pub fn render_pixels(
+        &mut self,
+        pixels: &[u8],
+        width: u32,
+        height: u32,
+        taskbar: Option<&str>,
+    ) -> io::Result<()> {
         let mut stdout = io::stdout();
 
         let mode_desc = self.name();
@@ -95,9 +101,19 @@ impl TerminalBackend {
         let overlay_col = self.term_size.cols.saturating_sub(overlay_len as u16 + 2).max(1);
         let overlay_seq = format!("\x1b[{};{}H{}", overlay_row, overlay_col, overlay_text);
 
+        let taskbar_seq = if let Some(tb) = taskbar {
+            if !tb.is_empty() {
+                format!("\x1b[{};1H{}", overlay_row, tb)
+            } else {
+                String::new()
+            }
+        } else {
+            String::new()
+        };
+
         if self.use_sixel {
             let encoded = SixelEncoder::encode_fullscreen_frame(pixels, width, height);
-            write!(stdout, "\x1b[H{}{}", encoded, overlay_seq)?;
+            write!(stdout, "\x1b[H{}{}{}", encoded, taskbar_seq, overlay_seq)?;
         } else {
             let encoded = KittyEncoder::encode_fullscreen_frame(
                 pixels,
@@ -107,7 +123,7 @@ impl TerminalBackend {
                 self.term_size.rows,
                 1,
             );
-            write!(stdout, "{}{}", encoded, overlay_seq)?;
+            write!(stdout, "{}{}{}", encoded, taskbar_seq, overlay_seq)?;
         }
         stdout.flush()
     }
