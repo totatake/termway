@@ -97,3 +97,32 @@ fn test_encode_fullscreen_frame_large_chunked_roundtrip() {
     let decompressed = miniz_oxide::inflate::decompress_to_vec_zlib(&compressed).expect("valid zlib");
     assert_eq!(decompressed, rgba);
 }
+
+#[test]
+fn test_kitty_performance_1080x720() {
+    let w = 1080;
+    let h = 720;
+    let mut rgba = vec![0u8; (w * h * 4) as usize];
+    for y in 0..h {
+        for x in 0..w {
+            let i = ((y * w + x) * 4) as usize;
+            rgba[i] = (x % 256) as u8;
+            rgba[i + 1] = (y % 256) as u8;
+            rgba[i + 2] = ((x + y) % 256) as u8;
+            rgba[i + 3] = 255;
+        }
+    }
+    let mut b64 = String::with_capacity(128 * 1024);
+    let mut out = String::with_capacity(128 * 1024);
+
+    // Warmup
+    KittyEncoder::encode_fullscreen_frame_into(&rgba, w, h, 120, 40, 1, &mut b64, &mut out);
+
+    let start = std::time::Instant::now();
+    for _ in 0..5 {
+        KittyEncoder::encode_fullscreen_frame_into(&rgba, w, h, 120, 40, 1, &mut b64, &mut out);
+    }
+    let elapsed = start.elapsed() / 5;
+    eprintln!("\n[BENCHMARK] 1080x720 Kitty zlib encode avg took: {:?}, size: {} KB", elapsed, out.len() / 1024);
+    assert!(out.len() > 1000);
+}

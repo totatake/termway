@@ -52,7 +52,14 @@ impl KittyEncoder {
         let compressed = miniz_oxide::deflate::compress_to_vec_zlib(rgba, 1);
         b64_buf.clear();
         BASE64.encode_string(&compressed, b64_buf);
+        use std::fmt::Write;
+
         output.clear();
+        // Pre-reserve capacity to avoid re-allocations
+        let est_capacity = b64_buf.len() + (b64_buf.len() / 4096 + 1) * 32 + 64;
+        if output.capacity() < est_capacity {
+            output.reserve(est_capacity - output.capacity());
+        }
 
         // Move cursor to top-left (1,1) before displaying
         output.push_str("\x1b[H");
@@ -69,13 +76,16 @@ impl KittyEncoder {
             let m_flag = if is_last { 0 } else { 1 };
 
             if first {
-                output.push_str(&format!(
+                let _ = write!(
+                    output,
                     "\x1b_Ga=T,q=2,i={},C=1,f=32,o=z,z=-1,s={},v={},c={},r={},m={};",
                     image_id, width, height, term_cols, term_rows, m_flag
-                ));
+                );
                 first = false;
+            } else if m_flag == 1 {
+                output.push_str("\x1b_Gm=1;");
             } else {
-                output.push_str(&format!("\x1b_Gm={};", m_flag));
+                output.push_str("\x1b_Gm=0;");
             }
 
             output.push_str(chunk);
