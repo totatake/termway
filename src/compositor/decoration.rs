@@ -201,6 +201,216 @@ impl DecorationRenderer {
             max_chars,
         );
     }
+
+    /// Renders a borderless, futuristic startup splash screen featuring a large gradient logo
+    /// and Linux kernel / systemd style boot telemetry logs below.
+    pub fn draw_splash(
+        &self,
+        target_image: &mut Image<'static, 'static>,
+        screen_w: u32,
+        screen_h: u32,
+        elapsed_millis: u128,
+        info: &str,
+        command_name: &str,
+    ) {
+        if screen_w < 240 || screen_h < 160 {
+            return;
+        }
+
+        let stride = target_image.stride();
+        let data_ptr = unsafe { target_image.data() };
+        let slice = unsafe {
+            std::slice::from_raw_parts_mut(data_ptr as *mut u8, (screen_h as usize) * stride)
+        };
+
+        let mut canvas = DecorationCanvas::new(slice, stride, screen_w as i32, screen_h as i32);
+
+        // 1. Choose optimal large scale for the hero "TERMWAY" logo (5x on standard/large screens, 4x or 3x on compact)
+        let logo_scale = if screen_w >= 560 && screen_h >= 280 {
+            5
+        } else if screen_w >= 420 {
+            4
+        } else {
+            3
+        };
+
+        let prompt_str = ">_";
+        let brand_str = "TERMWAY";
+        let char_px = 8 * logo_scale;
+        let letter_spacing = logo_scale; // 5px between letters at 5x scale
+        let gap_px = 4 * logo_scale;     // 20px gap between ">_" and "TERMWAY"
+
+        let prompt_w = (prompt_str.len() as i32 * (char_px + letter_spacing)) - letter_spacing;
+        let brand_w = (brand_str.len() as i32 * (char_px + letter_spacing)) - letter_spacing;
+        let total_logo_w = prompt_w + gap_px + brand_w;
+        let logo_h = char_px;
+
+        // Total vertical block height: logo + subtitle + horizon scanner + 4 kernel log lines
+        let block_h = logo_h + 18 + 22 + 78;
+        let start_y = ((screen_h as i32 - block_h) / 2).max(16);
+        let logo_x = ((screen_w as i32 - total_logo_w) / 2).max(12);
+
+        // 2. Render Hero Prompt ">_" with deep blue-to-cyan gradient and subtle depth shadow
+        canvas.inner.render_text_scaled_spaced(
+            logo_x + 3,
+            start_y + 3,
+            prompt_str,
+            [6, 10, 18, 255],
+            4,
+            logo_scale,
+            letter_spacing,
+        );
+        canvas.inner.render_text_gradient_scaled(
+            logo_x,
+            start_y,
+            prompt_str,
+            [70, 230, 255, 255],  // Top-left bright cyan
+            [35, 130, 240, 255],  // Bottom-right royal blue
+            4,
+            logo_scale,
+            letter_spacing,
+        );
+
+        // 3. Render Large "TERMWAY" Hero Logo with futuristic blue theme gradient
+        let brand_x = logo_x + prompt_w + gap_px;
+        // Soft ambient glow / drop shadow
+        canvas.inner.render_text_scaled_spaced(
+            brand_x + 3,
+            start_y + 3,
+            brand_str,
+            [6, 10, 18, 255],
+            16,
+            logo_scale,
+            letter_spacing,
+        );
+        canvas.inner.render_text_gradient_scaled(
+            brand_x,
+            start_y,
+            brand_str,
+            [185, 240, 255, 255], // Top-left ice cyan-white highlight
+            [45, 120, 250, 255],  // Bottom-right deep electric cobalt blue
+            16,
+            logo_scale,
+            letter_spacing,
+        );
+
+        // 4. Subtitle below logo
+        let sub_y = start_y + logo_h + 14;
+        let sub = concat!("v", env!("CARGO_PKG_VERSION"), "  //  ZERO-COPY TERMINAL GUI COMPOSITOR");
+        let sub_w = (sub.len() as i32) * 8;
+        let sub_x = ((screen_w as i32 - sub_w) / 2).max(12);
+        let max_screen_chars = ((screen_w as i32 - 24).max(0) / 8) as usize;
+        canvas.inner.render_text(
+            sub_x,
+            sub_y,
+            sub,
+            [115, 155, 205, 255],
+            max_screen_chars,
+        );
+
+        // 5. Sleek Horizon Gradient Divider & Animated Scanner Beam (no boxy frame)
+        let bar_y = sub_y + 20;
+        let bar_w = 420.min(screen_w as i32 - 48).max(120);
+        let bar_x = (screen_w as i32 - bar_w) / 2;
+
+        // Draw subtle horizontal gradient track (fades out at left/right edges)
+        let half_w = (bar_w / 2).max(1);
+        for dx in 0..bar_w {
+            let dist = (dx - half_w).abs();
+            let intensity = (256 - (dist * 220 / half_w)).clamp(36, 256);
+            let r = (28 * intensity / 256) as u8;
+            let g = (52 * intensity / 256) as u8;
+            let b = (92 * intensity / 256) as u8;
+            canvas.set_pixel(bar_x + dx, bar_y, [r, g, b, 255]);
+            canvas.set_pixel(bar_x + dx, bar_y + 1, [r, g, b, 255]);
+        }
+
+        // Animated glowing blue-cyan scanner pulse along the horizon line
+        let pulse_w = (bar_w / 3).max(32);
+        let total_span = (bar_w + pulse_w) as u128;
+        let pulse_phase = ((elapsed_millis / 5) % total_span) as i32 - pulse_w;
+        let active_x0 = (bar_x + pulse_phase).max(bar_x);
+        let active_x1 = (bar_x + pulse_phase + pulse_w).min(bar_x + bar_w);
+        if active_x1 > active_x0 {
+            let span = (active_x1 - active_x0).max(1);
+            let center = active_x0 + span / 2;
+            let half_span = (span / 2).max(1);
+            for px in active_x0..active_x1 {
+                let d = (px - center).abs();
+                let w_factor = (256 - (d * 200 / half_span)).clamp(56, 256);
+                let r = (95 * w_factor / 256) as u8;
+                let g = (195 * w_factor / 256) as u8;
+                let b = (255 * w_factor / 256) as u8;
+                canvas.set_pixel(px, bar_y, [r, g, b, 255]);
+                canvas.set_pixel(px, bar_y + 1, [r, g, b, 255]);
+            }
+        }
+
+        // 6. Linux Kernel / Systemd style Boot Log Stream (direct on background, no box border)
+        let log_w = 400.min(screen_w as i32 - 32);
+        let log_x = ((screen_w as i32 - log_w) / 2).max(16);
+        let log_y = bar_y + 18;
+        let log_max_chars = ((screen_w as i32 - log_x - 12).max(0) / 8) as usize;
+
+        let ok_color = [75, 225, 150, 255];
+        let ts_color = [90, 120, 160, 255];
+        let text_dim = [150, 170, 198, 255];
+        let text_bright = [205, 228, 252, 255];
+
+        // Kernel Line 1
+        canvas.inner.render_text(log_x, log_y, "[  OK  ]", ok_color, 8);
+        canvas.inner.render_text(
+            log_x + 72,
+            log_y,
+            "Reached target Smithay Wayland Core & Seat.",
+            text_dim,
+            log_max_chars.saturating_sub(9),
+        );
+
+        // Kernel Line 2
+        let pipe_line = if info.is_empty() {
+            "Graphics Pipeline Active"
+        } else {
+            info
+        };
+        canvas.inner.render_text(log_x, log_y + 18, "[  OK  ]", ok_color, 8);
+        canvas.inner.render_text(
+            log_x + 72,
+            log_y + 18,
+            pipe_line,
+            text_bright,
+            log_max_chars.saturating_sub(9),
+        );
+
+        // Kernel Line 3
+        canvas.inner.render_text(log_x, log_y + 36, "[  OK  ]", ok_color, 8);
+        canvas.inner.render_text(
+            log_x + 72,
+            log_y + 36,
+            "Started XWayland X11 & D-Bus Session Bridge.",
+            text_dim,
+            log_max_chars.saturating_sub(9),
+        );
+
+        // Kernel Line 4 (Active process launch with spinner & blinking cursor)
+        let spinner_frames = ["|", "/", "-", "\\"];
+        let spinner = spinner_frames[((elapsed_millis / 100) % 4) as usize];
+        let blink_on = (elapsed_millis / 250) % 2 == 0;
+        let cursor_str = if blink_on { "_" } else { " " };
+        let cmd_display = if command_name.is_empty() { "gui-client" } else { command_name };
+
+        let status_tag = format!("[  {}   ]", spinner);
+        canvas.inner.render_text(log_x, log_y + 54, &status_tag, [90, 195, 255, 255], 8);
+        let exec_msg = format!("Spawning client: {} {}", cmd_display, cursor_str);
+        canvas.inner.render_text(
+            log_x + 72,
+            log_y + 54,
+            &exec_msg,
+            [115, 205, 255, 255],
+            log_max_chars.saturating_sub(9),
+        );
+        let _ = ts_color;
+    }
 }
 
 /// Helper canvas for drawing window decoration shapes.

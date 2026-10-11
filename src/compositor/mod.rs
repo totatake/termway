@@ -242,6 +242,24 @@ impl TermwayCompositor {
             None
         };
 
+        state.show_splash = !config.no_splash;
+        let proto_name = if config.use_sixel { "SIXEL" } else { "KITTY-ZLIB" };
+        let x11_str = x11_display.as_deref().unwrap_or("off");
+        state.splash_info = format!("{} | {} | X11{} | {}x{}", proto_name, socket_name, x11_str, width, height);
+        state.splash_command = if let Some(first) = config.command.first() {
+            if first == "python3" && config.command.len() > 2 {
+                String::from("termway-demo")
+            } else {
+                std::path::Path::new(first)
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or(first)
+                    .to_string()
+            }
+        } else {
+            String::from("gui-session")
+        };
+
         let (xwayland_source, _xwayland_client) = match xwayland {
             Some((source, client)) => (Some(source), Some(client)),
             None => (None, None),
@@ -573,9 +591,25 @@ impl TermwayCompositor {
                 nix::poll::PollFlags::POLLIN,
             )];
 
+            // While splash screen is displayed, trigger dirty for animated spinner/pulse
+            if self.state.show_splash {
+                if self.state.start_time.elapsed() > std::time::Duration::from_secs(4) {
+                    self.state.show_splash = false;
+                    self.state.needs_clear = true;
+                    self.state.dirty = true;
+                } else {
+                    self.state.dirty = true;
+                }
+            }
+
             // When a new frame needs rendering (dirty == true), do not sleep 10ms in poll.
             let poll_timeout = if self.state.dirty {
-                nix::poll::PollTimeout::ZERO
+                if self.state.show_splash {
+                    // 33ms poll timeout for ~30 FPS splash animation
+                    nix::poll::PollTimeout::try_from(33).unwrap_or(nix::poll::PollTimeout::NONE)
+                } else {
+                    nix::poll::PollTimeout::ZERO
+                }
             } else {
                 nix::poll::PollTimeout::try_from(10).unwrap_or(nix::poll::PollTimeout::NONE)
             };

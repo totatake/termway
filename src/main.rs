@@ -20,6 +20,7 @@ OPTIONS:
     --sixel                   Force Sixel graphics protocol
     --kitty                   Force Kitty graphics protocol
     --hud                     Enable real-time performance HUD indicator
+    --no-splash               Disable startup splash screen
     --demo                    Run built-in demo GUI application
     -V, --version             Print version information
     -h, --help                Print this help information
@@ -107,6 +108,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             config.enable_wm = true;
         } else if arg == "--hud" {
             config.hud = true;
+        } else if arg == "--no-splash" {
+            config.no_splash = true;
         } else if arg == "--demo" {
             run_demo = true;
         } else if arg == "--" {

@@ -115,6 +115,11 @@ impl XwmHandler for TermwayState {
                     let _ = window.set_maximized(true);
                 }
                 self.managed_windows.push(win);
+
+                if self.show_splash {
+                    self.show_splash = false;
+                    self.needs_clear = true;
+                }
             }
         }
 

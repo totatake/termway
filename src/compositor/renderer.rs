@@ -240,6 +240,19 @@ impl TermwayRenderer {
             }
         }
 
+        // 4. Draw startup splash screen if active
+        if state.show_splash {
+            let elapsed = state.start_time.elapsed().as_millis();
+            self.decoration_renderer.draw_splash(
+                &mut self.buffer,
+                self.width,
+                self.height,
+                elapsed,
+                &state.splash_info,
+                &state.splash_command,
+            );
+        }
+
         // 3. Extract RGBA pixel slice
         let stride = self.buffer.stride();
         let data_ptr = unsafe { self.buffer.data() };

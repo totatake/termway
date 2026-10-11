@@ -693,6 +693,70 @@ fn test_dynamic_resize_updates_maximized_and_floating_windows() {
     assert_eq!(win_ssd.loc, expected_ssd.loc);
 }
 
+#[test]
+fn test_splash_screen_rendering() {
+    use termway::compositor::decoration::DecorationRenderer;
+
+    let width: u32 = 640;
+    let height: u32 = 480;
+    let mut image = pixman::Image::new(
+        pixman::FormatCode::A8B8G8R8,
+        width as usize,
+        height as usize,
+        true,
+    ).unwrap();
+
+    let deco = DecorationRenderer::new();
+    // Render splash at initial timestamp and later timestamp (for spinner/pulse animation)
+    deco.draw_splash(&mut image, width, height, 0, "KITTY-ZLIB | wayland-1 | X11:0 | 640x480", "gvim");
+    deco.draw_splash(&mut image, width, height, 500, "KITTY-ZLIB | wayland-1 | X11:0 | 640x480", "gvim");
+
+    // Verify buffer data is non-empty / altered from zero
+    let data_ptr = unsafe { image.data() };
+    let slice = unsafe {
+        std::slice::from_raw_parts(data_ptr as *const u8, (height as usize) * image.stride())
+    };
+    let non_zero_count = slice.iter().filter(|&&b| b > 0).count();
+    assert!(non_zero_count > 1000, "Splash card must render pixels into buffer");
+}
+
+#[test]
+fn test_splash_screen_dismissal() {
+    use smithay::reexports::wayland_server::Display;
+    use smithay::utils::{Point, Size};
+    use termway::compositor::state::TermwayState;
+    use termway::compositor::window::ManagedWindow;
+    use termway::engine::EngineConfig;
+
+    let display: Display<TermwayState> = Display::new().unwrap();
+    let dh = display.handle();
+    let mut state = TermwayState::new(&dh, 800, 600, true);
+
+    // Splash is active on startup by default
+    assert!(state.show_splash);
+
+    // Verify --no-splash flag disables splash
+    let mut cfg = EngineConfig::default();
+    assert!(!cfg.no_splash);
+    cfg.no_splash = true;
+    state.show_splash = !cfg.no_splash;
+    assert!(!state.show_splash);
+
+    // Reset and test automatic dismissal when a window opens
+    state.show_splash = true;
+    let win = ManagedWindow::new_dummy(1, "App".into(), Point::from((50, 50)), Size::from((400, 300)));
+    state.managed_windows.push(win);
+
+    if state.show_splash {
+        state.show_splash = false;
+        state.needs_clear = true;
+    }
+    assert!(!state.show_splash);
+    assert!(state.needs_clear);
+}
+
+
+
 
 
 

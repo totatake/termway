@@ -90,6 +90,9 @@ pub struct TermwayState {
     pub width: u32,
     pub height: u32,
     pub enable_wm: bool,
+    pub show_splash: bool,
+    pub splash_info: String,
+    pub splash_command: String,
     pub start_time: std::time::Instant,
     pub last_titlebar_click: Option<(std::time::Instant, usize)>,
 }
@@ -158,6 +161,9 @@ impl TermwayState {
             width,
             height,
             enable_wm,
+            show_splash: true,
+            splash_info: format!("Wayland + XWayland | {}x{}", width, height),
+            splash_command: String::from("gui-app"),
             start_time: std::time::Instant::now(),
             last_titlebar_click: None,
         }
@@ -398,6 +404,12 @@ impl CompositorHandler for TermwayState {
             w.wl_surface().as_ref().map(smithay::reexports::wayland_server::Resource::is_alive).unwrap_or(true)
         });
 
+        // Dismiss splash screen upon first real client surface commit
+        if self.show_splash {
+            self.show_splash = false;
+            self.needs_clear = true;
+        }
+
         // タイトルや状態の更新
         let matched_win_id = self.managed_windows.iter().find(|w| {
             w.wl_surface().as_ref() == Some(surface) || self.surface_for_managed_window(w).as_ref() == Some(surface)
@@ -594,6 +606,11 @@ impl XdgShellHandler for TermwayState {
         win.is_maximized = is_maximized;
         win.saved_geometry = saved_geometry;
         self.managed_windows.push(win);
+
+        if self.show_splash {
+            self.show_splash = false;
+            self.needs_clear = true;
+        }
 
         let keyboard = self.keyboard.clone();
         keyboard.set_focus(

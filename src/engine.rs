@@ -16,6 +16,7 @@ pub struct EngineConfig {
     pub enable_wm: bool,
     pub use_sixel: bool,
     pub hud: bool,
+    pub no_splash: bool,
     pub command: Vec<String>,
 }
 
@@ -29,6 +30,7 @@ impl Default for EngineConfig {
             enable_wm: false,
             use_sixel: false,
             hud: false,
+            no_splash: false,
             command: Vec::new(),
         }
     }
