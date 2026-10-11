@@ -183,11 +183,24 @@ impl TermwayCompositor {
         let display = Display::new()?;
         let dh = display.handle();
 
-        // 1. Create Wayland listening socket
+        // 1. Create Wayland listening socket (never touch wayland-0 or active sockets)
+        let runtime_dir = std::env::var("XDG_RUNTIME_DIR").unwrap_or_default();
         let (listener, socket_name) = {
             let mut id = 1;
             loop {
                 let name = format!("wayland-{}", id);
+                if !runtime_dir.is_empty() {
+                    let sock_path = std::path::Path::new(&runtime_dir).join(&name);
+                    if let Ok(meta) = std::fs::symlink_metadata(&sock_path) {
+                        if meta.file_type().is_symlink() || std::os::unix::net::UnixStream::connect(&sock_path).is_ok() {
+                            id += 1;
+                            if id > 32 {
+                                return Err(TermwayError::NoFreeWaylandSocket);
+                            }
+                            continue;
+                        }
+                    }
+                }
                 if let Ok(socket) = ListeningSocket::bind(&name) {
                     break (socket, name);
                 }
@@ -238,15 +251,35 @@ impl TermwayCompositor {
         }
 
         let mut state = state;
-        let (xwayland, x11_display) = match smithay::xwayland::XWayland::spawn(
-            &dh,
-            None,
-            std::iter::empty::<(std::ffi::OsString, std::ffi::OsString)>(),
-            true,
-            std::process::Stdio::null(),
-            std::process::Stdio::null(),
-            |_| (),
-        ) {
+        // Allocate an X11 display number >= 10 and verify neither the lockfile nor the socket
+        // exists on disk. Passing `None` to Smithay starts at `:0` and only checks `/tmp/.X0-lock`,
+        // which on WSL2 (WSLg) unlinks `/tmp/.X11-unix/X0` because WSLg's lockfile lives in the
+        // system container rather than the distro's `/tmp`.
+        let mut xwayland_res = Err(std::io::Error::new(
+            std::io::ErrorKind::AddrInUse,
+            "No free X11 display slot in 10..=64",
+        ));
+        for disp_candidate in Self::free_x11_display_candidates() {
+            match smithay::xwayland::XWayland::spawn(
+                &dh,
+                Some(disp_candidate),
+                std::iter::empty::<(std::ffi::OsString, std::ffi::OsString)>(),
+                true,
+                std::process::Stdio::null(),
+                std::process::Stdio::null(),
+                |_| (),
+            ) {
+                Ok(res) => {
+                    xwayland_res = Ok(res);
+                    break;
+                }
+                Err(e) => {
+                    xwayland_res = Err(e);
+                }
+            }
+        }
+
+        let (xwayland, x11_display) = match xwayland_res {
             Ok((xwayland, client)) => {
                 let disp_num = xwayland.display_number();
                 let disp_str = format!(":{}", disp_num);
@@ -338,9 +371,26 @@ impl TermwayCompositor {
         let mut event_loop = smithay::reexports::calloop::EventLoop::<TermwayState>::try_new()?;
         let loop_handle = event_loop.handle();
 
+        struct CalloopTokenGuard<'a, D> {
+            handle: smithay::reexports::calloop::LoopHandle<'a, D>,
+            token: Option<smithay::reexports::calloop::RegistrationToken>,
+        }
+        impl<'a, D> Drop for CalloopTokenGuard<'a, D> {
+            fn drop(&mut self) {
+                if let Some(token) = self.token.take() {
+                    self.handle.remove(token);
+                }
+            }
+        }
+
+        let mut _xwayland_token_guard = CalloopTokenGuard {
+            handle: loop_handle.clone(),
+            token: None,
+        };
+
         if let (Some(xwayland), Some(client)) = (self.xwayland_source.take(), self._xwayland_client.clone()) {
             let handle = loop_handle.clone();
-            let _ = loop_handle.insert_source(xwayland, move |event, _, state| {
+            if let Ok(token) = loop_handle.insert_source(xwayland, move |event, _, state| {
                 match event {
                     smithay::xwayland::XWaylandEvent::Ready {
                         x11_socket,
@@ -371,7 +421,9 @@ impl TermwayCompositor {
                         log_line("[termway] XWayland encountered an error.");
                     }
                 }
-            });
+            }) {
+                _xwayland_token_guard.token = Some(token);
+            }
         } else {
             self.state.xwayland_ready = true;
         }
@@ -1171,11 +1223,77 @@ impl TermwayCompositor {
                 log_line(format!("[termway] Using secure fallback XDG_RUNTIME_DIR={}", path_str));
             }
         }
+
+        // On WSL2 with systemd enabled, pam_systemd mounts a new tmpfs on /run/user/<uid>,
+        // which hides WSLg's /mnt/wslg/runtime-dir/wayland-0 socket. Ensure the symlink
+        // exists so native WSLg Wayland apps continue working outside termway.
+        #[cfg(unix)]
+        if let Ok(dir) = std::env::var("XDG_RUNTIME_DIR") {
+            let wslg_wayland = std::path::Path::new("/mnt/wslg/runtime-dir/wayland-0");
+            if wslg_wayland.exists() {
+                let target_wayland = std::path::Path::new(&dir).join("wayland-0");
+                if std::fs::symlink_metadata(&target_wayland).is_err() {
+                    let _ = std::os::unix::fs::symlink(wslg_wayland, &target_wayland);
+                }
+                let wslg_lock = std::path::Path::new("/mnt/wslg/runtime-dir/wayland-0.lock");
+                let target_lock = std::path::Path::new(&dir).join("wayland-0.lock");
+                if wslg_lock.exists() && std::fs::symlink_metadata(&target_lock).is_err() {
+                    let _ = std::os::unix::fs::symlink(wslg_lock, &target_lock);
+                }
+            }
+        }
+    }
+
+    /// Returns candidate X11 display numbers in `10..=64` that have neither a lock file
+    /// (`/tmp/.X{d}-lock`) nor an existing socket (`/tmp/.X11-unix/X{d}` or `/mnt/wslg/.X11-unix/X{d}`).
+    ///
+    /// Never returns `0..=9` so host/WSLg X11 displays (such as `:0`) are never touched or unlinked,
+    /// even when the host X server's lock file lives in a different container namespace (e.g. WSLg).
+    pub fn free_x11_display_candidates() -> Vec<u32> {
+        (10..=64)
+            .filter(|&d| {
+                let lock_path = format!("/tmp/.X{}-lock", d);
+                let sock_path = format!("/tmp/.X11-unix/X{}", d);
+                let wslg_sock_path = format!("/mnt/wslg/.X11-unix/X{}", d);
+                std::fs::symlink_metadata(&lock_path).is_err()
+                    && std::fs::symlink_metadata(&sock_path).is_err()
+                    && std::fs::symlink_metadata(&wslg_sock_path).is_err()
+            })
+            .collect()
     }
 }
 
 impl Drop for TermwayCompositor {
     fn drop(&mut self) {
+        if let Some(mut child) = self.client_child.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        self.state.x11_shape_conn.take();
+        self.state.xwm.take();
+        self.xwayland_source.take();
+        self._xwayland_client.take();
+
+        if let Some(ref disp_str) = self.x11_display {
+            if let Some(num_str) = disp_str.strip_prefix(':') {
+                if let Ok(d) = num_str.parse::<u32>() {
+                    if d >= 10 {
+                        let _ = std::fs::remove_file(format!("/tmp/.X11-unix/X{}", d));
+                        let _ = std::fs::remove_file(format!("/tmp/.X{}-lock", d));
+                    }
+                }
+            }
+        }
+
+        if self.socket_name != "wayland-0" {
+            if let Ok(runtime_dir) = std::env::var("XDG_RUNTIME_DIR") {
+                let sock_path = std::path::Path::new(&runtime_dir).join(&self.socket_name);
+                let lock_path = std::path::Path::new(&runtime_dir).join(format!("{}.lock", self.socket_name));
+                let _ = std::fs::remove_file(sock_path);
+                let _ = std::fs::remove_file(lock_path);
+            }
+        }
+
         // TempDir is automatically deleted on drop
         self.wrap_dir.take();
     }

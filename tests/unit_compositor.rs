@@ -801,10 +801,17 @@ fn test_termway_error_variants_and_display() {
     assert!(matches!(parse_res, Err(TermwayError::ConfigParse(_))));
 }
 
+#[test]
+fn test_free_x11_display_candidates_never_returns_host_displays() {
+    use termway::compositor::TermwayCompositor;
 
-
-
-
-
-
-
+    let candidates = TermwayCompositor::free_x11_display_candidates();
+    assert!(!candidates.is_empty(), "Should find free X11 display candidates in 10..=64");
+    for &d in &candidates {
+        assert!(
+            (10..=64).contains(&d),
+            "Display candidate :{} must be in 10..=64 (never 0..=9 such as WSLg :0)",
+            d
+        );
+    }
+}
