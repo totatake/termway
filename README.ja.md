@@ -144,7 +144,7 @@ sudo apt-get install -y lxpolkit           # 軽量な認証ダイアログ
 
 ```bash
 # リポジトリのクローン
-git clone https://github.com/username/termway.git
+git clone https://github.com/totatake/termway.git
 cd termway
 
 # ビルド

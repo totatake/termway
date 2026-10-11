@@ -144,7 +144,7 @@ sudo apt-get install -y lxpolkit           # Lightweight authentication dialog
 
 ```bash
 # Clone repository
-git clone https://github.com/username/termway.git
+git clone https://github.com/totatake/termway.git
 cd termway
 
 # Build release binary
