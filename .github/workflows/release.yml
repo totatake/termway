@@ -51,7 +51,7 @@ jobs:
           
           # Bundle binary and license/readme
           cp target/release/termway "${ARCHIVE_DIR}/"
-          cp README.md LICENSE "${ARCHIVE_DIR}/"
+          cp README.md README.ja.md LICENSE "${ARCHIVE_DIR}/"
           
           # Create compressed archive
           tar -czf "${ARCHIVE_DIR}.tar.gz" "${ARCHIVE_DIR}"
