@@ -290,9 +290,12 @@ Traditional remote GUI solutions (X11 Forwarding via `ssh -X`, VNC, RDP, or web-
 
 ---
 
-## Roadmap
+## Documentation
 
-Planned architectural improvements, refactoring goals, and future milestones are documented in [docs/ROADMAP.md](docs/ROADMAP.md).
+- **[System Architecture & Design (`docs/ARCHITECTURE.md`)](docs/ARCHITECTURE.md)**: Static structure (module layering, class/ownership diagrams) and dynamic structure (startup sequence, async render pipeline, window state machine, hit-test routing).
+- **[Requirements & Test Specification (`docs/SPECIFICATION.md`)](docs/SPECIFICATION.md)**: Functional/non-functional requirements and traceability matrix across all 75 tests.
+- **[Architecture Decision Records (`docs/adr/`)](docs/adr/README.md)**: Key architectural decisions and trade-offs (e.g. [ADR-0001: Hybrid D-Bus Session Routing](docs/adr/0001-hybrid-dbus-session-routing.md)).
+- **[Engineering Roadmap (`docs/ROADMAP.md`)](docs/ROADMAP.md)**: Completed optimization phases and future milestones.
 
 ---
 

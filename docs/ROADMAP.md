@@ -4,26 +4,24 @@
 
 ---
 
-## 1. `TermwayState` のドメイン分割（God Object アンチパターンの解消）
+## 1. `TermwayState` のドメイン分割（v0.6.0 実装済み）
 
-### 現状と課題
-`src/compositor/state.rs` 内の `TermwayState` 構造体は、Smithay コンポジタの要求によりイベントループの中心に配置されていますが、現在以下の多岐にわたる責務を1つの構造体で一括保持しています：
+### 背景と課題
+`src/compositor/state.rs` 内の `TermwayState` 構造体は、Smithay コンポジタの要求によりイベントループの中心に配置されていましたが、初期実装では以下の多岐にわたる責務を 1 ファイル（約 1,000 行）で一括保持していました：
 - **Wayland プロトコルコア**: CompositorState, XdgShellState, ShmState, XWaylandShellState
 - **入力機器・Seat 管理**: SeatState, Seat, KeyboardHandle, PointerHandle
 - **ウィンドウライフサイクル・管理**: Wayland サーフェス, X11 サーフェス, ManagedWindow, ポップアップ管理
 - **インタラクション状態マシン**: ウィンドウの移動・リサイズ（`WindowDragState`）、最大化/最小化、タスクバー状態
 - **描画・ループ制御**: `dirty` フラグ, `running` フラグ, 各種タイマー
 
-これにより、新機能の追加やバグ修正のたびに `TermwayState` への修正が集中し、結合度が高くなっています。
-
-### 改善方針
-`TermwayState` をオーケストレーターとして位置づけ、ドメインごとに凝集度の高いサブモジュールへ分割・委譲します：
-- **`WindowManager`**:
-  - ウィンドウ（Wayland / X11）の Z-order、フォーカス、ジオメトリ、ドラッグ・リサイズ・最大化・最小化状態の管理。
-- **`InputManager`**:
-  - シート、キーボード、ポインタのハンドリングと、入力イベント（クリック・ドラッグ・ホバー）のルーティング。
-- **`ShellManager`**:
-  - XDG Shell、XWayland Shell、およびポップアップライフサイクルの管理。
+### 実装された構造（v0.6.0）
+Smithay の `delegate_*!` マクロおよび `KeyboardHandle::set_focus(&mut TermwayState)` の型制約と調和しつつ、以下のように責務を分割しました：
+- **[`WindowManager`](../src/compositor/window_manager.rs) (`state.wm`)**:
+  - ウィンドウ（Wayland / X11）の Z-order、アクティブ状態、ドラッグ・リサイズ状態（`WindowDragState`）、最小化/最大化、カスケード配置オフセットを Smithay の `DisplayHandle` に依存しない純粋ドメイン構造体として分離・単体テスト化。
+- **プロトコルハンドラのドメイン別モジュール分割 ([`src/compositor/handlers/`](../src/compositor/handlers/mod.rs))**:
+  - `handlers/compositor.rs`: `CompositorHandler`, `BufferHandler`, `ShmHandler`, `OutputHandler`
+  - `handlers/xdg_shell.rs`: `XdgShellHandler`, `XdgDecorationHandler`
+  - `handlers/seat.rs`: `SeatHandler`, `SelectionHandler`, `DataDeviceHandler`（OSC 52 クリップボード連携）
 
 ---
 
@@ -75,18 +73,16 @@
 
 ---
 
-## 3. レガシー X11 エンジン (`src/engine.rs`) と Wayland コンポジタの一本化
+## 3. レガシー X11 エンジンと Wayland コンポジタの一本化（v0.6.0 実装済み）
 
-### 現状と課題
-リポジトリ内には現在、2つの独立した実行エンジンが存在しています：
-1. **Smithay ベース Wayland コンポジタ** (`src/compositor/`): XWayland を内蔵し、Wayland および X11 アプリケーションを透過的に実行（デフォルト）。
-2. **レガシー X11 エンジン** (`src/engine.rs`): `Xvfb` + `openbox` + X11 SHM を使用して画面をキャプチャし描画する初期実装。
+### 背景と課題
+リポジトリ内には初期実装（v0.1.0）から以下の 2 つの独立した実行エンジンが並存していました：
+1. **Smithay ベース Wayland コンポジタ** (`src/compositor/`): XWayland を内蔵し、Wayland および X11 アプリケーションを透過的に実行。
+2. **レガシー X11 エンジン** (`src/engine.rs`): `Xvfb` + `openbox` + X11 SHM + `XTest` を使用して画面をキャプチャし描画する初期実装。
 
-2系統のエンジンが並存しているため、ウィンドウ装飾、最大化/最小化、クリップボード同期、端末サイズ追従などの新機能を追加する際、両方のエンジンに二重実装・二重テストが必要となり、メンテナンスコストが増大しています。
-
-### 改善方針
-- XWayland の動作が十分に安定しているため、レガシー `src/engine.rs`（`--x11` スタンドアロンモード）を将来のメジャーバージョンに向けて非推奨化（Deprecated）。
-- X11 アプリケーションの実行は Smithay + XWayland パイプラインへ統一し、コードベースの冗長性を大幅に削減。
+### 実装された構造（v0.6.0）
+- `src/engine.rs`、`src/display/{xvfb,shm,cursor,clipboard}.rs`、`src/input/{mod,xtest}.rs`、および `--x11` / `--xvfb` / `--wm` オプションを廃止し、Smithay + XWayland パイプラインへ完全統合。
+- `Cargo.toml` から C `libx11` / `libxtst` / `libxfixes` バインディング（`x11` クレート）への依存を削除し、純粋な Rust + Smithay 構成へ統一。
 
 ---
 

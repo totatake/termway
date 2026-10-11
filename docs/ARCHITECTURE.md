@@ -1,473 +1,523 @@
-# termway システムアーキテクチャ詳細設計書
+# termway システムアーキテクチャ詳細設計書 (v0.6.0)
 
-本書は、`termway` の内部構造、モジュール設計、プロトコル仕様、およびイベント同期制御について解説する技術設計ドキュメントです。
+本書は、`termway` の**静的構造（モジュール構成・クラス/構造体関係・責務分割）**および**動的構造（起動シーケンス・非同期レンダリングパイプライン・ウィンドウ状態遷移・入力ディスパッチ）**について解説する技術設計ドキュメントです。
 
 ---
 
-## 1. 全体構造とモジュール構成
+## 1. 静的構造 (Static Architecture)
 
-`termway` は以下の疎結合なコアレイヤーによって構成されています。
+### 1.1 レイヤー構成とディレクトリツリー
 
-```
+`termway` は単一バイナリの Smithay ベース自立型 Wayland コンポジタとして設計されており、以下の 5 つの疎結合なコアレイヤーで構成されています（v0.6.0 にてレガシー Xvfb エンジンを廃止し、Smithay + XWayland アーキテクチャへ完全一本化）。
+
+```text
 src/
-├── main.rs                   # CLIパーサー、起動パラメータ初期化
-├── lib.rs                    # ライブラリエクスポート定義
-├── engine.rs                 # レガシー X11 メインループ、フレーム同期制御
-├── backend/                  # ターミナル描画・非同期I/O層
-│   ├── mod.rs                # モジュールエクスポート
-│   └── terminal.rs           # TerminalBackend (Kitty/Sixel + SGR + 非同期I/O)
-├── compositor/               # Smithay Wayland コンポジタコア層 (v0.2.0)
-│   ├── mod.rs                # TermwayCompositor ライフサイクル・イベントループ
-│   ├── input.rs              # マウス・キー入力イベントディスパッチ & evdev 変換
-│   ├── state.rs              # Smithay CompositorHandler / Seat / DataDevice 状態管理
-│   ├── renderer.rs           # Pixman ヘッドレスレンダラー & ダメージ合成
-│   ├── window.rs             # ウィンドウジオメトリ、Z-order、フォーカス、ドラッグ状態管理
-│   ├── decoration.rs         # フローティング WM 装飾描画 (タイトルバー、枠線、ボタン)
-│   ├── bitmap_font.rs        # タイトル文字列ビットマップレンダリング
-│   ├── font_data.rs          # 組み込み 8x8 ASCII ビットマップフォントデータ
-│   └── xwayland.rs           # XWayland サーバー管理 & X11Wm シェル統合
-├── display/                  # レガシー X11 仮想ディスプレイ & キャプチャ層
-│   ├── mod.rs                # モジュールエクスポート
-│   ├── xvfb.rs               # Xvfb ライフサイクル管理
-│   ├── framebuffer.rs        # RGBA8888 フレームバッファ & XImage 変換
-│   ├── damage.rs             # タイルベース差分トラッカー
-│   ├── cursor.rs             # XFixes カーソル画像キャプチャ
-│   ├── clipboard.rs          # X11 クリップボード同期 (OSC 52)
-│   └── shm.rs                # MIT-SHM 共有メモリキャプチャ
-├── input/                    # レガシー入力注入層
-│   ├── mod.rs                # モジュールエクスポート
-│   └── xtest.rs              # libXtst による X11 仮想イベント注入
-├── protocol/                 # プロトコルエンコード・デコード層
-│   ├── mod.rs                # モジュールエクスポート
-│   ├── kitty.rs              # Kitty Graphics Protocol エンコーダ
-│   ├── sixel.rs              # Sixel Graphics Protocol エンコーダ
-│   ├── sgr_mouse.rs          # xterm SGR 1006 マウスプロトコルパーサー
-│   └── keyboard.rs           # ANSI / CSI 修飾キー・特殊キーパーサー
-├── session/                  # セッション管理 & 環境検証層
-│   └── mod.rs                # D-Bus 分離、Polkit 認証エージェント、X11 書込検証
-└── terminal/                 # 端末制御・保護・プロトコル検証層
-    ├── mod.rs                # モジュールエクスポート
-    ├── winsize.rs            # TIOCGWINSZ / SGR 14t による解像度取得
-    ├── raw.rs                # termios Raw モード化 & RAII Drop ガード
-    └── query.rs              # Kitty / Sixel プロトコル対応可否検証
+├── main.rs                         # CLIパーサー、グラフィックスプロトコル自動判定、エントリポイント
+├── lib.rs                          # クレート公開モジュール定義
+├── backend/                        # 【描画バックエンド・非同期I/O層】
+│   ├── mod.rs
+│   └── terminal.rs                 # TerminalBackend: 非同期エンコードワーカースレッド & 最新フレーム間引き
+├── compositor/                     # 【Smithay Wayland コンポジタ & WM コア層】
+│   ├── mod.rs                      # TermwayCompositor: イベントループ統合、XWayland/子プロセス管理、タスクバー構築
+│   ├── state.rs                    # TermwayState: コンポジタ全体のオーケストレータ状態 & JSON 状態ダンプ
+│   ├── window_manager.rs           # WindowManager: Z-order・フォーカス・ドラッグ状態・最小化/最大化の純粋ドメイン管理
+│   ├── window.rs                   # ManagedWindow / WindowSurface / WindowDragState: ウィンドウジオメトリ・ヒットテスト
+│   ├── handlers/                   # Smithay プロトコルハンドラ群（ドメイン別分割）
+│   │   ├── mod.rs                  # delegate_*! マクロ集約
+│   │   ├── compositor.rs           # CompositorHandler / BufferHandler / ShmHandler / OutputHandler
+│   │   ├── xdg_shell.rs            # XdgShellHandler / XdgDecorationHandler (Toplevel・Popup・Configure制御)
+│   │   └── seat.rs                 # SeatHandler / SelectionHandler / DataDeviceHandler (OSC 52 & クリップボード統合)
+│   ├── xwayland.rs                 # XwmHandler / XWaylandShellHandler: X11 ウィンドウ管理 & Override-Redirect 制御
+│   ├── input.rs                    # SGRマウス・ANSIキーイベントの座標変換、WM操作、Smithay Seat ディスパッチ
+│   ├── renderer.rs                 # TermwayRenderer: Pixman オフスクリーン合成、ポップアップ・カーソル・スプラッシュ描画
+│   ├── decoration.rs               # Openbox/Fluxbox 風 SSD タイトルバー・ボタン・枠線描画
+│   ├── bitmap_font.rs              # ビットマップフォント文字列レンダラ・グラデーション描画
+│   └── font_data.rs                # 内蔵 8x8 ASCII ビットマップフォントデータ
+├── display/                        # 【フレームバッファ・差分検出層】
+│   ├── mod.rs
+│   ├── damage.rs                   # DamageTracker: 32x32 タイル FNV-1a ハッシュ比較 (AVX2 SIMD 高速化)
+│   └── framebuffer.rs              # Framebuffer: RGBA8888 バッファ & BGRX→RGBA 変換 (AVX2 SIMD 高速化)
+├── protocol/                       # 【ターミナルプロトコル エンコード・デコード層】
+│   ├── mod.rs
+│   ├── kitty.rs                    # KittyEncoder: RFC 1950 zlib 圧縮 (o=z) & Base64 チャンク分割エンコーダ
+│   ├── sixel.rs                    # SixelEncoder: RGB332 減色・6行バンド走査・RLE 圧縮 (AVX2 + tzcnt 高速化)
+│   ├── sgr_mouse.rs                # SgrMouseParser: xterm SGR 1006 (Any-event 1003h) マウスシーケンスパーサー
+│   └── keyboard.rs                 # KeyboardParser: UTF-8・ANSI/CSI 修飾キー・Bracketed Paste パーサー
+├── session/                        # 【セッション管理・IPC ブリッジ層】
+│   ├── mod.rs                      # SessionManager: ハイブリッド D-Bus 管理、Snap シム生成、Polkit エージェント管理
+│   └── secret_bridge.rs            # SecretServiceBridge: org.freedesktop.secrets D-Bus 中継ブリッジ
+└── terminal/                       # 【端末制御・RAII 保護・解像度検出層】
+    ├── mod.rs
+    ├── raw.rs                      # RawModeGuard: termios Raw モード & Alternate Screen の RAII 復元保証
+    ├── winsize.rs                  # TerminalSize: TIOCGWINSZ & SGR 14t/16t セルピクセル寸法測定・SIGWINCH 捕捉
+    └── query.rs                    # GraphicsProtocol: 端末環境変数およびエスケープシーケンス応答によるプロトコル検出
 ```
 
 ---
 
-## 2. プロトコル仕様と変換アルゴリズム
+### 1.2 パッケージ・モジュール依存関係図
 
-### 2.1 Kitty Graphics Protocol エンコード (`src/protocol/kitty.rs`)
-Kitty Graphics Protocol は、エスケープシーケンス `\x1b_G<control-data>;<payload>\x1b\\` を用いて、テキスト端末内に直接ピクセル画像を描画します。
+上位の `TermwayCompositor` が各ドメインモジュールを統括し、下位の `protocol` / `display` / `terminal` は Wayland や Smithay に依存しない独立した純粋モジュールとして単体テスト可能に設計されています。
 
-#### コントロールキー定義
-- `a=T`: 即時転送および表示 (Transmit and display)
-- `f=32`: 32-bit RGBA フォーマット
-- `s={width}, v={height}`: 送信画像矩形のピクセルサイズ
-- `X={col}, Y={row}`: ターミナルウィンドウ内でのピクセルオフセット配置
-- `q=2`: 応答抑制モード (Quiet mode 2)。端末からの `\x1b_Gi=...;OK\x1b\` 自律応答を抑止し、標準入力への文字混入・エコーバック無限ループを防止。
-- `C=1`: カーソル移動の抑制。画像表示時にテキストカーソルが勝手に移動・スクロールするのを防止。
-- `i=1`: 画像識別ID。フレーム置換を行うことで画像が重複描画されるのを防止。
-- `m=1`: チャンク継続フラグ（次のエスケープシーケンスに後続データがあることを示す）
-- `m=0`: チャンク終了フラグ（ペイロードの最終ブロック）
+```mermaid
+flowchart TB
+    subgraph CLI["エントリポイント (src/main.rs)"]
+        Main["main() / CLI Parser"]
+    end
 
-#### チャンク分割転送
-ターミナルエミュレータのバッファオーバーフローを防止するため、エンコードされた Base64 ペイロードは 4096 文字ごとに分割して送信します：
-1. **先頭チャンク**: `\x1b_Ga=T,q=2,f=32,s=100,v=100,X=10,Y=20,m=1;<Base64 chunk 1>\x1b\`
-2. **中間チャンク**: `\x1b_Gm=1;<Base64 chunk 2>\x1b\`
-3. **最終チャンク**: `\x1b_Gm=0;<Base64 chunk N>\x1b\`
+    subgraph CompositorLayer["コンポジタコア層 (src/compositor/)"]
+        Comp["TermwayCompositor<br/>(mod.rs)"]
+        State["TermwayState<br/>(state.rs)"]
+        WM["WindowManager & ManagedWindow<br/>(window_manager.rs / window.rs)"]
+        Handlers["Protocol Handlers<br/>(handlers/{compositor,xdg_shell,seat}.rs)"]
+        XWL["XWayland & X11Wm Handler<br/>(xwayland.rs)"]
+        Input["Input Dispatcher<br/>(input.rs)"]
+        Renderer["TermwayRenderer & Decoration<br/>(renderer.rs / decoration.rs / bitmap_font.rs)"]
+    end
 
----
+    subgraph SessionLayer["セッション・IPC層 (src/session/)"]
+        Sess["SessionManager<br/>(Isolated & Ambient D-Bus / Polkit)"]
+        Secret["SecretServiceBridge<br/>(secret_bridge.rs)"]
+    end
 
-### 2.2 xterm SGR 1006 マウスプロトコル解析 (`src/protocol/sgr_mouse.rs`)
-ターミナルに `\x1b[?1000h\x1b[?1003h\x1b[?1006h` を送信することで、SGR 1006 拡張マウスモードおよび Any-event トラッキングを有効化します。
+    subgraph BackendLayer["描画バックエンド層 (src/backend/)"]
+        Backend["TerminalBackend<br/>(Async Worker Thread)"]
+    end
 
-#### シーケンスフォーマット
-- ボタン押下 / ドラッグ / 移動: `\x1b[<{btn};{col};{row}M`
-- ボタン解放: `\x1b[<{btn};{col};{row}m`
+    subgraph DisplayLayer["フレームバッファ・差分層 (src/display/)"]
+        Damage["DamageTracker<br/>(AVX2 Tile Hash)"]
+        FB["Framebuffer<br/>(AVX2 BGRX->RGBA)"]
+    end
 
-#### ボタンビットフィールド解析
-- 下位 2 ビット:
-  - `0`: 左クリック
-  - `1`: 中クリック
-  - `2`: 右クリック
-  - `3`: ボタン解放またはボタン非押下での移動（Hover）
-- ビット 5 (32): マウス移動フラグ (Drag または Hover)
-- ビット 6 (64): ホイールイベント (64: WheelUp, 65: WheelDown)
-- 修飾キー: Shift (+4), Meta (+8), Ctrl (+16)
+    subgraph ProtocolLayer["プロトコル変換層 (src/protocol/)"]
+        Kitty["KittyEncoder<br/>(zlib + Base64)"]
+        Sixel["SixelEncoder<br/>(AVX2 RGB332 + RLE)"]
+        MouseP["SgrMouseParser"]
+        KeyP["KeyboardParser"]
+    end
 
-#### セル座標から仮想ディスプレイへのマッピング式 (`src/terminal/winsize.rs`)
-端末全体のピクセル解像度を $W_{term}, H_{term}$、文字セル数を $C, R$、仮想ディスプレイ解像度を $W_{x11}, H_{x11}$ とすると、受信したセル座標 $(col, row)$ は次のようにピクセルへ変換されます：
+    subgraph TerminalLayer["端末制御層 (src/terminal/)"]
+        Raw["RawModeGuard"]
+        WinSize["TerminalSize & SIGWINCH"]
+        Query["GraphicsProtocol Query"]
+    end
 
-$$cw = \lfloor W_{term} / C \rfloor, \quad ch = \lfloor H_{term} / R \rfloor$$
-$$px = (col - 1) \times cw + \lfloor cw / 2 \rfloor$$
-$$py = (row - 1) \times ch + \lfloor ch / 2 \rfloor$$
-$$x_{x11} = \mathrm{clamp}\left(\lfloor \frac{px \times W_{x11}}{W_{term}} \rfloor, 0, W_{x11} - 1\right)$$
-$$y_{x11} = \mathrm{clamp}\left(\lfloor \frac{py \times H_{x11}}{H_{term}} \rfloor, 0, H_{x11} - 1\right)$$
+    Main --> Query
+    Main --> Comp
+    Comp --> State
+    Comp --> Renderer
+    Comp --> Backend
+    Comp --> Sess
+    Comp --> Damage
+    Comp --> Input
+    Comp --> Raw
+    Comp --> WinSize
 
-#### Wayland コンポジタモードにおけるセル座標変換 (`src/compositor/`)
-`--wayland` モードでは、`TermwayCompositor` がコンポジタ空間のピクセル解像度 $W_{comp}, H_{comp}$ および端末のセル数 $C_{term}, R_{term}$ を保持します（`term_cols: u16`, `term_rows: u16` フィールド）。SGR マウスイベントのセル座標 $(col, row)$（1 始まり）を次の式でコンポジタ空間ピクセル座標へ変換します：
+    State --> WM
+    State --> Handlers
+    State --> XWL
+    Input --> State
+    Input --> WM
+    Input --> MouseP
+    Input --> KeyP
 
-$$cell\_w = W_{comp} / C_{term}, \quad cell\_h = H_{comp} / R_{term}$$
-$$px = (col - 1) \times cell\_w + (cell\_w \times 0.5)$$
-$$py = (row - 1) \times cell\_h + (cell\_h \times 0.5)$$
-
-##### フォントセル寸法の動的取得とドリフト防止
-Sixel 等のグラフィックス描画時、端末エミュレータ上の物理セルサイズとコンポジタが仮定したセルサイズ（デフォルト 9x18 または 10x20）が乖離していると、右下へ向かうにつれてマウス座標の累積ズレ（Linear Drift）が発生します。これを防ぐため以下の多重機構を備えています：
-1. **動的問い合わせ (`\x1b[16t` / `\x1b[14t`)**: 起動シーケンスで端末にフォントセル解像度およびウィンドウピクセルサイズを問い合わせ、応答（`\x1b[6;h;wt` / `\x1b[4;h;wt`）を受信次第、コンポジタおよびレンダラーの解像度を即時動的リサイズして誤差 0 を達成。
-2. **手動微調整 (`--cell-size`, `TERMWAY_CELL_SIZE`)**: VTE 等の端末が問い合わせを無視する場合、`--cell-size <WxH>` または環境変数 `TERMWAY_CELL_SIZE` で端末フォントの実測サイズ（例: Ubuntu Mono 13pt なら `10x22`）を直接指定可能。
-3. **Sixel 自動スクロール防止 (`\x1b[?7l` & 末尾改行抑止)**: 最終 Sixel バンド末尾での不要な改行シーケンス `-` の抑止および Auto-wrap 無効化（`\x1b[?7l`）により、最下行描画時にターミナル画面がスクロールして上部メニューバーが画面外へ押し出される現象を防止。
-
----
-
-## 3. 差分レンダリング (Tile Damage Tracking)
-
-フルHD画面（1920x1080）を毎フレーム全体転送すると約 8MB/frame の Base64 テキストが必要となり、端末が描画飽和を起こします。そのため、`termway` はタイルベースの差分トラッカー（`src/display/damage.rs`）を内蔵しています。
-
-1. **画面のグリッド分割**: 画面を 32x32 ピクセル（または 64x64）のタイルに分割。
-2. **高速ハッシュ比較**: 各タイルの RGBA バイト列に対して FNV-1a 64-bit ハッシュを計算し、前フレームのハッシュ配列と比較。
-3. **汚損領域の抽出**: ハッシュ値が異なるタイルのみを Dirty 矩形として抽出。
-4. **Coalescing (矩形統合)**: 汚損タイルが多数（画面の50%以上）に及ぶ場合は、エスケープシーケンスのヘッダオーバーヘッドを避けるため、外接バウンディングボックス 1 枚の更新へ自動結合。
+    Sess --> Secret
+    Backend --> Kitty
+    Backend --> Sixel
+    Backend --> FB
+```
 
 ---
 
-## 4. イベント駆動・フレーム同期エンジン (`src/engine.rs`)
+### 1.3 コア構造体クラス図 (Class / Ownership Diagram)
 
-`termway` のメインループは、入力待機による描画ブロック（スタベーション）を排除したノンブロッキング設計となっています。
+`v0.6.0` では、`TermwayState` に集中していたウィンドウ管理ロジックを [`WindowManager`](../src/compositor/window_manager.rs) (`state.wm`) として分離し、Smithay のトレイト実装を [`handlers/`](../src/compositor/handlers/mod.rs) 配下の各ドメインファイルへ分割しています。
+
+```mermaid
+classDiagram
+    class TermwayCompositor {
+        -Display~TermwayState~ display
+        -ListeningSocket listener
+        -TermwayState state
+        -TermwayRenderer renderer
+        -TerminalBackend backend
+        -DamageTracker damage_tracker
+        -SessionManager session
+        -Option~Child~ client_child
+        -Vec~TaskbarChip~ taskbar_chips
+        +new(config: EngineConfig) Result~Self~
+        +run() Result~()~
+        -apply_terminal_size(new_size: TerminalSize)
+        -process_terminal_input()
+        -build_taskbar() Option~String~
+    }
+
+    class TermwayState {
+        +CompositorState compositor_state
+        +XdgShellState xdg_shell_state
+        +XdgDecorationState xdg_decoration_state
+        +ShmState shm_state
+        +SeatState~Self~ seat_state
+        +DataDeviceState data_device_state
+        +PopupManager popups
+        +WindowManager wm
+        +Option~X11Wm~ xwm
+        +Seat~Self~ seat
+        +KeyboardHandle~Self~ keyboard
+        +PointerHandle~Self~ pointer
+        +u32 width
+        +u32 height
+        +bool dirty
+        +bool needs_clear
+        +bool running
+        +new(dh: &DisplayHandle, width: u32, height: u32, enable_wm: bool) Self
+        +raise_window(window_id: usize)
+        +minimize_window(window_id: usize)
+        +unminimize_window(window_id: usize)
+        +dump_state_json() String
+    }
+
+    class WindowManager {
+        +Vec~ManagedWindow~ windows
+        +WindowDragState drag_state
+        +Option~(usize, Instant)~ last_titlebar_click
+        -usize next_id
+        +alloc_id() usize
+        +get(id: usize) Option~&ManagedWindow~
+        +get_mut(id: usize) Option~&mut ManagedWindow~
+        +bring_to_top(id: usize) bool
+        +set_minimized(id: usize, minimized: bool) bool
+        +top_visible_id() Option~usize~
+        +cascade_offset() i32
+    }
+
+    class ManagedWindow {
+        +usize id
+        +WindowSurface surface
+        +String title
+        +Point~i32, Logical~ loc
+        +Size~i32, Logical~ size
+        +bool active
+        +bool has_ssd
+        +bool is_maximized
+        +bool is_minimized
+        +Option~(Point, Size)~ saved_geometry
+        +toggle_maximize(max_w: u32, max_h: u32)
+        +update_maximized_size(max_w: u32, max_h: u32)
+        +frame_geometry() Rectangle
+        +titlebar_geometry() Rectangle
+        +close_button_geometry() Rectangle
+        +maximize_button_geometry() Rectangle
+        +minimize_button_geometry() Rectangle
+    }
+
+    class WindowSurface {
+        <<enumeration>>
+        Wayland(ToplevelSurface)
+        X11(X11Surface)
+        Dummy
+    }
+
+    class WindowDragState {
+        <<enumeration>>
+        None
+        Moving(window_id, start_mouse, start_win_loc)
+        Resizing(window_id, start_mouse, start_win_size)
+    }
+
+    class TermwayRenderer {
+        -PixmanRenderer renderer
+        -PixmanRenderBuffer buffer
+        -u32 width
+        -u32 height
+        +render(state: &TermwayState) Result~&[u8]~
+        +resize(width: u32, height: u32) Result~()~
+    }
+
+    class TerminalBackend {
+        +TerminalSize term_size
+        -bool use_sixel
+        +bool show_hud
+        +bool needs_clear
+        -Arc~(Mutex~AsyncRenderState~, Condvar)~ async_state
+        -Option~JoinHandle~ worker_handle
+        +render_pixels(pixels: &[u8], w: u32, h: u32, taskbar: Option~&str~)
+        +resize(term_size: TerminalSize)
+    }
+
+    class DamageTracker {
+        -u32 width
+        -u32 height
+        -u32 tile_size
+        -Vec~u64~ prev_hashes
+        +track_damage(rgba_pixels: &[u8]) Vec~DamageRect~
+        +reset()
+        +resize(width: u32, height: u32)
+    }
+
+    class SessionManager {
+        -Option~Child~ dbus_child
+        -Option~String~ isolated_dbus_address
+        -Option~String~ ambient_dbus_address
+        -Option~SecretServiceBridge~ secret_bridge
+        -Option~Child~ polkit_child
+        +dbus_address_for_client(cmd: &str) Option~&str~
+        +start_polkit(wayland_socket: Option~&str~, x11_display: Option~&str~)
+    }
+
+    TermwayCompositor *-- TermwayState
+    TermwayCompositor *-- TermwayRenderer
+    TermwayCompositor *-- TerminalBackend
+    TermwayCompositor *-- DamageTracker
+    TermwayCompositor *-- SessionManager
+    TermwayState *-- WindowManager
+    WindowManager *-- "0..*" ManagedWindow
+    WindowManager *-- WindowDragState
+    ManagedWindow *-- WindowSurface
+```
+
+---
+
+## 2. 動的構造 (Dynamic Architecture & Runtime Behavior)
+
+### 2.1 起動・セッション確立・スプラッシュ描画シーケンス
+
+`termway` 起動時からクライアント GUI アプリケーションが最初のウィンドウをマップするまでの動的シーケンスです。
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant Main as Engine Loop (30 FPS)
-    participant Stdin as Terminal stdin
-    participant XTest as XTest Injector
-    participant Xvfb as Xvfb Server
-    participant Term as Terminal stdout
+    actor User as ユーザー / Terminal
+    participant Main as main.rs
+    participant Term as TerminalLayer<br/>(RawModeGuard / SGR 14t)
+    participant Comp as TermwayCompositor
+    participant XWL as XWayland / Calloop
+    participant Sess as SessionManager<br/>(D-Bus / Polkit)
+    participant App as Client GUI App
 
-    loop 毎フレーム (33ms間隔)
-        Main->>Stdin: nix::poll (timeout: 0ms)
-        alt 入力データあり
-            Stdin-->>Main: キー / マウスシーケンス
-            Main->>XTest: 仮想イベント注入 (XTestFakeKeyEvent / Motion)
-        end
-        Main->>Xvfb: XGetImage (フレームバッファ取得)
-        Xvfb-->>Main: XImage (RGBA)
-        Main->>Main: DamageTracker (差分計算)
-        alt 差分あり
-            Main->>Term: Kitty Protocol 転送 (q=2, i=1, C=1)
-        end
-        Main->>Main: Frame Pacing Sleep (残り時間待機)
+    User->>Main: termway [OPTIONS] -- <COMMAND>
+    Main->>Term: setup_sigwinch() & query_graphics_protocol()
+    Term-->>Main: GraphicsProtocol (Kitty or Sixel)
+    Main->>Comp: TermwayCompositor::new(config)
+    Comp->>Term: TerminalSize::query() (TIOCGWINSZ + \x1b[16t / \x1b[14t)
+    Term-->>Comp: cols, rows, cell_width_px, cell_height_px
+    Comp->>Comp: Wayland ソケット生成 (wayland-N)
+    Comp->>Sess: SessionManager::new()<br/>(隔離 D-Bus 起動 + SecretServiceBridge + Snap シム生成)
+    Comp->>XWL: XWayland::spawn() (/tmp/termway_wrap 経由)
+
+    Main->>Comp: compositor.run()
+    Comp->>Term: RawModeGuard::enter()<br/>(Raw mode, Alternate Screen \x1b[?1049h, Mouse \x1b[?1003h\x1b[?1006h)
+    XWL-->>Comp: XWaylandEvent::Ready (:DISPLAY)
+    Comp->>XWL: X11Wm::start_wm() & X11 shape 接続
+
+    loop 最初のウィンドウがマップされるまで (最大4秒)
+        Comp->>Comp: TermwayRenderer::render_splash()<br/>(グラデーション ">_ TERMWAY" + カーネル風テレメトリログ)
     end
-```
 
-### 4.1 ノンブロッキング入力ポーリング
-`src/backend/terminal.rs` では `nix::poll` を `PollTimeout::ZERO` で使用。キーやマウスの入力がない場合でもブロックすることなく即座に画面キャプチャと描画ステップに進むため、「キーを押すまで画面が表示されない」「入力が1文字遅れて反映される」といった入力遅延問題を根絶しています。
+    Comp->>Sess: update_activation_environment() & start_polkit()
+    Comp->>App: Command::spawn()<br/>(WAYLAND_DISPLAY, DISPLAY, DBUS_SESSION_BUS_ADDRESS)
+    App->>Comp: wl_surface.commit / X11 MapRequest
+    Comp->>Comp: state.show_splash = false<br/>state.needs_clear = true (全画面クリア後 GUI 表示へ移行)
+```
 
 ---
 
-## 5. 端末保護とライフサイクル安全設計
+### 2.2 イベント駆動メインループと非同期レンダリングパイプライン
 
-ターミナルを Raw モードおよびマウストラッキングモードに設定した状態でプログラムが不正終了（Panic, SIGINT, Segmentation Fault 等）すると、元のシェルがマウスクリック文字で埋め尽くされ操作不能になります。
+`TermwayCompositor::run` のメインスレッド（Calloop + Wayland ディスパッチ）と、`TerminalBackend` の専用ワーカースレッド（`termway-async-render`）間の非同期協調動作を示します。
 
-これを防止するため、`termway` は **RAII (Resource Acquisition Is Initialization)** パターンを採用しています：
+- **入力とイベント処理の非ブロッキング化**: 画像エンコード（Sixel 減色や Kitty zlib 圧縮）と標準出力フラッシュは別スレッドで実行されるため、高解像度描画中でもマウス・キー入力は遅延なく処理されます。
+- **最新フレーム間引き (Frame Dropping) とゼロアロケーション再利用**: ワーカースレッドが前フレームをエンコード中に次のフレームが到着した場合、`pending_job` のピクセルバッファを上書き置換することで古いフレームを破棄し、PTY バッファブロートを完全に防ぎます。また、描画完了後の `Vec<u8>` は `spare_buffer` としてメインスレッドへ返却・再利用されます。
 
-```rust
-impl Drop for RawModeGuard {
-    fn drop(&mut self) {
-        self.restore();
+```mermaid
+sequenceDiagram
+    autonumber
+    participant TermIn as Terminal stdin
+    participant Main as Main Thread<br/>(TermwayCompositor)
+    participant State as TermwayState & WM
+    participant Pixman as TermwayRenderer &<br/>DamageTracker (AVX2)
+    participant Queue as AsyncRenderState<br/>(Mutex + Condvar)
+    participant Worker as Worker Thread<br/>(termway-async-render)
+    participant TermOut as Terminal stdout
+
+    loop イベントループ (dirty 時は timeout=0ms / アイドル時は 10ms)
+        Main->>State: event_loop.dispatch(0ms) (XWayland / X11Wm イベント処理)
+        opt SIGWINCH 受信時
+            Main->>Main: apply_terminal_size()<br/>(Renderer / DamageTracker / 最大化・浮動ウィンドウ再配置)
+        end
+
+        Main->>TermIn: nix::poll (Non-blocking)
+        opt 端末入力あり (SGR Mouse / Key / Bracketed Paste / OSC 52)
+            TermIn-->>Main: Raw bytes
+            Main->>State: process_terminal_input()<br/>(SgrMouseParser / KeyboardParser -> Seat / WM 操作)
+        end
+
+        Main->>State: display.dispatch_clients() & flush_clients()
+        Note over State: クライアントの commit / メニュー操作 / 移動により<br/>state.dirty = true がセットされる
+
+        opt state.dirty == true
+            Main->>Pixman: renderer.render(&state)
+            Pixman-->>Main: RGBA8888 pixels (&[u8])
+            Main->>Pixman: damage_tracker.track_damage(pixels) [AVX2 SIMD]
+            Pixman-->>Main: Vec<DamageRect>
+            opt !damage.is_empty() || taskbar_changed || needs_clear
+                Main->>Queue: render_pixels(pixels, w, h, taskbar)<br/>(pending_job 更新・古い未処理フレームは上書き破棄)
+                Queue->>Worker: cvar.notify_one()
+            end
+            Main->>State: send_frames_surface_tree(time)<br/>state.dirty = false
+        end
+    end
+
+    par バックグラウンド非同期エンコード
+        Worker->>Queue: pending_job.take()
+        alt Sixel モード
+            Worker->>Worker: SixelEncoder::encode_fullscreen_frame_into()<br/>(AVX2 RGB332 減色 + 6行バンド tzcnt 走査 + RLE)
+        else Kitty モード
+            Worker->>Worker: KittyEncoder::encode_fullscreen_frame_into()<br/>(RFC 1950 zlib 圧縮 + Base64 4096B チャンク, z=-2147483648)
+        end
+        Worker->>TermOut: Synchronized Output (\x1b[?2026h ... 画像 + タスクバー + HUD ... \x1b[?2026l)
+        Worker->>Queue: spare_buffer = Some(job.pixels) (バッファ返却・再利用)
+    end
+```
+
+---
+
+### 2.3 ウィンドウライフサイクルと状態遷移 (Window State Machine)
+
+内蔵ウィンドウマネージャ（[`WindowManager`](../src/compositor/window_manager.rs) / [`ManagedWindow`](../src/compositor/window.rs)）における各ウィンドウの状態遷移図です。
+
+- **初期配置**: プライマリウィンドウおよび独立アプリウィンドウは、ターミナルの限られた表示領域を最大限活かすため初期状態で**最大化 (`Maximized`)** され、同時に画面解像度の **80%・中央配置** の矩形が `saved_geometry` として保存されます（ダイアログや子ウィンドウはクライアント指定サイズの `Floating` で開きます）。
+- **最大化解除 (`Unmaximize`)**: タイトルバーの `[□]` ボタンクリックまたはタイトルバーのダブルクリックにより、保存された 80% 中央サイズへ復元されます。Wayland クライアントが次フレームをコミットするまでの間、`unmaximize_pending` フラグにより古いフルスクリーンバッファのはみ出し描画を抑止し、背景をクリーンに保ちます。
+- **最小化 (`Minimized`)**: `[-]` ボタンまたは最下部タスクバーチップのクリックにより非表示化され、レンダリング対象から除外されるとともに、背後の可視ウィンドウへ自動的にキーボードフォーカスが移譲されます。
+
+```mermaid
+stateDiagram-v2
+    [*] --> Maximized: プライマリ / 独立ウィンドウ生成<br/>(saved_geometry = 画面の80%中央)
+    [*] --> Floating: 子ダイアログ / ツールウィンドウ生成
+
+    state Maximized {
+        [*] --> FullscreenActive: loc=(0, 23), size=(W, H-23)<br/>is_maximized = true
+        FullscreenActive --> FullscreenResized: SIGWINCH 端末リサイズ<br/>(update_maximized_size で新解像度へ即時追従 &<br/>saved_geometry も新解像度の80%中央に更新)
+        FullscreenResized --> FullscreenActive
     }
-}
+
+    state Floating {
+        [*] --> NormalIdle: WindowDragState::None
+        NormalIdle --> Moving: タイトルバー左ドラッグ開始
+        Moving --> NormalIdle: マウスボタン解放<br/>(画面境界クランプ適用)
+        NormalIdle --> Resizing: 右下ハンドル左ドラッグ開始
+        Resizing --> NormalIdle: マウスボタン解放<br/>(最小 160x100 / 画面境界クランプ)
+    }
+
+    Maximized --> Floating: [□] ボタン or タイトルバーWクリック<br/>(toggle_maximize: 80%中央へ復元,<br/>unmaximize_pending = true, needs_clear = true)
+    Floating --> Maximized: [□] ボタン or タイトルバーWクリック<br/>(現在位置・サイズを saved_geometry に保存し最大化)
+
+    Maximized --> Minimized: [-] ボタン or アクティブ時タスクバーチップクリック<br/>(is_minimized = true, 次の可視ウィンドウへフォーカス移譲)
+    Floating --> Minimized: [-] ボタン or アクティブ時タスクバーチップクリック<br/>(is_minimized = true, 次の可視ウィンドウへフォーカス移譲)
+
+    Minimized --> Maximized: タスクバーチップ [id: title _] クリック<br/>(最小化前に Maximized だった場合、最前面へ復元)
+    Minimized --> Floating: タスクバーチップ [id: title _] クリック<br/>(最小化前に Floating だった場合、最前面へ復元)
+
+    Maximized --> [*]: [×] ボタン (send_close) / アプリ終了
+    Floating --> [*]: [×] ボタン (send_close) / アプリ終了
+    Minimized --> [*]: アプリ終了
 ```
-- `RawModeGuard` がスコープを抜ける際（通常終了、return、`?` によるエラー伝播、パニック時のスタック巻き戻しのいずれでも）、必ず以下の端末復元シーケンスが標準出力へフラッシュされ、`tcsetattr` で元の termios が再設定されます：
-  - `\x1b[?1006l\x1b[?1003l\x1b[?1000l`: マウストラッキング（Any-event含む）無効化
-  - `\x1b[?25h`: カーソル再表示
-  - `\x1b[?1049l`: Alternate Screen の終了（元のシェル画面に戻る）
 
 ---
 
-## 6. Smithay + XWayland 自立型コンポジタ（v0.2.0 実装済み）
+### 2.4 マウスイベントのヒットテスト・ルーティング優先順位
 
-### 6.1 v0.1.0 (Xkitty方式) の成果と課題
-v0.1.0 では、外部の `Xvfb` および `openbox` を子プロセスとして立ち上げ、MIT-SHM によるフレームバッファの定周期キャプチャと XTest による入力注入を行う方式（Xkitty と同様の構造）を採用しました。
-このアプローチにより、「端末内に Kitty/Sixel で高速描画し、SGR マウスで対話する」というフロントエンドのプロトコル制御やピクセル追従（SGR 14t）の検証（PoC）には成功しました。
-
-しかしながら、以下の本質的な課題が存在します：
-1. **画面のポーリング監視**: 描画更新の有無に関わらずタイマー駆動でキャプチャを試みるため、不要な CPU 負荷や遅延が発生しやすい。
-2. **X11 への制限**: 純粋な Wayland ネイティブアプリ（GTK4 や Wayland 専用ツール）が動作しない。
-3. **外部依存**: `Xvfb` や `openbox`、`libXtst` などの外部バイナリ・ライブラリの事前インストールが必要。
+ターミナルから受信した SGR マウスイベントは、`src/compositor/input.rs` の `dispatch_mouse_event` において以下の優先順位（Z-order の手前側優先）でルーティングされます。
 
 ```mermaid
 flowchart TD
-    subgraph X11["X11 アプリ層"]
-        App["GUI アプリケーション (xclock, gvim 等)"]
-    end
+    MouseEv["SGR 1006 マウスイベント受信<br/>(col, row, button, action)"] --> CheckTaskbar{"1. 最下行 (row == term_rows)<br/>タスクバーチップ上の左クリック？"}
 
-    subgraph termway["termway (v0.1.0 / Xvfb Mode)"]
-        Xvfb["Xvfb サーバー (ディスプレイ :99)"]
-        Engine["TermwayEngine (30 FPS ループ)"]
-        Tracker["DamageTracker (差分計算)"]
-        Injector["XTest Injector (入力注入)"]
-        TermBackend["Terminal Backend (解像度・出力管理)"]
-    end
+    CheckTaskbar -->|"Yes"| TaskbarAction["対象ウィンドウが Minimized なら Unminimize & Raise<br/>Active なら Minimize<br/>非Active なら Raise & Focus"]
+    CheckTaskbar -->|"No"| MapCoord["セル座標 (col, row) を<br/>コンポジタピクセル座標 (px, py) へ変換"]
 
-    subgraph Terminal["端末エミュレータ"]
-        PTYIn["stdin (キー・SGRマウス・14t応答)"]
-        PTYOut["stdout (Kitty / Sixel 画像転送)"]
-    end
+    MapCoord --> CheckDrag{"2. ドラッグ中？<br/>(WindowDragState::Moving / Resizing)"}
+    CheckDrag -->|"Yes (Drag)"| UpdateDrag["ウィンドウ位置 / サイズ更新<br/>(画面境界クランプ + Wayland/X11 Configure)"]
+    CheckDrag -->|"Yes (Release)"| EndDrag["WindowDragState::None へリセット"]
+    CheckDrag -->|"No"| CheckPopup{"3. Wayland XDG Popup または<br/>X11 Override-Redirect メニュー上？"}
 
-    App -->|X11 描画| Xvfb
-    Engine -->|XGetImage| Xvfb
-    Xvfb -->|RGBA ピクセル| Engine
-    Engine -->|フレーム比較| Tracker
-    Tracker -->|差分領域のみ| TermBackend
-    TermBackend -->|エンコード| PTYOut
-    PTYIn -->|イベント解析| Engine
-    Engine -->|座標変換| Injector
-    Injector -->|XTestFakeEvent| Xvfb
+    CheckPopup -->|"Yes"| RoutePopup["最前面ポップアップ / メニューサーフェスへ<br/>pointer.motion / pointer.button を直接転送"]
+    CheckPopup -->|"No (ポップアップ表示中の外部クリック)"| DismissPopup["PopupManager::dismiss_popup()<br/>& X11 メニューフォーカス解除"]
+
+    DismissPopup --> CheckWM
+    CheckPopup -->|"No"| CheckWM{"4. 可視 ManagedWindow<br/>(Z-order 逆順: 最前面から検査)"}
+
+    CheckWM -->|"ヒット"| RaiseWin["raise_window(id)<br/>& キーボード / DataDevice フォーカス更新"]
+    RaiseWin --> CheckButtons{"タイトルバー / 装飾領域？"}
+    CheckButtons -->|"[×] 閉じるボタン"| CloseAct["Wayland send_close() / X11 close()"]
+    CheckButtons -->|"[□] 最大化ボタン or Wクリック"| MaxAct["toggle_maximize() & Configure"]
+    CheckButtons -->|"[-] 最小化ボタン"| MinAct["minimize_window(id)"]
+    CheckButtons -->|"タイトルバー本体"| StartMove["WindowDragState::Moving 開始"]
+    CheckButtons -->|"右下リサイズハンドル"| StartResize["WindowDragState::Resizing 開始"]
+    CheckButtons -->|"クライアント描画領域"| ForwardClient["クライアント相対座標 (sx, sy) を算出し<br/>Smithay PointerHandle (motion / button / axis) へ転送"]
 ```
 
-### 6.2 v0.2.0: Smithay ベースの自立型 Headless Wayland コンポジタ（実装済み）
+---
 
-`--wayland` フラグにより、`termway` 自体が **Smithay (Rust製Waylandコンポジタフレームワーク)** を用いた自立型コンポジタとして動作します。
+### 2.5 セッション終了判定ステートマシン (Forking GUI App Lifecycle)
+
+`gvim` や `gnome-terminal` のように起動直後に親プロセスが `fork()` して `exit(0)` するアプリケーションや、スプラッシュウィンドウを閉じてからメインウィンドウを開くアプリケーションに対応するため、`TermwayCompositor` はプロセス状態とウィンドウ枚数の組み合わせで終了判定を行います。
 
 ```mermaid
-flowchart TD
-    subgraph Clients["クライアント層"]
-        WApp["Wayland ネイティブアプリ (GTK4, Qt6 等)"]
-        XApp["レガシー X11 アプリ (xclock, xeyes 等)"]
-    end
+stateDiagram-v2
+    [*] --> WaitingFirstWindow: クライアントプロセス起動<br/>(has_opened_windows = false)
 
-    subgraph termway["termway v0.2.0 (Smithay Wayland Compositor)"]
-        XWL["XWayland サーバーマネージャ (DISPLAY=:1)"]
-        Wrap["ラッパースクリプト (/tmp/termway_wrap/Xwayland)"]
-        WLS["Wayland サーバー (WAYLAND_DISPLAY=wayland-1)"]
-        Seat["Smithay Seat (入力パイプライン)"]
-        Comp["Smithay Compositor & Damage Tracker"]
-        Unassoc["unassociated_surfaces フォールバック"]
-        Pixman["Headless Renderer (Pixman / CPU Buffer)"]
-        TermOut["Terminal Bridge (Kitty / Sixel)"]
-    end
+    WaitingFirstWindow --> ActiveSession: ウィンドウが1枚以上オープン<br/>(has_opened_windows = true)
+    WaitingFirstWindow --> StartupGracePeriod: 親プロセスが exit(0) で終了<br/>(gvim / ランチャー等の fork 想定)
+    WaitingFirstWindow --> ErrorExit: 親プロセスが非ゼロ終了コードで異常終了<br/>(stderr ログを抽出してエラー表示)
 
-    subgraph Terminal["端末エミュレータ"]
-        PTYIn["stdin (キー・SGRマウス・14t)"]
-        PTYOut["stdout (Kitty / Sixel エスケープシーケンス)"]
-    end
+    StartupGracePeriod --> ActiveSession: 6秒以内に子プロセスがウィンドウをオープン
+    StartupGracePeriod --> ErrorExit: 6秒経過してもウィンドウが1枚も開かない
 
-    WApp -->|"Wayland Protocol"| WLS
-    XApp -->|"X11 Protocol"| Wrap
-    Wrap -->|"FD クローズ問題を回避"| XWL
-    XWL -->|"Wayland Surface"| WLS
-    WLS --> Comp
-    Comp --> Unassoc
-    Unassoc --> Pixman
-    Pixman -->|"On Commit / Damage"| TermOut
-    TermOut --> PTYOut
-    PTYIn --> Seat
-    Seat --> WLS
+    ActiveSession --> CloseGracePeriod: 全ウィンドウがクローズ (active_window_count == 0)<br/>かつ子プロセスがまだ生存中
+    ActiveSession --> CleanExit: 全ウィンドウがクローズ (active_window_count == 0)<br/>かつ子プロセスも終了済み
+
+    CloseGracePeriod --> ActiveSession: 3秒以内に次のウィンドウがオープン<br/>(ダイアログ→メイン画面遷移など)
+    CloseGracePeriod --> CleanExit: 3秒経過してもウィンドウが0枚のまま
+
+    ActiveSession --> CleanExit: ユーザーが Ctrl-Q を押下
+    CleanExit --> [*]: RawModeGuard::drop() で端末復元
+    ErrorExit --> [*]: RawModeGuard::drop() で端末復元
 ```
 
-### 6.3 XWayland 接続ワークアラウンド（FD クローズ問題）
+---
 
-XWayland は Wayland クライアントとして動作するため、コンポジタ（termway）の Wayland ソケット経由で接続します。
-しかし、XWayland を直接起動した場合にファイルディスクリプタ（FD）のクローズ問題が発生し、接続に失敗することがあります。
+## 3. 主要サブシステムの技術詳細
 
-これを回避するため、`--wayland` 起動時に termway は `/tmp/termway_wrap/Xwayland` というラッパースクリプトを自動生成します。
-XWayland の起動はこのスクリプト経由で行われ、FD 管理の問題を透過的に解決します。
+### 3.1 プロトコルエンコードと SIMD 高速化 (`src/protocol/`, `src/display/`)
 
-```bash
-# 自動生成されるラッパースクリプトの例
-#!/bin/sh
-exec /usr/bin/Xwayland "$@"
-```
-
-### 6.4 unassociated_surfaces フォールバック機構
-
-XWayland がラッパースクリプト経由でコンポジタに接続する構成では、`X11Surface::wl_surface()` が `None` を返すケースが発生します。
-この場合、通常の Wayland サーフェス関連付けが行われないため、描画やマウス入力のフォーカス設定ができなくなります。
-
-termway はこれを以下のワークアラウンドで対処します：
-
-1. **`CompositorHandler::commit()` での収集**: `wl_surface()` が `None` の X11 サーフェスを `unassociated_surfaces: Vec<WlSurface>` リストに収集。
-2. **レンダラーでの描画対象化**: Pixman レンダラーは通常の関連付き Wayland サーフェスに加え、`unassociated_surfaces` リストの内容も描画対象とする。
-3. **マウス入力フォーカス**: Wayland ポインタの focus 設定時に `unassociated_surfaces.first()` を優先的に使用し、X11 アプリへのマウス入力を確保する。
-   *修正: XWayland が複数のダミーサーフェス（ルートウィンドウ等）を生成するため、対象を `unassociated_surfaces.last()` に変更し、実体のアプリ画面へフォーカスが当たるように改善しました。*
-4. **キーボードフォーカス**: 起動直後のフォーカス空振りを防ぐため、`commit` 時に新規の未関連付けサーフェスが登録された瞬間に `keyboard.set_focus()` を適用しています。
-5. **修飾キー (Shift) のタイミング**: 記号 (`:`, `!` 等) の入力時、Shift の押下・解放と実キーのイベントのタイムスタンプを意図的に 1ms ずつずらして送信し、XWayland 側での解釈ミス（順番の前後や Shift 抜け）を防止しています。
-
-### 6.5 XOpenDisplay デッドロック問題と解決策
-
-コンポジタのイベントループ内から `XOpenDisplay` を呼び出すと、XWayland とのデッドロックが発生します。
-これは XWayland 自体が Wayland クライアントであるため、コンポジタのイベントループが停止すると XWayland も応答できなくなり、相互待ちになるためです。
-
-この問題を回避するため、以下の設計変更を実施しました：
-
-- **廃止**: XTest 拡張経由の直接マウス・キー注入（`XOpenDisplay` が必要）
-- **採用**: Smithay Seat の Wayland ポインタ・キーボードイベント経由での入力処理（コンポジタ内部で完結し、`XOpenDisplay` 不要）
-
-### 6.6 Sixel 自動フォールバック
-
-`--wayland` モードを含むすべての起動モードで、以下のロジックで Sixel プロトコルの自動選択が行われます：
-
-```mermaid
-flowchart TD
-    Start["termway 起動"] --> CheckKitty{"KITTY_WINDOW_ID\n環境変数が存在する？"}
-    CheckKitty -->|"Yes (Kitty ターミナル)"| CheckFlag{"--sixel フラグ\n指定あり？"}
-    CheckKitty -->|"No (Kitty 以外)"| AutoSixel["use_sixel = true\n(自動フォールバック)"]
-    CheckFlag -->|"Yes"| UseSixel["use_sixel = true"]
-    CheckFlag -->|"No"| UseKitty["use_kitty = true\n(デフォルト)"]
-    AutoSixel --> Run["描画開始"]
-    UseSixel --> Run
-    UseKitty --> Run
-```
-
-これにより GNOME Terminal・xterm など VTE 系端末では `--sixel` フラグを指定しなくても正常に動作します。
-
-### 6.7 アーキテクチャ比較表
-
-| 観点 | v0.1.0 (Xkitty方式) | v0.2.0 (Smithay + XWayland方式) |
-| :--- | :--- | :--- |
-| **位置づけ** | 外部 X サーバーのキャプチャ＆転送 PoC | **自立型 Wayland コンポジタ ＋ 表示基盤** |
-| **描画トリガー** | タイマーループ (30 FPS) による定周期キャプチャ | **`wl_surface.commit` やダメージに連動する完全イベント駆動** |
-| **アプリ対応** | X11 アプリのみ | **Wayland ネイティブ ＋ X11 (XWayland経由) の両対応** |
-| **入力処理** | XTest 拡張による外部フェイク注入 | **Smithay `Seat` による内部ダイレクト入力処理** |
-| **ウィンドウ管理** | 外部 WM (`openbox`) に依存 | **内蔵フローティング WM (Openbox/Fluxbox 風装飾・ドラッグ・リサイズ・境界保護)** |
-| **外部依存性** | Xvfb, openbox, libXtst 等が必要 | **Rust 単一バイナリ** (X11 アプリ起動時のみ Xwayland を使用) |
-| **マウス座標変換** | `W_term` スケーリング経由の X11 座標 | **`cell_w = compositor_width / term_cols` による直接変換** |
-| **Sixel 選択** | `--sixel` フラグ必須 | **`KITTY_WINDOW_ID` 不在時に自動フォールバック** |
+1. **Kitty Graphics Protocol (`src/protocol/kitty.rs`)**:
+   - **RFC 1950 zlib 圧縮 (`o=z`)**: RGBA8888 ピクセルデータを `miniz_oxide` で高速圧縮してから Base64 化し、4096 バイト単位でチャンク分割送信（`a=T,f=32,o=z,i=1,q=2,C=1,z=-2147483648`）。
+   - **最背面レイヤ配置 (`z=-2147483648`) と最下行保護 (`rows - 1`)**: 画像をテキストレイヤより背面に配置し、さらに描画行数を `term_rows - 1` に制限することで、最下行のタスクバーおよびステータスオーバーレイ文字列との重なりを防止。
+2. **Sixel Graphics Protocol (`src/protocol/sixel.rs`)**:
+   - **AVX2 SIMD RGB332 減色 (`quantize_rgb332_avx2`)**: 1 フレームあたり 8 ピクセル（32 バイト）単位で RGBA から 8-bit RGB332 カラーインデックスへ一括変換。
+   - **AVX2 + `tzcnt` ビットマスク走査**: 6 ピクセル高のバンドごとに 32 列単位で `_mm256_cmpeq_epi8` + `_mm256_movemask_epi8` を実行し、存在する色だけを `trailing_zeros()` でジャンプ走査して RLE 出力（1080x720 フルフレームを約 3.7ms でエンコード）。
+3. **タイル差分検出 (`src/display/damage.rs`)**:
+   - 画面を 32x32 ピクセルのタイルに分割し、`x86_64` AVX2 環境では `_mm256_mullo_epi32` と `_mm256_xor_si256` による 8 レーン並列ハッシュで前回フレームと比較（1080x720 画面の差分スキャン約 0.20ms）。
+4. **Synchronized Output (`\x1b[?2026h` ... `\x1b[?2026l`)**:
+   - フレーム画像・タスクバー・HUD の出力全体を DEC Mode 2026（同期更新ブロック）で囲み、ティアリングや画面のチラつきを防止。
 
 ---
 
-### 6.8 組み込みフローティングウィンドウマネージャ (`src/compositor/window.rs`, `decoration.rs`)
+### 3.2 双方向クリップボード同期 (`src/compositor/handlers/seat.rs`, `src/compositor/input.rs`)
 
-termway は外部プロセス（openbox 等）に依存せず、コンポジタ内部に統合された Openbox / Fluxbox スタイルの軽量フローティングウィンドウマネージャを常時稼働します（Wayland モードでは常に標準有効。レガシー X11 モードでは `--wm` 指定時に外部 openbox を起動）。
-
-#### 1. ウィンドウ管理モデル (`ManagedWindow`)
-Wayland の `ToplevelSurface` と XWayland の `X11Surface` を `WindowSurface` 列挙型によって単一の `ManagedWindow` 構造体に抽象化し、以下の統一管理を行います：
-- **ジオメトリ管理**: クライアント領域 (`loc`, `size`)、外枠フレーム (`frame_geometry`: タイトルバーと外周ボーダーを含む)、タイトルバー (`titlebar_geometry`)、閉じるボタン (`close_button_geometry`)、右下リサイズハンドル (`resize_handle_geometry`)。
-- **Z-order とフォーカス**: `managed_windows: Vec<ManagedWindow>` の末尾を最前面（アクティブ）として管理。ウィンドウクリック時に `raise_window()` により最前面へ移動し、`Seat` 経由でキーボード・ポインタフォーカスを付与。
-
-#### 2. Openbox / Fluxbox スタイルの Pixman レンダリング (`src/compositor/decoration.rs`)
-Smithay の Pixman オフスクリーンバッファ上に、以下の装飾を直接描画（クリッピング保護付き）します：
-- **スリムタイトルバー (22px)**:
-  - アクティブ時: スレートダークブルー (`#263248`)
-  - 非アクティブ時: ダークチャコール (`#1c1e24`)
-- **シャープボーダー (1px)**:
-  - 外周に 1px の枠線（アクティブ時: `#465f82`、非アクティブ時: `#2d3037`）
-- **閉じるボタン [×]**:
-  - タイトルバー右端に赤色背景 (`#be3737`) と白の「×」アイコン。端末の文字セル単位でのクリック判定を容易にするため、ヒット判定領域を横幅 32px に拡張。
-- **リサイズハンドル**:
-  - 右下角に 12x12px の視覚的グリップ線、ヒット判定は 28x28px に拡張。
-- **ビットマップフォント描画 (`src/compositor/bitmap_font.rs`, `font_data.rs`)**:
-  - 外部フォントファイル（TTF等）への依存を排除するため、ASCII 32〜126 を網羅する内蔵 8x8 ビットマップフォントデータをバイナリに直接埋め込み、ウィンドウタイトルを高速かつシャープに描画。
-
-#### 3. マウス対話とドラッグ状態 (`WindowDragState`)
-SGR 1006 マウスイベントと連動し、直感的なウィンドウ操作を提供：
-- **ドラッグ移動 (`Moving`)**: タイトルバーを左クリックしてドラッグすることでウィンドウを任意位置へ移動。
-- **リサイズ (`Resizing`)**: 右下角を左クリックしてドラッグすることでウィンドウサイズを拡大・縮小。
-- **閉じる (`close`)**: [×] ボタンクリック時、Wayland の `send_close()` または X11 の `close()` を送信。すべての管理ウィンドウが閉じられた場合はコンポジタおよび子プロセスを正常終了。
-
-#### 4. 画面境界保護（クランプ機構）
-ターミナルの限られた解像度内でウィンドウを見失う・見切れる事故を防止するため、三重のクランプ処理を実装：
-1. **端末リサイズ時 (`apply_terminal_size`)**: 画面サイズ変更時、`enable_wm` の場合は画面全体サイズを強制通知せず、各ウィンドウの座標から枠内に収まるサイズを算出して `configure_size` を通知。
-2. **ドラッグ中クランプ (`dispatch_mouse_event`)**:
-   - `Moving`: 上部タイトルバーが画面外に出て掴めなくなることを防止し、左右・下端も画面内にクランプ。
-   - `Resizing`: 画面右端・下端を越えてウィンドウが拡大されるのを防止。
-3. **コミット時位置同期 (`commit`)**: クライアントが自己都合サイズでバッファをコミットした場合、`bbox_from_surface_tree` で実サイズを反映し、画面端からはみ出した場合は枠内へ自動引き戻し。
-
-#### 5. ウィンドウライフサイクル連動のセッション維持（フォーク型アプリ対応）
-`gvim` や `gedit`、`emacs` 等の GUI アプリケーションは、起動時に自身を `fork()` してバックグラウンド化し、親プロセスが即座に `exit(0)` する動作がデフォルトとなっています。
-termway は「起動した直系親プロセスの終了」に過度に依存せず、以下のライフサイクルステートマシンによりセッションを維持します：
-- **ウィンドウ開示実績 (`has_opened_windows`) の記録**: ウィンドウが1枚でも表示された時点でセッションをアクティブと認識。
-- **フォーク猶予時間 (Grace Period)**: 起動直後に親プロセスが exit(0) した場合でも、3秒間は子プロセスによるウィンドウの表示を待機。
-- **全ウィンドウ破棄時の自動終了**: 一度ウィンドウが開かれた後は、ユーザーがアプリを終了（`:q` やメニュー等）または [×] ボタンで全ウィンドウが破棄された瞬間に、コンポジタを正常終了してターミナルシェルへ安全に復帰。
-これにより、ユーザーは `-f` などのフォアグラウンドオプションを明示的に付与せずとも、自然にアプリを実行・終了できます。
+- **GUI → ホスト端末 (Copy)**:
+  - Wayland クライアントが `wl_data_device.set_selection` を発行、または XWayland クライアントが X11 `CLIPBOARD` / `PRIMARY` セレクションを更新した際、`SelectionHandler::new_selection` が発火。
+  - パイプ経由で UTF-8 テキストを読み取り、Base64 エンコードして OSC 52 シーケンス（`\x1b]52;c;<base64>\x07`）を端末へ送信し、ホスト OS のクリップボードへ即時同期。
+- **ホスト端末 → GUI (Paste)**:
+  - 端末側でのペースト（Bracketed Paste `\x1b[200~...\x1b[201~`）または `Ctrl+V` 押下時、ホスト側のテキストをコンポジタ側セレクション（`set_data_device_selection` / XWM セレクション）へセットした上で、フォーカス中のクライアントへ貼り付けキーイベントまたは Wayland データパイプを供給。
 
 ---
 
-### 6.9 入力イベントディスパッチとモジュール分離 (`src/compositor/input.rs`)
+### 3.3 ハイブリッド D-Bus セッションと Secret Service 中継 (`src/session/`)
 
-コンポジタのコア（`src/compositor/mod.rs`）がライフサイクル管理・イベントループ・描画ハンドリングに専念できるよう、端末からの入力シーケンス変換および Smithay Seat へのディスパッチ処理は専用モジュール `src/compositor/input.rs` に完全分離されています。
-
-1. **キーコード・evdev マッピング (`map_keycode_to_evdev`)**:
-   - `protocol::keyboard::KeyCode`（ANSI / CSI シーケンスからパースされたキー表現）を Linux evdev キーコード（例: `KEY_A = 30`, `KEY_LEFT = 105`, `KEY_ENTER = 28` 等）へ高速 O(1) テーブル変換。
-   - 大文字・記号判定ロジックにより、Shift を伴う文字（`A`〜`Z`, `!`, `@` 等）に対して自動的に `KEY_LEFTSHIFT` イベントを補完。
-2. **キー入力ディスパッチ (`dispatch_key_event`)**:
-   - 単調増加ミリ秒タイムスタンプ（`Instant::now()` 基準）を生成し、Smithay の `keyboard.input()` を呼び出し。
-   - Shift / Ctrl 修飾キーの先行押下 → 対象キー押下・解放 → 修飾キー解放の順序をミリ秒単位で厳密に制御し、XWayland クライアントでの修飾キー抜けを防止。
-3. **マウスイベントディスパッチ (`dispatch_mouse_event`)**:
-   - 文字セル座標 $(col, row)$ をコンポジタ仮想ピクセル座標へ高精度変換。
-   - **ウィンドウマネージャ対話**:
-     - タイトルバー・枠線・閉じるボタン・リサイズハンドルのヒットテスト。
-     - クリック時の Z-order 最前面浮上（`raise_window`）およびフォーカス切り替え（`seat.keyboard.set_focus` / `seat.pointer.set_focus`）。
-     - ドラッグ状態マシン（`WindowDragState::Moving` / `Resizing`）の更新と画面境界クランプ。
-     - 閉じるボタン `[×]` クリック時のクライアント終了要求（`send_close`）。
-   - **Wayland ポインタ通知**:
-     - 対象サーフェスに対する `pointer.motion()`、`pointer.button()`（左/中/右クリック）、`pointer.axis()`（ホイールスクロール）を Smithay ポインタパイプラインへ注入。
-
----
-
-### 6.10 実行環境健全性の事前検査と共通化 (`src/session/mod.rs`)
-
-`termway` は起動時、および X11 / XWayland サーバーの初期化前に、システム環境の健全性を検証する統一ヘルパー `check_x11_unix_writability()` を備えています。
-
-- **問題の背景**: コンテナ環境（Docker, Podman, LXC）や制限されたサンドボックス環境では、ホスト側の `/tmp/.X11-unix` が読み取り専用（`ro`）でマウントされている場合があります。この状態で Xvfb や XWayland を起動すると、UNIX ドメインソケットファイル（`/tmp/.X11-unix/X*`）を作成できずにハングアップするか、予期せずホスト側の既設ディスプレイ（`:0` 等）へエスケープ接続してしまう危険性がありました。
-- **統一検査機構**:
-  - Xvfb 起動（`src/display/xvfb.rs`）および XWayland 起動（`src/compositor/mod.rs`）の直前に、`/tmp/.X11-unix` に一時テストファイルを作成・削除して書き込み権限を検証。
-  - 書込不可の場合は即座にわかりやすいエラーメッセージを出力して終了し、ホスト環境への不正接続を 100% 防止します。
-
----
-
-### 6.11 ポップアップメニューおよびドロップダウンメニューの制御 (`xdg_popup` & X11 override-redirect)
-
-Wireshark、GTK/Qt アプリケーション、エディタ等のメニューバー（File, Edit, View 等）やコンテキストメニュー、ツールチップを正常に表示・操作するため、Wayland ネイティブおよび XWayland の両プロトコルに対応したポップアップ制御機構を実装しています。
-
-1. **Wayland ネイティブポップアップ (`xdg_popup` & `PopupManager`)**:
-   - `PopupManager`: Smithay の `PopupManager` をコンポジタ状態（`TermwayState`）に保持し、コミット時の状態追跡（`popups.commit`）およびポップアップ登録（`track_popup`）を実施。
-   - **ジオメトリ計算**: `PositionerState::get_geometry()` により親サーフェスに対する相対配置矩形を算出・反映。
-   - **最前面レンダリング**: 通常ウィンドウのレンダリング要素よりも前面に `PopupManager::popups_for_surface` から得られるポップアップサーフェスを描画要素として追加。
-   - **ヒットテストとフォーカス**: マウスクリックおよび移動時、最前面のポップアップサーフェスを最優先でヒットテストし、ポインタおよびキーボードフォーカスを割り当て。ポップアップ外をクリックした場合は `send_popup_done()` を発行してメニューを適切に閉じる。
-
-2. **XWayland ドロップダウンメニュー (`override-redirect`)**:
-   - **ウィンドウ追跡**: `new_override_redirect_window` で検知されたメニュー用ウィンドウを `x11_windows` に登録。
-   - **WM クランプのバイパス**: `configure_request` において、通常ウィンドウ用のタイトルバーや枠線マージンへのクランプをバイパスし、クライアントが要求した絶対座標・サイズを尊重して `window.configure()` を実行。
-   - **最前面ヒットテスト**: マウス押下・解放処理において、通常ウィンドウよりも前面に override-redirect ウィンドウを優先ヒットテストして入力を直接転送。
-
----
-
-### 6.12 自動化 GUI テスト基盤 (`tests/gui_test_driver.py`)
-
-複雑な GUI アプリケーション（Wireshark やテキストエディタ等）の動作検証・回帰テストを高速かつ安定して実施できるよう、3つのテスト基盤機構をコンポジタ内部およびテストドライバとして統合しています。
-
-1. **PTY 仮想端末経由の入力注入 (`TermwayTestDriver`)**:
-   - 擬似端末（PTY）マスター経由で SGR マウスシーケンス（クリック、ドラッグ、ホバー移動）や ANSI キーシーケンスを注入。外部 X11/Wayland プロトコルツールに依存せず、ターミナルエミュレータの入力をそのまま再現可能。
-2. **フレームバッファのキャプチャ (`TERMWAY_TEST_DUMP_DIR` / `SIGUSR1`)**:
-   - `SIGUSR1` シグナル受信時、または環境変数 `TERMWAY_TEST_CAPTURE_NOW` 設定時に、コンポジタのフレームバッファ（RGBA）を即座に PNG 画像としてダンプ。
-3. **GUI 状態・ウィンドウ階層のリアルタイム問い合わせ (`SIGUSR2` / `dump_state_json`)**:
-   - `SIGUSR2` シグナル受信時に、全管理ウィンドウ（ID、種別、タイトル、アクティブ状態、座標）およびポップアップ階層（ID、親ウィンドウID、座標、バッファサイズ）を JSON 形式で出力。
-   - 画像比較を行わずにメニューやポップアップの表示・切り替え・破棄状態を決定論的かつ高信頼にアサーション可能。
-
----
-
-### 6.13 ハイブリッド D-Bus セッション管理と Snap 互換性 (`src/session/mod.rs`)
-
-単一インスタンス型アプリケーション（`gnome-terminal` 等）のホスト画面への吸い込まれ防止と、Ubuntu Snap アプリケーション（Firefox 等）の cgroup 登録要件（`snap-confine`）を両立するため、ハイブリッド D-Bus セッション管理機構を導入しています。
-
-* **技術的判断の背景・代替案・背反の詳細**:
-  アーキテクチャ上の設計決定（D-Bus プロキシの非採用理由、ホワイトリスト方式のトレードオフ等）の詳細については、[ADR-0001: ハイブリッド D-Bus セッションルーティングと Snap アプリケーション対応](adr/0001-hybrid-dbus-session-routing.md) を参照してください。
-
----
-
-## 7. 今後のアーキテクチャ課題とロードマップ
-
-公開後の継続的な拡張性と保守性を確保するため、以下のアーキテクチャ課題をロードマップとして定義しています。
-詳細な設計方針・分割案・優先度については、[ROADMAP.md](ROADMAP.md) を参照してください。
-
-1. **`TermwayState` のドメイン分割（God Object アンチパターンの解消）**:
-   - `WindowManager`、`InputManager`、`ShellManager` への責務分離による関心の分離。
-2. **フレームレンダリング・画像エンコードのパイプライン分離（非同期化）**:
-   - イベントループからの重い画像エンコード（Sixel / Kitty）および I/O フラッシュのオフロード。
-3. **レガシー X11 エンジン (`src/engine.rs`) と Wayland コンポジタの一本化**:
-   - XWayland 統合に伴う二重実装の解消と Smithay アーキテクチャへの統合。
-4. **型安全なエラーハンドリング体系の確立 (`thiserror`)**:
-   - コンポーネント単位の型安全なエラー列挙体と耐障害性の向上。
-
-
+- **デュアル D-Bus ルーティング**:
+  - `gnome-terminal` などの単一インスタンス型アプリがホストの既存デスクトップ（`:0`）へ吸い込まれるのを防ぐため、専用 `dbus-daemon --session` による隔離バスを生成。
+  - 一方、Ubuntu の Snap 版 `firefox` や `xdg-open` など、ホストの `systemd --user` による cgroup スコープ生成（`snap-confine`）を要求するアプリには、起動コマンド判定および `PATH` ラッパーシムによってホストの Ambient バスを自動ルーティング（詳細は [ADR-0001](adr/0001-hybrid-dbus-session-routing.md) を参照）。
+- **Secret Service ブリッジ (`src/session/secret_bridge.rs`)**:
+  - 隔離 D-Bus セッション内で動く VS Code や Chromium 等がホストの GNOME Keyring / KWallet にアクセスできるよう、隔離バス上の `org.freedesktop.secrets` メソッド呼び出し・シグナルをホストの Ambient バスへ双方向中継。

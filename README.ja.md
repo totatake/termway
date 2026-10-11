@@ -293,9 +293,12 @@ cargo test --release
 
 ---
 
-## ロードマップ
+## ドキュメント
 
-今後のアーキテクチャ改善、リファクタリング計画、マイルストーンについては [docs/ROADMAP.md](docs/ROADMAP.md) を参照してください。
+- **[システムアーキテクチャ詳細設計書 (`docs/ARCHITECTURE.md`)](docs/ARCHITECTURE.md)**: 静的構造（レイヤー構成・クラス図・責務分割）および動的構造（起動シーケンス・非同期レンダリングパイプライン・ウィンドウ状態遷移・ヒットテスト優先順位）。
+- **[要求仕様およびテスト仕様書 (`docs/SPECIFICATION.md`)](docs/SPECIFICATION.md)**: 機能要件・非機能要件と全 75 テストのトレーサビリティマトリクス。
+- **[Architecture Decision Records (`docs/adr/`)](docs/adr/README.md)**: 設計上の意思決定とトレードオフの記録（[ADR-0001: ハイブリッド D-Bus セッションルーティング](docs/adr/0001-hybrid-dbus-session-routing.md) 等）。
+- **[エンジニアリング・ロードマップ (`docs/ROADMAP.md`)](docs/ROADMAP.md)**: パフォーマンス刷新・ドメイン分割・エンジン統合の達成状況と今後の計画。
 
 ---
 
