@@ -130,15 +130,12 @@ termway は高速グラフィックスプロトコル（**Kitty** および **Si
 
 ```bash
 # Ubuntu / Debian
-sudo apt-get install -y build-essential pkg-config libx11-dev libxtst-dev libpixman-1-dev libwayland-dev xwayland dbus-daemon
+sudo apt-get install -y build-essential pkg-config libpixman-1-dev libwayland-dev xwayland dbus-daemon
 
 # gparted 等の管理者権限 GUI ツール（Polkit 認証ダイアログ）を使用する場合（いずれか1つ）
 sudo apt-get install -y policykit-1-gnome   # Ubuntu 標準の GNOME 認証ダイアログ（推奨）
 # または
 sudo apt-get install -y lxpolkit           # 軽量な認証ダイアログ
-
-# レガシー --x11 モードを使用する場合のみ追加で必要
-sudo apt-get install -y xvfb openbox
 ```
 
 ---
@@ -187,8 +184,8 @@ Sixelを使いたい場合は `--sixel` を追加します：
 # 管理者権限 GUI ツール（Polkit 認証ダイアログがターミナル内に表示されます）
 ./target/release/termway -- gparted
 
-# レガシーな X11/Xvfb モードで実行する場合（openbox を利用）
-./target/release/termway --x11 --wm -- xclock
+# X11 アプリケーションも内蔵 XWayland 経由でそのまま実行可能
+./target/release/termway -- xclock
 ```
 
 > **Note**:
@@ -246,17 +243,17 @@ Sixel および SGR マウスプロトコルでのピクセルパーフェクト
 | オプション | 引数 | 説明 | デフォルト |
 | :--- | :--- | :--- | :--- |
 | `--wayland` | - | Smithay ベースのヘッドレス Wayland コンポジタモードを使用する（デフォルト） | 有効 |
-| `--x11`, `--xvfb` | - | 従来の X11/Xvfb + XTest 注入モードを使用する | - |
 | `--kitty` | - | Kitty Graphics Protocol を明示的に使用する | 自動検出 |
 | `--sixel` | - | Sixel Graphics Protocol を明示的に使用する | 自動検出 |
-| `--wm` | - | レガシー X11 モードでウィンドウマネージャ (openbox) を起動（Wayland モードでは常に組み込み WM が有効） | - |
 | `--cell-size` | `<WxH>` | フォントセル寸法（幅x高さ）をピクセル単位で明示指定 (例: `10x22`) | SGR 14t 自動測定 |
 | `--width` | `<PIXELS>` | 仮想ディスプレイ解像度の幅 | 端末サイズから自動算出 |
 | `--height` | `<PIXELS>` | 仮想ディスプレイ解像度の高さ | 端末サイズから自動算出 |
 | `--fps` | `<FPS>` | 目標フレームレート | `30` |
 | `--hud` | - | 画面上部にリアルタイムパフォーマンスインジケータ（FPS・エンコード時間・帯域・Damageタイル数）を表示 | 無効 |
 | `--no-splash` | - | 起動時のアニメーションスプラッシュ画面を非表示にする | 無効 |
-| `--demo` | - | 内蔵デモアプリを起動（Wayland時はGTK3、X11時はTkinter） | - |
+| `--demo` | - | 内蔵 GTK3 デモアプリを起動 | - |
+| `-V`, `--version` | - | バージョン情報を表示 | - |
+| `-h`, `--help` | - | ヘルプ情報を表示 | - |
 
 ---
 
@@ -265,8 +262,8 @@ Sixel および SGR マウスプロトコルでのピクセルパーフェクト
 本プロジェクトは要求仕様からシステム受入テストまでの厳密なトレーサビリティを確保して開発されており、単体テスト・結合テスト・E2Eシステムテストが整備されています。
 
 ```bash
-# 全テスト (単体・結合・E2E: 計50テスト) の実行
-cargo test -- --test-threads=1
+# 全テスト (単体・結合・E2E: 計75テスト) の実行
+cargo test --release
 ```
 
 ---

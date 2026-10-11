@@ -221,36 +221,21 @@ flowchart LR
 ## 4. 全テスト実行ログ
 
 ```bash
-$ cargo test -- --test-threads=1
-   Compiling termway v0.4.0 (/path/to/termway)
-    Finished `test` profile [unoptimized + debuginfo] target(s)
-     Running tests/integration_pipeline.rs (5 tests) ... ok
-     Running tests/system_e2e_gui.rs (1 test) ... ok
-     Running tests/unit_clipboard.rs (1 test) ... ok
-     Running tests/unit_compositor.rs (10 tests) ... ok
-     Running tests/unit_cursor.rs (1 test) ... ok
-     Running tests/unit_damage_tracker.rs (3 tests) ... ok
+$ cargo test --release
+   Compiling termway v0.6.0 (/path/to/termway)
+    Finished `release` profile [optimized] target(s)
+     Running tests/integration_pipeline.rs (6 tests) ... ok
+     Running tests/system_e2e_gui.rs (2 tests) ... ok
+     Running tests/unit_compositor.rs (23 tests) ... ok
+     Running tests/unit_damage_tracker.rs (6 tests) ... ok
      Running tests/unit_keyboard.rs (4 tests) ... ok
-     Running tests/unit_kitty_encoder.rs (5 tests) ... ok
-     Running tests/unit_pointer.rs (1 test) ... ok
-     Running tests/unit_session.rs (6 tests) ... ok
+     Running tests/unit_kitty_encoder.rs (7 tests) ... ok
+     Running tests/unit_secret_bridge.rs (4 tests) ... ok
+     Running tests/unit_session.rs (7 tests) ... ok
      Running tests/unit_sgr_mouse.rs (6 tests) ... ok
-     Running tests/unit_shm.rs (1 test) ... ok
-     Running tests/unit_sixel_encoder.rs (3 tests) ... ok
+     Running tests/unit_sixel_encoder.rs (6 tests) ... ok
      Running tests/unit_terminal.rs (4 tests) ... ok
 
-test result: ok. 51 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.45s
+test result: ok. 75 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.26s
 ```
-全 51 テストが 100% 成功し、すべての要件定義項目が検証されました。
-
----
-
-## 5. 今後の拡張計画 (Future Enhancements Roadmap)
-
-現在、次期バージョンに向けて以下の追加要件の実装を検討・計画しています。
-
-| 予定要件ID | 項目 | 概要 |
-| :--- | :--- | :--- |
-| **FR-13** | **動的画面リサイズ** | ターミナルのリサイズイベント（`SIGWINCH`）を捕捉し、XRandR 拡張を用いて内部 Xvfb サーバーの解像度を即座に動的追従させる。 |
-| **FR-14** | **双方向クリップボード** | Bracketed Paste モード等を解釈し、ホスト端末からのテキスト入力を X11 の PRIMARY / CLIPBOARD セレクションに自動転送し、完全な双方向同期を実現する。 |
-| **FR-15** | **画面キャプチャ・録画** | ショートカットキー等により、現在のフレームバッファを PNG や GIF/WebP としてホストOSのファイルシステム上に直接保存する。 |
+全 75 テストが 100% 成功し、すべての要件定義項目が検証されました。

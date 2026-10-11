@@ -130,15 +130,12 @@ termway supports both high-speed inline graphics protocols (**Kitty** & **Sixel*
 
 ```bash
 # Ubuntu / Debian
-sudo apt-get install -y build-essential pkg-config libx11-dev libxtst-dev libpixman-1-dev libwayland-dev xwayland dbus-daemon
+sudo apt-get install -y build-essential pkg-config libpixman-1-dev libwayland-dev xwayland dbus-daemon
 
 # Recommended for running privileged tools (e.g. gparted) with password prompts (choose one)
 sudo apt-get install -y policykit-1-gnome   # Official GNOME authentication dialog (Recommended)
 # or
 sudo apt-get install -y lxpolkit           # Lightweight authentication dialog
-
-# Required only if using legacy --x11 / --xvfb mode
-sudo apt-get install -y xvfb openbox
 ```
 
 ---
@@ -187,8 +184,8 @@ Specify the target command and arguments after `--`:
 # Run privileged administrative tools (Polkit password dialog prompts inside termway)
 ./target/release/termway -- gparted
 
-# Run in legacy X11 / Xvfb mode with openbox
-./target/release/termway --x11 --wm -- xclock
+# Run X11 applications seamlessly via built-in XWayland
+./target/release/termway -- xclock
 ```
 
 > **Note**:
@@ -199,7 +196,7 @@ Specify the target command and arguments after `--`:
 > - Single-instance daemon applications like `gnome-terminal` work seamlessly inside `termway` thanks to the automated isolated D-Bus session.
 > - Privileged GUI tools like `gparted` or `pkexec` will display their authentication dialog within the terminal when `policykit-1-gnome` or `lxpolkit` is installed.
 > - Running legacy X11 applications requires write permissions to `/tmp/.X11-unix`. If `/tmp/.X11-unix` is read-only (such as in restricted container environments), `termway` proactively detects this and terminates with a descriptive error, preventing applications from unexpectedly escaping to the host desktop display.
-> - **Clipboard Support**: Bidirectional clipboard synchronization is fully supported in both Wayland and X11 modes. Copying inside applications via `Ctrl-C` (or mouse selection) synchronizes to the host clipboard via OSC 52, and pasting from the host via `Ctrl-V` (or terminal paste `Ctrl+Shift+V` / right-click) seamlessly pastes into the application via Bracketed Paste with full UTF-8 / multibyte character support.
+> - **Clipboard Support**: Bidirectional clipboard synchronization is fully supported across Wayland and XWayland applications. Copying inside applications via `Ctrl-C` (or mouse selection) synchronizes to the host clipboard via OSC 52, and pasting from the host via `Ctrl-V` (or terminal paste `Ctrl+Shift+V` / right-click) seamlessly pastes into the application via Bracketed Paste with full UTF-8 / multibyte character support.
 > - **Shortcuts**: Press `Ctrl-Q` at any time to safely exit. Press `F12` to instantly save the current GUI display to a PNG image file (one-key screenshot).
 
 ### 3. Graphics Protocol Auto-Detection & Explicit Selection (`--kitty`, `--sixel`)
@@ -244,17 +241,15 @@ export TERMWAY_CELL_SIZE=10x22
 | Option | Argument | Description | Default |
 | :--- | :--- | :--- | :--- |
 | `--wayland` | - | Use Smithay headless Wayland compositor mode (default) | Enabled |
-| `--x11`, `--xvfb` | - | Use legacy X11 / Xvfb capture mode | - |
 | `--kitty` | - | Force Kitty Graphics Protocol | Auto-detected |
 | `--sixel` | - | Force Sixel Graphics Protocol | Auto-detected |
-| `--wm` | - | Start window manager in legacy X11 mode (openbox). Built-in WM is always active in Wayland mode | - |
 | `--cell-size` | `<WxH>` | Specify font cell dimensions in pixels (e.g. `10x22`) | Auto-detected via SGR 14t |
 | `--width` | `<PIXELS>` | Virtual display resolution width | Auto-calculated from terminal |
 | `--height` | `<PIXELS>` | Virtual display resolution height | Auto-calculated from terminal |
 | `--fps` | `<FPS>` | Target frame rate limit | `30` |
 | `--hud` | - | Show real-time performance HUD overlay (FPS, encode time, bandwidth, damage tiles) | Disabled |
 | `--no-splash` | - | Disable the animated startup splash screen while waiting for the first window | Disabled |
-| `--demo` | - | Launch built-in demo application (GTK3 for Wayland, Tkinter for X11) | - |
+| `--demo` | - | Launch built-in GTK3 Wayland demo application | - |
 | `-V`, `--version` | - | Print version information | - |
 | `-h`, `--help` | - | Print help information | - |
 
@@ -262,10 +257,10 @@ export TERMWAY_CELL_SIZE=10x22
 
 ## Running Tests
 
-`termway` comes with a comprehensive test suite (unit, integration, and end-to-end tests: 50 tests total):
+`termway` comes with a comprehensive test suite (unit, integration, and end-to-end tests: 75 tests total):
 
 ```bash
-cargo test -- --test-threads=1
+cargo test --release
 ```
 
 ---
