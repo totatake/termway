@@ -1,5 +1,5 @@
 use std::env;
-use termway::engine::{EngineConfig, TermwayEngine};
+use termway::compositor::{EngineConfig, TermwayCompositor};
 
 fn print_help() {
     println!(
@@ -9,14 +9,11 @@ USAGE:
     termway [OPTIONS] [--] [COMMAND [ARGS...]]
 
 OPTIONS:
-    --x11, --xvfb             Use legacy X11/Xvfb mode instead of native Wayland Compositor
     --wayland                 Use native Smithay Wayland Compositor (default)
     --width <PIXELS>          Virtual display width (default: auto from terminal)
     --height <PIXELS>         Virtual display height (default: auto from terminal)
     --cell-size <WxH>         Font cell pixel size (e.g. 10x20, default: auto/env/10x20)
     --fps <FPS>               Target frame rate (default: 30)
-    --wm                      Start lightweight Window Manager in legacy X11 mode (openbox)
-                              (Built-in WM is always active in native Wayland mode)
     --sixel                   Force Sixel graphics protocol
     --kitty                   Force Kitty graphics protocol
     --hud                     Enable real-time performance HUD indicator
@@ -30,13 +27,13 @@ EXAMPLES:
     termway -- gvim
     termway --kitty -- gvim
     termway --cell-size 10x22 -- gvim
-    termway --x11 --wm -- xclock
+    termway -- xclock
 "#
     );
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    termway::compositor::TermwayCompositor::ensure_xdg_runtime_dir();
+    TermwayCompositor::ensure_xdg_runtime_dir();
     termway::terminal::winsize::setup_sigwinch();
     let args: Vec<String> = env::args().collect();
     let mut config = EngineConfig::default();
@@ -46,7 +43,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut i = 1;
     let mut run_demo = false;
-    let mut use_wayland = true;
 
     while i < args.len() {
         let arg = &args[i];
@@ -97,15 +93,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             config.fps = args[i].parse()?;
         } else if arg == "--wayland" {
-            use_wayland = true;
-        } else if arg == "--x11" || arg == "--xvfb" {
-            use_wayland = false;
+            // Native Smithay Wayland Compositor is the default and sole engine
         } else if arg == "--sixel" {
             explicit_sixel = true;
         } else if arg == "--kitty" {
             explicit_kitty = true;
-        } else if arg == "--wm" {
-            config.enable_wm = true;
         } else if arg == "--hud" {
             config.hud = true;
         } else if arg == "--no-splash" {
@@ -122,11 +114,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             break;
         }
         i += 1;
-    }
-
-    // In native Wayland mode, the built-in Window Manager is always active.
-    if use_wayland {
-        config.enable_wm = true;
     }
 
     // グラフィックスプロトコルの決定:
@@ -177,11 +164,10 @@ If your terminal supports Sixel or Kitty but auto-detection failed, you can expl
     }
 
     if run_demo || config.command.is_empty() {
-        if use_wayland {
-            config.command = vec![
-                "python3".to_string(),
-                "-c".to_string(),
-                r#"
+        config.command = vec![
+            "python3".to_string(),
+            "-c".to_string(),
+            r#"
 import gi
 gi.require_version('Gtk', '3.0')
 from gi.repository import Gtk
@@ -213,42 +199,9 @@ win.show_all()
 entry.grab_focus()
 entry.set_position(-1)
 Gtk.main()
-"#.to_string(),
-            ];
-        } else {
-            config.command = vec![
-                "python3".to_string(),
-                "-c".to_string(),
-                r#"
-import tkinter as tk
-
-root = tk.Tk()
-root.title("termway Demo")
-root.geometry("400x300")
-
-count = 0
-
-def on_click():
-    global count
-    count += 1
-    label.config(text=f"Clicked: {count} times!", fg="blue")
-
-label = tk.Label(root, text="termway: GUI inside Terminal!", font=("Helvetica", 14))
-label.pack(pady=20)
-
-btn = tk.Button(root, text="Click Me!", font=("Helvetica", 12), bg="lightgreen", command=on_click)
-btn.pack(pady=10)
-
-entry = tk.Entry(root, font=("Helvetica", 12))
-entry.insert(0, "Type here...")
-entry.pack(pady=10)
-entry.focus_set()
-entry.icursor(tk.END)
-
-root.mainloop()
-"#.to_string(),
-            ];
-        }
+"#
+            .to_string(),
+        ];
     }
 
     if !run_demo && !config.command.is_empty() {
@@ -259,26 +212,13 @@ root.mainloop()
         }
     }
 
-    if !use_wayland && config.enable_wm && termway::session::find_executable("openbox").is_none() {
-        eprintln!("Error: Window Manager 'openbox' not found in PATH. Please install openbox (e.g. 'sudo apt install openbox') or run without --wm.");
+    let mut compositor = TermwayCompositor::new(config)?;
+    if let Err(e) = compositor.run() {
+        eprintln!("Error: {}", e);
+        drop(compositor);
         std::process::exit(1);
     }
 
-    if use_wayland {
-        let mut compositor = termway::compositor::TermwayCompositor::new(config)?;
-        if let Err(e) = compositor.run() {
-            eprintln!("Error: {}", e);
-            drop(compositor);
-            std::process::exit(1);
-        }
-    } else {
-        let mut engine = TermwayEngine::new(config);
-        if let Err(e) = engine.run() {
-            eprintln!("Error: {}", e);
-            drop(engine);
-            std::process::exit(1);
-        }
-    }
-    
     Ok(())
 }
+

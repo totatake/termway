@@ -38,13 +38,41 @@ use smithay::reexports::{
 };
 
 use crate::backend::TerminalBackend;
-use crate::engine::EngineConfig;
 use crate::protocol::{KeyCode, KeyboardParser, SgrMouseParser};
 use crate::terminal::{RawModeGuard, TerminalSize};
 
 use self::renderer::TermwayRenderer;
 use self::state::{send_frames_surface_tree, ClientState, TermwayState};
 use self::window::{WindowSurface, BORDER_WIDTH, TITLEBAR_HEIGHT};
+
+#[derive(Debug, Clone)]
+pub struct EngineConfig {
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub cell_size: Option<(u16, u16)>,
+    pub fps: u32,
+    pub enable_wm: bool,
+    pub use_sixel: bool,
+    pub hud: bool,
+    pub no_splash: bool,
+    pub command: Vec<String>,
+}
+
+impl Default for EngineConfig {
+    fn default() -> Self {
+        Self {
+            width: None,
+            height: None,
+            cell_size: None,
+            fps: 30,
+            enable_wm: true,
+            use_sixel: false,
+            hud: false,
+            no_splash: false,
+            command: Vec::new(),
+        }
+    }
+}
 
 // Helper to find Xwayland binary safely without invoking `which`
 fn find_xwayland_binary() -> Option<std::path::PathBuf> {
@@ -180,7 +208,7 @@ impl TermwayCompositor {
         let renderer = TermwayRenderer::new(width, height)?;
 
         // 4. Initialize Terminal Output Backend
-        let mut backend = TerminalBackend::new(term_size, config.use_sixel, true);
+        let mut backend = TerminalBackend::new(term_size, config.use_sixel);
         if config.hud {
             backend.set_hud_enabled(true);
         }

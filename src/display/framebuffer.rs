@@ -16,19 +16,17 @@ impl Framebuffer {
         }
     }
 
-    /// Read image data from an X11 XImage structure into this framebuffer.
-    /// Converts standard 24/32-bit BGRX or ARGB to RGBA8888.
-    ///
-    /// # Safety
-    /// `ximage` must be a valid non-null pointer to an XImage.
-    pub unsafe fn copy_from_ximage(&mut self, ximage: *mut x11::xlib::XImage) {
-        if ximage.is_null() {
+    /// Copy 32-bit BGRX/ARGB scanlines into this RGBA8888 framebuffer.
+    pub fn copy_from_bgrx(&mut self, src_data: &[u8], bytes_per_line: usize, w: u32, h: u32) {
+        if w == 0 || h == 0 {
             return;
         }
-
-        let img = &*ximage;
-        let w = img.width as u32;
-        let h = img.height as u32;
+        let min_len = (h as usize - 1)
+            .saturating_mul(bytes_per_line)
+            .saturating_add((w as usize) * 4);
+        if src_data.len() < min_len {
+            return;
+        }
 
         if w != self.width || h != self.height {
             self.width = w;
@@ -36,42 +34,35 @@ impl Framebuffer {
             self.pixels.resize((w * h * 4) as usize, 0);
         }
 
-        let src_data = img.data as *const u8;
-        let bytes_per_line = img.bytes_per_line as usize;
-        let bits_per_pixel = img.bits_per_pixel;
-
-        if bits_per_pixel == 32 {
-            #[cfg(target_arch = "x86_64")]
-            if std::is_x86_feature_detected!("avx2") {
+        #[cfg(target_arch = "x86_64")]
+        if std::is_x86_feature_detected!("avx2") {
+            unsafe {
                 Self::copy_bgrx_to_rgba_avx2(
-                    src_data,
+                    src_data.as_ptr(),
                     bytes_per_line,
                     &mut self.pixels,
                     w as usize,
                     h as usize,
                 );
-                return;
             }
+            return;
+        }
 
-            for y in 0..h {
-                let src_row = src_data.add((y as usize) * bytes_per_line) as *const u32;
-                let dst_row_start = (y * w * 4) as usize;
+        for y in 0..h {
+            let row_offset = (y as usize) * bytes_per_line;
+            let dst_row_start = (y * w * 4) as usize;
 
-                for x in 0..w {
-                    let pixel = *src_row.add(x as usize);
-                    // Extract colors (usually 0x00RRGGBB or 0x00BBGGRR depending on visual)
-                    // Xvfb standard 24/32bpp default is TrueColor with red_mask=0xff0000, green_mask=0x00ff00, blue_mask=0x0000ff
-                    let r = ((pixel >> 16) & 0xff) as u8;
-                    let g = ((pixel >> 8) & 0xff) as u8;
-                    let b = (pixel & 0xff) as u8;
-                    let a = 255u8;
+            for x in 0..w {
+                let src_idx = row_offset + (x as usize) * 4;
+                let b = src_data[src_idx];
+                let g = src_data[src_idx + 1];
+                let r = src_data[src_idx + 2];
 
-                    let dst_idx = dst_row_start + (x as usize) * 4;
-                    self.pixels[dst_idx] = r;
-                    self.pixels[dst_idx + 1] = g;
-                    self.pixels[dst_idx + 2] = b;
-                    self.pixels[dst_idx + 3] = a;
-                }
+                let dst_idx = dst_row_start + (x as usize) * 4;
+                self.pixels[dst_idx] = r;
+                self.pixels[dst_idx + 1] = g;
+                self.pixels[dst_idx + 2] = b;
+                self.pixels[dst_idx + 3] = 255u8;
             }
         }
     }
