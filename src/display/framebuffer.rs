@@ -109,4 +109,48 @@ impl Framebuffer {
             }
         }
     }
+
+    /// Encode raw RGBA8888 pixels into a standard PNG image using `miniz_oxide`.
+    pub fn encode_png(rgba: &[u8], width: u32, height: u32) -> Vec<u8> {
+        let row_bytes = (width as usize) * 4;
+        let mut raw_scanlines = Vec::with_capacity((row_bytes + 1) * (height as usize));
+        for y in 0..(height as usize) {
+            raw_scanlines.push(0u8); // Filter type 0 (None)
+            let start = y * row_bytes;
+            raw_scanlines.extend_from_slice(&rgba[start..start + row_bytes]);
+        }
+        let compressed = miniz_oxide::deflate::compress_to_vec_zlib(&raw_scanlines, 6);
+
+        let mut out = Vec::with_capacity(64 + compressed.len());
+        out.extend_from_slice(&[137, 80, 78, 71, 13, 10, 26, 10]); // PNG signature
+
+        let mut ihdr = [0u8; 13];
+        ihdr[0..4].copy_from_slice(&width.to_be_bytes());
+        ihdr[4..8].copy_from_slice(&height.to_be_bytes());
+        ihdr[8] = 8; // 8 bits per channel
+        ihdr[9] = 6; // Color type 6 (RGBA)
+        Self::write_png_chunk(&mut out, b"IHDR", &ihdr);
+        Self::write_png_chunk(&mut out, b"IDAT", &compressed);
+        Self::write_png_chunk(&mut out, b"IEND", &[]);
+        out
+    }
+
+    fn write_png_chunk(out: &mut Vec<u8>, chunk_type: &[u8; 4], data: &[u8]) {
+        out.extend_from_slice(&(data.len() as u32).to_be_bytes());
+        out.extend_from_slice(chunk_type);
+        out.extend_from_slice(data);
+        let mut crc = 0xFFFF_FFFFu32;
+        for &b in chunk_type.iter().chain(data.iter()) {
+            crc ^= b as u32;
+            for _ in 0..8 {
+                crc = if crc & 1 != 0 {
+                    (crc >> 1) ^ 0xEDB8_8320
+                } else {
+                    crc >> 1
+                };
+            }
+        }
+        out.extend_from_slice(&(!crc).to_be_bytes());
+    }
 }
+

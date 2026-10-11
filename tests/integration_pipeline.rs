@@ -177,4 +177,21 @@ fn test_termway_version_flag() {
     );
 }
 
+#[test]
+fn test_framebuffer_encode_png_valid_structure() {
+    let rgba = vec![
+        255, 0, 0, 255, 0, 255, 0, 255, // row 0: red, green
+        0, 0, 255, 255, 255, 255, 255, 255, // row 1: blue, white
+    ];
+    let png = Framebuffer::encode_png(&rgba, 2, 2);
+
+    // Check 8-byte PNG signature
+    assert_eq!(&png[0..8], &[137, 80, 78, 71, 13, 10, 26, 10]);
+    // Check IHDR chunk header
+    assert_eq!(&png[12..16], b"IHDR");
+    // Check IEND chunk at the end
+    assert_eq!(&png[png.len() - 8..png.len() - 4], b"IEND");
+}
+
+
 

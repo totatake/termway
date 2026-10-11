@@ -988,17 +988,14 @@ impl TermwayCompositor {
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_millis();
+            let png_bytes = crate::display::Framebuffer::encode_png(pixels, w, h);
             let path = format!("{}/termway_screenshot_{}.png", dump_dir, ts);
-            if let Some(img) = image::RgbaImage::from_raw(w, h, pixels.to_vec()) {
-                if img.save(&path).is_ok() {
-                    eprintln!("[termway] Screenshot saved: {}", path);
-                    log_line(format!("[termway] Screenshot saved: {}", path));
-                }
+            if std::fs::write(&path, &png_bytes).is_ok() {
+                eprintln!("[termway] Screenshot saved: {}", path);
+                log_line(format!("[termway] Screenshot saved: {}", path));
             }
             let latest_path = format!("{}/termway_screenshot_latest.png", dump_dir);
-            if let Some(img) = image::RgbaImage::from_raw(w, h, pixels.to_vec()) {
-                let _ = img.save(&latest_path);
-            }
+            let _ = std::fs::write(&latest_path, &png_bytes);
         }
     }
 
