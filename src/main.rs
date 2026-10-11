@@ -1,5 +1,6 @@
 use std::env;
 use termway::compositor::{EngineConfig, TermwayCompositor};
+use termway::Result;
 
 fn print_help() {
     println!(
@@ -32,7 +33,7 @@ EXAMPLES:
     );
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<()> {
     TermwayCompositor::ensure_xdg_runtime_dir();
     termway::terminal::winsize::setup_sigwinch();
     let args: Vec<String> = env::args().collect();

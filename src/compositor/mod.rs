@@ -38,6 +38,7 @@ use smithay::reexports::{
 };
 
 use crate::backend::TerminalBackend;
+use crate::error::{Result, TermwayError};
 use crate::protocol::{KeyCode, KeyboardParser, SgrMouseParser};
 use crate::terminal::{RawModeGuard, TerminalSize};
 
@@ -146,7 +147,7 @@ pub struct TermwayCompositor {
 }
 
 impl TermwayCompositor {
-    pub fn new(config: EngineConfig) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn new(config: EngineConfig) -> Result<Self> {
         setup_test_signals();
         let mut term_size = TerminalSize::query().unwrap_or_else(|_| TerminalSize::fallback(80, 24));
         let cell_size_queried = config.cell_size.is_some();
@@ -192,7 +193,7 @@ impl TermwayCompositor {
                 }
                 id += 1;
                 if id > 32 {
-                    return Err("Failed to find free wayland socket name".into());
+                    return Err(TermwayError::NoFreeWaylandSocket);
                 }
             }
         };
@@ -327,7 +328,7 @@ impl TermwayCompositor {
         self.x11_display.as_deref()
     }
 
-    pub fn run(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn run(&mut self) -> Result<()> {
         // Raw mode guard ensures terminal is restored upon exit
         let _guard = RawModeGuard::enter()?;
 
@@ -397,7 +398,7 @@ impl TermwayCompositor {
             }
             
             if let Some(ref err) = self.state.xwayland_error {
-                return Err(format!("XWayland failed to start: {}", err).into());
+                return Err(TermwayError::XWayland(err.clone()));
             }
 
             // Spawn pending command after Wayland globals are advertised and XWayland (if present) is ready
@@ -458,7 +459,10 @@ impl TermwayCompositor {
                         }
                         Err(e) => {
                             log_line(format!("[termway] Failed to spawn client {:?}: {}", cmd_args, e));
-                            return Err(format!("Failed to execute client command '{}': {}", cmd_args[0], e).into());
+                            return Err(TermwayError::ClientSpawn {
+                                command: cmd_args[0].clone(),
+                                source: e,
+                            });
                         }
                     }
                 }
@@ -576,7 +580,7 @@ impl TermwayCompositor {
                             } else {
                                 format!("Client process exited with error ({}) before opening any window:\n  {}", status, preview)
                             };
-                            return Err(msg.into());
+                            return Err(TermwayError::ClientFailed(msg));
                         }
                         // If client exited with success (e.g. gvim fork or gnome-terminal launcher), wait up to 6s grace period for window to appear
                         if let Some(st) = self.spawn_time {
@@ -593,12 +597,17 @@ impl TermwayCompositor {
                                 } else {
                                     format!("Client process exited and no window was opened:\n  {}", preview)
                                 };
-                                return Err(msg.into());
+                                return Err(TermwayError::ClientFailed(msg));
                             }
                         }
                     }
                     Ok(None) => {}
-                    Err(e) => return Err(format!("Error waiting for client process: {}", e).into()),
+                    Err(e) => {
+                        return Err(TermwayError::ClientFailed(format!(
+                            "Error waiting for client process: {}",
+                            e
+                        )))
+                    }
                 }
             }
 

@@ -11,6 +11,7 @@ use smithay::{
     utils::{Buffer, Physical, Point, Rectangle, Size, Transform},
 };
 
+use crate::error::{Result, TermwayError};
 use super::decoration::DecorationRenderer;
 use super::state::TermwayState;
 use super::window::WindowSurface;
@@ -24,7 +25,7 @@ pub struct TermwayRenderer {
 }
 
 impl TermwayRenderer {
-    pub fn new(width: u32, height: u32) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn new(width: u32, height: u32) -> Result<Self> {
         let mut renderer = PixmanRenderer::new()?;
         let buffer_size: Size<i32, Buffer> = Size::from((width as i32, height as i32));
         // Use Abgr8888 so that in little-endian the bytes in memory are [R, G, B, A]
@@ -40,7 +41,7 @@ impl TermwayRenderer {
         })
     }
 
-    pub fn resize(&mut self, width: u32, height: u32) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn resize(&mut self, width: u32, height: u32) -> Result<()> {
         if self.width == width && self.height == height {
             return Ok(());
         }
@@ -51,7 +52,7 @@ impl TermwayRenderer {
         Ok(())
     }
 
-    pub fn render(&mut self, state: &TermwayState) -> Result<&[u8], Box<dyn std::error::Error>> {
+    pub fn render(&mut self, state: &TermwayState) -> Result<&[u8]> {
         let phys_size: Size<i32, Physical> = Size::from((self.width as i32, self.height as i32));
         let screen_damage: Rectangle<i32, Physical> = Rectangle::from_size(phys_size);
 
@@ -203,22 +204,26 @@ impl TermwayRenderer {
 
         // 3. Draw managed windows (bottom to top), each clipped strictly to its content_geometry()
         for (elems, win_clips) in &window_layers {
-            draw_render_elements(&mut frame, 1.0, elems, win_clips).map_err(|e| format!("{:?}", e))?;
+            draw_render_elements(&mut frame, 1.0, elems, win_clips)
+                .map_err(|e| TermwayError::Renderer(format!("{:?}", e)))?;
         }
 
         // 4. Draw unmanaged X11 popup/override-redirect surfaces on top
         for (elems, x11_clip) in &x11_layers {
-            draw_render_elements(&mut frame, 1.0, elems, &[*x11_clip]).map_err(|e| format!("{:?}", e))?;
+            draw_render_elements(&mut frame, 1.0, elems, &[*x11_clip])
+                .map_err(|e| TermwayError::Renderer(format!("{:?}", e)))?;
         }
 
         // 5. Draw Wayland XDG popups on top
         for (elems, popup_clip) in &popup_layers {
-            draw_render_elements(&mut frame, 1.0, elems, &[*popup_clip]).map_err(|e| format!("{:?}", e))?;
+            draw_render_elements(&mut frame, 1.0, elems, &[*popup_clip])
+                .map_err(|e| TermwayError::Renderer(format!("{:?}", e)))?;
         }
 
         // 6. Draw fallback unassociated surfaces if active
         for (elems, clip) in &fallback_layers {
-            draw_render_elements(&mut frame, 1.0, elems, &[*clip]).map_err(|e| format!("{:?}", e))?;
+            draw_render_elements(&mut frame, 1.0, elems, &[*clip])
+                .map_err(|e| TermwayError::Renderer(format!("{:?}", e)))?;
         }
 
         let _ = frame.finish()?;

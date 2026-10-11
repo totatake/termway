@@ -1,5 +1,6 @@
 pub mod secret_bridge;
 
+use crate::error::{Result, TermwayError};
 use std::io::{BufRead, BufReader};
 use std::process::{Child, Command, Stdio};
 
@@ -14,7 +15,7 @@ pub struct DbusSession {
 }
 
 impl DbusSession {
-    pub fn start() -> Result<Self, String> {
+    pub fn start() -> Result<Self> {
         let mut cmd = Command::new("dbus-daemon");
         cmd.arg("--session")
             .arg("--print-address")
@@ -33,24 +34,26 @@ impl DbusSession {
 
         let mut child = cmd
             .spawn()
-            .map_err(|e| format!("Failed to spawn dbus-daemon: {}", e))?;
+            .map_err(|e| TermwayError::DbusSession(format!("Failed to spawn dbus-daemon: {}", e)))?;
 
         let stdout = child
             .stdout
             .take()
-            .ok_or_else(|| "Failed to capture dbus-daemon stdout".to_string())?;
+            .ok_or_else(|| TermwayError::DbusSession("Failed to capture dbus-daemon stdout".to_string()))?;
 
         let mut reader = BufReader::new(stdout);
         let mut address = String::new();
         reader
             .read_line(&mut address)
-            .map_err(|e| format!("Failed to read D-Bus address: {}", e))?;
+            .map_err(|e| TermwayError::DbusSession(format!("Failed to read D-Bus address: {}", e)))?;
 
         let address = address.trim().to_string();
         if address.is_empty() {
             let _ = child.kill();
             let _ = child.wait();
-            return Err("Empty D-Bus address returned from dbus-daemon".into());
+            return Err(TermwayError::DbusSession(
+                "Empty D-Bus address returned from dbus-daemon".into(),
+            ));
         }
 
         // Set environment variable for current process and future children
@@ -682,16 +685,24 @@ impl Default for SessionManager {
 
 /// Verifies that /tmp/.X11-unix (or /tmp if the directory does not exist) is writable.
 /// This prevents X11/XWayland servers and clients from failing or escaping to host displays.
-pub fn check_x11_unix_writability() -> Result<(), String> {
+pub fn check_x11_unix_writability() -> Result<()> {
     let x11_dir = std::path::Path::new("/tmp/.X11-unix");
     if x11_dir.exists() {
         if let Err(e) = tempfile::Builder::new().prefix(".termway_test_").tempfile_in(x11_dir) {
-            return Err(format!("Cannot write to /tmp/.X11-unix ({}). X11/XWayland will not work: {}", e.kind(), e));
+            return Err(TermwayError::X11SocketDirNotWritable(format!(
+                "Cannot write to /tmp/.X11-unix ({}). X11/XWayland will not work: {}",
+                e.kind(),
+                e
+            )));
         }
     } else {
         let tmp_dir = std::path::Path::new("/tmp");
         if let Err(e) = tempfile::Builder::new().prefix(".termway_test_").tempfile_in(tmp_dir) {
-            return Err(format!("Cannot write to /tmp ({}). X11/XWayland will not work: {}", e.kind(), e));
+            return Err(TermwayError::X11SocketDirNotWritable(format!(
+                "Cannot write to /tmp ({}). X11/XWayland will not work: {}",
+                e.kind(),
+                e
+            )));
         }
     }
     Ok(())

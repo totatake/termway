@@ -780,6 +780,27 @@ fn test_window_manager_domain_standalone() {
     assert_eq!(wm.top_visible_id(), Some(2));
 }
 
+#[test]
+fn test_termway_error_variants_and_display() {
+    use std::error::Error;
+    use termway::TermwayError;
+
+    let err_sock = TermwayError::NoFreeWaylandSocket;
+    assert_eq!(err_sock.to_string(), "Failed to find free wayland socket name");
+    assert!(err_sock.source().is_none());
+
+    let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "missing binary");
+    let err_spawn = TermwayError::ClientSpawn {
+        command: "nonexistent-gui".into(),
+        source: io_err,
+    };
+    assert!(err_spawn.to_string().contains("nonexistent-gui"));
+    assert!(err_spawn.source().is_some());
+
+    let parse_res: termway::Result<u32> = "not_a_number".parse::<u32>().map_err(Into::into);
+    assert!(matches!(parse_res, Err(TermwayError::ConfigParse(_))));
+}
+
 
 
 

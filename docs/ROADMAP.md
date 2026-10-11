@@ -86,14 +86,14 @@ Smithay の `delegate_*!` マクロおよび `KeyboardHandle::set_focus(&mut Ter
 
 ---
 
-## 4. エラーハンドリング体系の型安全化（Robust Error Handling）
+## 4. エラーハンドリング体系の型安全化（v0.6.0 実装済み）
 
-### 現状と課題
-パニック（`.unwrap()`）の排除は完了していますが、エラー型の伝播において `Box<dyn std::error::Error>` や `Result<(), String>` などのアドホックな型が一部に残っています。
+### 背景と課題
+パニック（`.unwrap()`）の排除は完了していましたが、エラー型の伝播において `Box<dyn std::error::Error>` や `Result<(), String>` などのアドホックな型が一部に残っていました。
 
-### 改善方針
-- `thiserror` クレートを導入し、モジュール単位の型安全なエラー列挙体（`CompositorError`, `SessionError`, `ProtocolError` 等）を定義。
-- アプリケーション障害時のフォールバック処理を強化（例: クライアントアプリが異常終了しても、コンポジタ自体はエラーバナーを表示して安全に待機・再起動可能にする）。
+### 実装された構造（v0.6.0）
+- 外部依存を追加することなく、標準ライブラリの `std::error::Error` / `Display` / `From` を実装した統一エラー列挙型 [`TermwayError`](../src/error.rs)（`Io`, `NoFreeWaylandSocket`, `X11SocketDirNotWritable`, `XWayland`, `DbusSession`, `Renderer`, `ClientSpawn`, `ClientFailed`, `ConfigParse`）および `termway::Result<T>` を導入。
+- コードベース内の `Box<dyn std::error::Error>` および `Result<_, String>` をすべて排除し、完全な型安全化を達成。
 
 ---
 
@@ -108,6 +108,7 @@ Smithay の `delegate_*!` マクロおよび `KeyboardHandle::set_focus(&mut Ter
 | **フェーズ 3.5**（SIMD高速化＆UX拡張） | AVX2 SIMD命令によるDamage/Sixel/XImage高速化、動的端末リサイズ (`SIGWINCH`)、リアルタイムHUD (`--hud`)、起動時スプラッシュ (`--no-splash`) | 高 | 差分走査 0.2ms / Sixel 3.7ms 達成、端末リサイズ追従とテレメトリ可視化 | **実装済み (v0.5.0)** |
 | **フェーズ 4**（モジュール構造刷新） | `TermwayState` のドメイン分割 (`WindowManager`, `handlers/{compositor,xdg_shell,seat}`) | 中 | コード可読性・拡張性の向上、単体テスト容易性 | **実装済み (v0.6.0)** |
 | **フェーズ 5**（エンジン統合） | レガシー Xvfb / X11 エンジンの廃止と Smithay Wayland + XWayland コンポジタへの完全一本化 | 中 | アーキテクチャの単純化、C Xlib 依存排除、保守コスト大幅削減 | **実装済み (v0.6.0)** |
-| **フェーズ 6**（エラー型安全化） | 型安全なエラー体系 (`thiserror`) の導入 | 低 | エラー伝播の明瞭化、耐障害性向上 | 計画中 |
+| **フェーズ 6**（エラー型安全化） | 統一エラー列挙型 `TermwayError` (`src/error.rs`) の導入と `Box<dyn Error>` / `String` エラーの完全排除 | 中 | エラー伝播の型安全化、パターンマッチによるテスト容易性向上 | **実装済み (v0.6.0)** |
+
 
 
