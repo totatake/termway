@@ -213,7 +213,7 @@ fn find_popup_focus(
     loc_i32: Point<i32, Logical>,
 ) -> Option<(WlSurface, Point<f64, Logical>)> {
     // 1. Wayland XDG popups (topmost)
-    for win in state.managed_windows.iter().rev() {
+    for win in state.wm.windows.iter().rev() {
         if let WindowSurface::Wayland(ref toplevel) = win.surface {
             for (popup, popup_offset) in smithay::desktop::PopupManager::popups_for_surface(toplevel.wl_surface()) {
                 let popup_loc = Point::from((
@@ -242,7 +242,7 @@ fn find_popup_focus(
 
     // 2. Unmanaged X11 override-redirect popups (topmost)
     for xwin in state.x11_windows.iter().rev() {
-        let is_managed = state.managed_windows.iter().any(|mw| matches!(&mw.surface, WindowSurface::X11(w) if w == xwin));
+        let is_managed = state.wm.windows.iter().any(|mw| matches!(&mw.surface, WindowSurface::X11(w) if w == xwin));
         if !is_managed {
             let geo = xwin.geometry();
             if geo.contains(loc_i32) {
@@ -266,7 +266,7 @@ fn find_pointer_focus(
     }
 
     // Check managed windows content
-    for win in state.managed_windows.iter().rev() {
+    for win in state.wm.windows.iter().rev() {
         if win.is_minimized {
             continue;
         }
@@ -279,11 +279,11 @@ fn find_pointer_focus(
     }
 
     // Fallback: unassociated surfaces (do not focus if all managed windows are minimized)
-    let any_managed = !state.managed_windows.is_empty();
-    let all_managed_minimized = any_managed && state.managed_windows.iter().all(|w| w.is_minimized);
+    let any_managed = !state.wm.windows.is_empty();
+    let all_managed_minimized = any_managed && state.wm.windows.iter().all(|w| w.is_minimized);
     if !all_managed_minimized {
         let minimized_surfaces: Vec<WlSurface> = state
-            .managed_windows
+            .wm.windows
             .iter()
             .filter(|w| w.is_minimized)
             .filter_map(|w| state.surface_for_managed_window(w))
@@ -323,14 +323,14 @@ pub fn dispatch_mouse_event(
     match ev.action {
         MouseAction::Move | MouseAction::Drag => {
             // 1. Process active window dragging (Moving or Resizing)
-            match state.drag_state {
+            match state.wm.drag_state {
                 WindowDragState::Moving { start_cursor, start_window_pos } => {
                     let dx = (px - start_cursor.0).round() as i32;
                     let dy = (py - start_cursor.1).round() as i32;
                     if dx.abs() > 3 || dy.abs() > 3 {
-                        state.last_titlebar_click = None;
+                        state.wm.last_titlebar_click = None;
                     }
-                    if let Some(top_win) = state.managed_windows.last_mut() {
+                    if let Some(top_win) = state.wm.windows.last_mut() {
                         let min_x = if top_win.has_ssd { BORDER_WIDTH } else { 0 };
                         let max_x = (renderer_width as i32 - top_win.size.w - min_x).max(min_x);
                         let min_y = if top_win.has_ssd { TITLEBAR_HEIGHT + BORDER_WIDTH } else { 0 };
@@ -346,7 +346,7 @@ pub fn dispatch_mouse_event(
                 WindowDragState::Resizing { start_cursor, start_window_geo } => {
                     let dw = (px - start_cursor.0).round() as i32;
                     let dh = (py - start_cursor.1).round() as i32;
-                    if let Some(top_win) = state.managed_windows.last_mut() {
+                    if let Some(top_win) = state.wm.windows.last_mut() {
                         let max_w = (renderer_width as i32 - top_win.loc.x - BORDER_WIDTH).max(100);
                         let max_h = (renderer_height as i32 - top_win.loc.y - BORDER_WIDTH).max(60);
 
@@ -415,7 +415,7 @@ pub fn dispatch_mouse_event(
             }
 
             // Clicked outside popups: dismiss any active Wayland popups
-            for win in &state.managed_windows {
+            for win in &state.wm.windows {
                 if let WindowSurface::Wayland(ref toplevel) = win.surface {
                     for (popup, _) in smithay::desktop::PopupManager::popups_for_surface(toplevel.wl_surface()) {
                         if let smithay::desktop::PopupKind::Xdg(ref p) = popup {
@@ -436,7 +436,7 @@ pub fn dispatch_mouse_event(
             let mut win_loc = Point::from((0, 0));
             let mut win_geo = smithay::utils::Rectangle::new((0, 0).into(), (0, 0).into());
 
-            for win in state.managed_windows.iter().rev() {
+            for win in state.wm.windows.iter().rev() {
                 if win.is_minimized {
                     continue;
                 }
@@ -481,21 +481,21 @@ pub fn dispatch_mouse_event(
                 if clicked_close {
                     // Close target window gracefully
                     crate::compositor::log_line(format!("[input] Close button clicked for window {}", id));
-                    if let Some(pos) = state.managed_windows.iter().position(|w| w.id == id) {
-                        let win = state.managed_windows.remove(pos);
+                    if let Some(pos) = state.wm.windows.iter().position(|w| w.id == id) {
+                        let win = state.wm.windows.remove(pos);
                         win.close();
 
                         // If all managed windows closed, terminate compositor or client process
-                        if state.managed_windows.is_empty() {
+                        if state.wm.windows.is_empty() {
                             if let Some(ref mut child) = client_child {
                                 let _ = child.kill();
                             }
                             state.running = false;
                         } else {
-                            if let Some(top) = state.managed_windows.last_mut() {
+                            if let Some(top) = state.wm.windows.last_mut() {
                                 top.active = true;
                             }
-                            if let Some(top) = state.managed_windows.last() {
+                            if let Some(top) = state.wm.windows.last() {
                                 if let Some(s) = state.surface_for_managed_window(top) {
                                     keyboard.set_focus(state, Some(s), serial);
                                 }
@@ -508,7 +508,7 @@ pub fn dispatch_mouse_event(
                 }
 
                 if clicked_maximize {
-                    if let Some(win) = state.managed_windows.iter_mut().find(|w| w.id == id) {
+                    if let Some(win) = state.wm.windows.iter_mut().find(|w| w.id == id) {
                         win.toggle_maximize(renderer_width, renderer_height);
                     }
                     state.raise_window(id);
@@ -528,24 +528,24 @@ pub fn dispatch_mouse_event(
                 if clicked_titlebar && is_left {
                     // Check titlebar double-click for maximize/restore toggle
                     let now = std::time::Instant::now();
-                    if let Some((last_time, last_id)) = state.last_titlebar_click {
+                    if let Some((last_time, last_id)) = state.wm.last_titlebar_click {
                         if last_id == id && now.duration_since(last_time).as_millis() < 400 {
-                            if let Some(win) = state.managed_windows.iter_mut().find(|w| w.id == id) {
+                            if let Some(win) = state.wm.windows.iter_mut().find(|w| w.id == id) {
                                 win.toggle_maximize(renderer_width, renderer_height);
                             }
-                            state.last_titlebar_click = None;
-                            state.drag_state = WindowDragState::None;
+                            state.wm.last_titlebar_click = None;
+                            state.wm.drag_state = WindowDragState::None;
                             state.needs_clear = true;
                             state.dirty = true;
                             return;
                         }
                     }
-                    state.last_titlebar_click = Some((now, id));
+                    state.wm.last_titlebar_click = Some((now, id));
 
                     // Begin window drag/move only if not maximized
-                    let is_max = state.managed_windows.iter().find(|w| w.id == id).map(|w| w.is_maximized).unwrap_or(false);
+                    let is_max = state.wm.windows.iter().find(|w| w.id == id).map(|w| w.is_maximized).unwrap_or(false);
                     if !is_max {
-                        state.drag_state = WindowDragState::Moving {
+                        state.wm.drag_state = WindowDragState::Moving {
                             start_cursor: (px, py),
                             start_window_pos: (win_loc.x, win_loc.y),
                         };
@@ -555,7 +555,7 @@ pub fn dispatch_mouse_event(
                 }
 
                 if clicked_resize && is_left {
-                    state.drag_state = WindowDragState::Resizing {
+                    state.wm.drag_state = WindowDragState::Resizing {
                         start_cursor: (px, py),
                         start_window_geo: win_geo,
                     };
@@ -565,7 +565,7 @@ pub fn dispatch_mouse_event(
 
                 if clicked_content {
                     // Forward press to client surface
-                    if let Some(win) = state.managed_windows.last() {
+                    if let Some(win) = state.wm.windows.last() {
                         let focus = state.surface_for_managed_window(win).map(|s| (s, Point::from((win.loc.x as f64, win.loc.y as f64))));
 
                         let motion = MotionEvent { location: loc, serial, time };
@@ -613,8 +613,8 @@ pub fn dispatch_mouse_event(
                 return;
             }
 
-            let was_dragging = !matches!(state.drag_state, WindowDragState::None);
-            state.drag_state = WindowDragState::None;
+            let was_dragging = !matches!(state.wm.drag_state, WindowDragState::None);
+            state.wm.drag_state = WindowDragState::None;
 
             if was_dragging {
                 state.dirty = true;

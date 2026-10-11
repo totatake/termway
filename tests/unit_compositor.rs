@@ -12,7 +12,7 @@ fn test_compositor_state_init() {
     assert_eq!(state.height, 600);
     assert!(state.dirty);
     assert!(state.running);
-    assert!(state.windows.is_empty());
+    assert!(state.toplevels.is_empty());
 }
 
 #[test]
@@ -180,31 +180,31 @@ fn test_state_raise_window() {
     let win2 = ManagedWindow::new_dummy(2, "Window 2".into(), Point::from((50, 50)), Size::from((200, 150)));
     let win3 = ManagedWindow::new_dummy(3, "Window 3".into(), Point::from((90, 90)), Size::from((200, 150)));
 
-    state.managed_windows.push(win1);
-    state.managed_windows.push(win2);
-    state.managed_windows.push(win3);
+    state.wm.windows.push(win1);
+    state.wm.windows.push(win2);
+    state.wm.windows.push(win3);
 
-    assert_eq!(state.managed_windows.len(), 3);
-    assert_eq!(state.managed_windows.last().unwrap().id, 3);
+    assert_eq!(state.wm.windows.len(), 3);
+    assert_eq!(state.wm.windows.last().unwrap().id, 3);
 
     // Raise window 1 to top
     state.raise_window(1);
 
     // Window 1 should now be at the end (top of Z-order) and active
-    assert_eq!(state.managed_windows.len(), 3);
-    assert_eq!(state.managed_windows.last().unwrap().id, 1);
-    assert!(state.managed_windows.last().unwrap().active);
+    assert_eq!(state.wm.windows.len(), 3);
+    assert_eq!(state.wm.windows.last().unwrap().id, 1);
+    assert!(state.wm.windows.last().unwrap().active);
 
     // Other windows should be inactive
-    assert!(!state.managed_windows[0].active);
-    assert!(!state.managed_windows[1].active);
+    assert!(!state.wm.windows[0].active);
+    assert!(!state.wm.windows[1].active);
 
     // Raise window 2 to top
     state.raise_window(2);
-    assert_eq!(state.managed_windows.last().unwrap().id, 2);
-    assert!(state.managed_windows.last().unwrap().active);
-    assert!(!state.managed_windows[0].active);
-    assert!(!state.managed_windows[1].active);
+    assert_eq!(state.wm.windows.last().unwrap().id, 2);
+    assert!(state.wm.windows.last().unwrap().active);
+    assert!(!state.wm.windows[0].active);
+    assert!(!state.wm.windows[1].active);
 }
 
 #[test]
@@ -450,25 +450,25 @@ fn test_window_minimize_and_restore() {
 
     let win1 = ManagedWindow::new_dummy(1, "App 1".into(), Point::from((10, 10)), Size::from((200, 150)));
     let win2 = ManagedWindow::new_dummy(2, "App 2".into(), Point::from((50, 50)), Size::from((200, 150)));
-    state.managed_windows.push(win1);
-    state.managed_windows.push(win2);
+    state.wm.windows.push(win1);
+    state.wm.windows.push(win2);
 
     // Win 2 is on top and active
-    assert_eq!(state.managed_windows.last().unwrap().id, 2);
+    assert_eq!(state.wm.windows.last().unwrap().id, 2);
 
     // Minimize Win 2 -> Win 1 becomes active
     state.minimize_window(2);
-    let win2_ref = state.managed_windows.iter().find(|w| w.id == 2).unwrap();
+    let win2_ref = state.wm.windows.iter().find(|w| w.id == 2).unwrap();
     assert!(win2_ref.is_minimized);
     assert!(!win2_ref.active);
 
-    let win1_ref = state.managed_windows.iter().find(|w| w.id == 1).unwrap();
+    let win1_ref = state.wm.windows.iter().find(|w| w.id == 1).unwrap();
     assert!(!win1_ref.is_minimized);
     assert!(win1_ref.active);
 
     // Restore Win 2 -> Win 2 becomes un-minimized, active, and top of Z-order
     state.restore_window(2);
-    let win2_restored = state.managed_windows.last().unwrap();
+    let win2_restored = state.wm.windows.last().unwrap();
     assert_eq!(win2_restored.id, 2);
     assert!(!win2_restored.is_minimized);
     assert!(win2_restored.active);
@@ -487,7 +487,7 @@ fn test_minimized_window_renderer_suppression() {
     let mut renderer = TermwayRenderer::new(800, 600).expect("Failed to create TermwayRenderer");
 
     let win = ManagedWindow::new_dummy(1, "Test App".into(), Point::from((50, 50)), Size::from((300, 200)));
-    state.managed_windows.push(win);
+    state.wm.windows.push(win);
 
     // Initial render when not minimized succeeds
     let pixels_normal = renderer.render(&state).expect("Render normal failed");
@@ -495,7 +495,7 @@ fn test_minimized_window_renderer_suppression() {
 
     // Minimize window -> all managed windows are minimized
     state.minimize_window(1);
-    assert!(state.managed_windows[0].is_minimized);
+    assert!(state.wm.windows[0].is_minimized);
 
     // Rendering when minimized should succeed without errors and not render unassociated fallback
     let pixels_min = renderer.render(&state).expect("Render minimized failed");
@@ -503,7 +503,7 @@ fn test_minimized_window_renderer_suppression() {
 
     // Restore window
     state.restore_window(1);
-    assert!(!state.managed_windows[0].is_minimized);
+    assert!(!state.wm.windows[0].is_minimized);
     let pixels_restored = renderer.render(&state).expect("Render restored failed");
     assert_eq!(pixels_restored.len(), 800 * 600 * 4);
 }
@@ -577,7 +577,7 @@ fn test_unmaximized_window_clean_background_outside_bounds() {
     win.unmaximize(800, 600);
     assert!(!win.is_maximized);
     let fg = win.frame_geometry();
-    state.managed_windows.push(win);
+    state.wm.windows.push(win);
 
     // Render frame
     let pixels = renderer.render(&state).expect("Render failed");
@@ -641,7 +641,7 @@ fn test_unmaximize_pending_preserves_target_size_and_requests_clear() {
     assert!(target_size.w <= 800);
     assert!(target_loc.x > 0);
 
-    state.managed_windows.push(win);
+    state.wm.windows.push(win);
 
     // Verify state needs_clear
     state.needs_clear = true;
@@ -745,15 +745,41 @@ fn test_splash_screen_dismissal() {
     // Reset and test automatic dismissal when a window opens
     state.show_splash = true;
     let win = ManagedWindow::new_dummy(1, "App".into(), Point::from((50, 50)), Size::from((400, 300)));
-    state.managed_windows.push(win);
+    state.wm.windows.push(win);
+    state.dismiss_splash();
 
-    if state.show_splash {
-        state.show_splash = false;
-        state.needs_clear = true;
-    }
     assert!(!state.show_splash);
     assert!(state.needs_clear);
 }
+
+#[test]
+fn test_window_manager_domain_standalone() {
+    use smithay::utils::{Point, Size};
+    use termway::compositor::window::ManagedWindow;
+    use termway::compositor::window_manager::WindowManager;
+
+    let mut wm = WindowManager::new();
+    assert!(wm.is_empty());
+
+    let id1 = wm.alloc_id();
+    let id2 = wm.alloc_id();
+    assert_eq!(id1, 1);
+    assert_eq!(id2, 2);
+
+    wm.windows.push(ManagedWindow::new_dummy(id1, "Win1".into(), Point::from((0, 0)), Size::from((200, 150))));
+    wm.deactivate_all();
+    wm.windows.push(ManagedWindow::new_dummy(id2, "Win2".into(), Point::from((20, 20)), Size::from((200, 150))));
+
+    assert_eq!(wm.top_visible_id(), Some(2));
+    assert!(wm.bring_to_top(1));
+    assert_eq!(wm.top_visible_id(), Some(1));
+    assert!(wm.get(1).unwrap().active);
+    assert!(!wm.get(2).unwrap().active);
+
+    assert!(wm.set_minimized(1, true));
+    assert_eq!(wm.top_visible_id(), Some(2));
+}
+
 
 
 

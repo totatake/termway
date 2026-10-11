@@ -54,12 +54,11 @@ impl XwmHandler for TermwayState {
 
         // Manage as Openbox/Fluxbox managed window if not override-redirect
         if !window.is_override_redirect() {
-            let already_managed = self.managed_windows.iter().any(|w| matches!(&w.surface, WindowSurface::X11(x) if x == &window));
+            let already_managed = self.wm.windows.iter().any(|w| matches!(&w.surface, WindowSurface::X11(x) if x == &window));
             if !already_managed {
-                let id = self.next_window_id;
-                self.next_window_id += 1;
+                let id = self.wm.alloc_id();
                 let geo = window.geometry();
-                let is_first_window = self.managed_windows.is_empty();
+                let is_first_window = self.wm.windows.is_empty();
                 let is_transient_or_popup = window.is_popup() || window.is_transient_for().is_some();
                 let should_maximize = is_first_window || !is_transient_or_popup;
                 let has_ssd = !window.is_decorated();
@@ -80,7 +79,7 @@ impl XwmHandler for TermwayState {
                         (max_loc, smithay::utils::Size::from((max_w, max_h)), true, Some(saved_geo))
                     } else {
                         let loc = if geo.loc.x == 0 && geo.loc.y == 0 {
-                            let offset = ((self.managed_windows.len() % 8) as i32) * 20;
+                            let offset = ((self.wm.windows.len() % 8) as i32) * 20;
                             smithay::utils::Point::from((10 + offset, TITLEBAR_HEIGHT + 6 + offset))
                         } else {
                             smithay::utils::Point::from((
@@ -103,7 +102,7 @@ impl XwmHandler for TermwayState {
                     )
                 };
 
-                for w in &mut self.managed_windows {
+                for w in &mut self.wm.windows {
                     w.active = false;
                 }
                 let mut win = ManagedWindow::new_x11(id, window.clone(), loc, size);
@@ -114,7 +113,7 @@ impl XwmHandler for TermwayState {
                 if is_maximized {
                     let _ = window.set_maximized(true);
                 }
-                self.managed_windows.push(win);
+                self.wm.windows.push(win);
 
                 if self.show_splash {
                     self.show_splash = false;
@@ -141,8 +140,8 @@ impl XwmHandler for TermwayState {
             self.unassociated_surfaces.retain(|s| s.id().protocol_id() != wid);
         }
         self.x11_windows.retain(|w| w != &window);
-        self.managed_windows.retain(|w| !matches!(&w.surface, WindowSurface::X11(x) if x == &window));
-        if let Some(top) = self.managed_windows.last_mut() {
+        self.wm.windows.retain(|w| !matches!(&w.surface, WindowSurface::X11(x) if x == &window));
+        if let Some(top) = self.wm.windows.last_mut() {
             top.active = true;
         }
         self.dirty = true;
@@ -155,8 +154,8 @@ impl XwmHandler for TermwayState {
             self.unassociated_surfaces.retain(|s| s.id().protocol_id() != wid);
         }
         self.x11_windows.retain(|w| w != &window);
-        self.managed_windows.retain(|w| !matches!(&w.surface, WindowSurface::X11(x) if x == &window));
-        if let Some(top) = self.managed_windows.last_mut() {
+        self.wm.windows.retain(|w| !matches!(&w.surface, WindowSurface::X11(x) if x == &window));
+        if let Some(top) = self.wm.windows.last_mut() {
             top.active = true;
         }
         self.dirty = true;
@@ -184,7 +183,7 @@ impl XwmHandler for TermwayState {
         }
 
         let rect = if self.enable_wm {
-            let managed = self.managed_windows.iter().find(|mw| matches!(&mw.surface, WindowSurface::X11(ref xwin) if xwin == &window));
+            let managed = self.wm.windows.iter().find(|mw| matches!(&mw.surface, WindowSurface::X11(ref xwin) if xwin == &window));
             let cur_loc = managed
                 .map(|mw| mw.loc)
                 .unwrap_or_else(|| {
@@ -233,7 +232,7 @@ impl XwmHandler for TermwayState {
         };
 
         let _ = window.configure(rect);
-        for mw in &mut self.managed_windows {
+        for mw in &mut self.wm.windows {
             if matches!(&mw.surface, WindowSurface::X11(ref xwin) if xwin == &window) {
                 mw.size = rect.size;
             }
@@ -252,7 +251,7 @@ impl XwmHandler for TermwayState {
             "[xwayland] configure_notify id={:?} geo={:?}",
             window.window_id(), geometry
         ));
-        for w in &mut self.managed_windows {
+        for w in &mut self.wm.windows {
             if matches!(&w.surface, WindowSurface::X11(x) if x == &window) {
                 w.update_title();
                 if self.enable_wm {
@@ -303,13 +302,13 @@ impl XwmHandler for TermwayState {
         if !self.enable_wm {
             return;
         }
-        if let Some(win) = self.managed_windows.iter().find(|w| match &w.surface {
+        if let Some(win) = self.wm.windows.iter().find(|w| match &w.surface {
             WindowSurface::X11(t) => t == &window,
             _ => false,
         }) {
             let cur_loc = self.pointer.current_location();
             let win_geo = win.content_geometry();
-            self.drag_state = WindowDragState::Resizing {
+            self.wm.drag_state = WindowDragState::Resizing {
                 start_cursor: (cur_loc.x, cur_loc.y),
                 start_window_geo: win_geo,
             };
@@ -320,13 +319,13 @@ impl XwmHandler for TermwayState {
         if !self.enable_wm {
             return;
         }
-        if let Some(win) = self.managed_windows.iter().find(|w| match &w.surface {
+        if let Some(win) = self.wm.windows.iter().find(|w| match &w.surface {
             WindowSurface::X11(t) => t == &window,
             _ => false,
         }) {
             let cur_loc = self.pointer.current_location();
             let win_loc = win.loc;
-            self.drag_state = WindowDragState::Moving {
+            self.wm.drag_state = WindowDragState::Moving {
                 start_cursor: (cur_loc.x, cur_loc.y),
                 start_window_pos: (win_loc.x, win_loc.y),
             };
@@ -334,7 +333,7 @@ impl XwmHandler for TermwayState {
     }
 
     fn maximize_request(&mut self, _xwm: XwmId, window: X11Surface) {
-        if let Some(win) = self.managed_windows.iter_mut().find(|w| match &w.surface {
+        if let Some(win) = self.wm.windows.iter_mut().find(|w| match &w.surface {
             WindowSurface::X11(t) => t == &window,
             _ => false,
         }) {
@@ -346,7 +345,7 @@ impl XwmHandler for TermwayState {
 
     fn unmaximize_request(&mut self, _xwm: XwmId, window: X11Surface) {
         if self.enable_wm {
-            if let Some(win) = self.managed_windows.iter_mut().find(|w| match &w.surface {
+            if let Some(win) = self.wm.windows.iter_mut().find(|w| match &w.surface {
                 WindowSurface::X11(t) => t == &window,
                 _ => false,
             }) {
@@ -358,7 +357,7 @@ impl XwmHandler for TermwayState {
     }
 
     fn minimize_request(&mut self, _xwm: XwmId, window: X11Surface) {
-        if let Some(id) = self.managed_windows.iter().find(|w| match &w.surface {
+        if let Some(id) = self.wm.windows.iter().find(|w| match &w.surface {
             WindowSurface::X11(t) => t == &window,
             _ => false,
         }).map(|w| w.id) {
@@ -367,7 +366,7 @@ impl XwmHandler for TermwayState {
     }
 
     fn unminimize_request(&mut self, _xwm: XwmId, window: X11Surface) {
-        if let Some(id) = self.managed_windows.iter().find(|w| match &w.surface {
+        if let Some(id) = self.wm.windows.iter().find(|w| match &w.surface {
             WindowSurface::X11(t) => t == &window,
             _ => false,
         }).map(|w| w.id) {

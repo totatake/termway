@@ -1,49 +1,34 @@
-use std::os::unix::io::{FromRawFd, OwnedFd};
+//! Central compositor state.
+//!
+//! `TermwayState` is the single state type required by Smithay's event loop and protocol
+//! delegates. It acts as an orchestrator that owns:
+//! - Wayland protocol globals (compositor, xdg-shell, shm, seat, output, data device)
+//! - [`WindowManager`]: the managed window stack, activation and drag interaction state
+//! - XWayland integration state
+//! - Render loop flags and splash screen state
+//!
+//! Protocol handler trait implementations live in `compositor::handlers`.
+
 use smithay::{
-    delegate_compositor, delegate_data_device, delegate_output, delegate_seat, delegate_shm,
-    delegate_xdg_shell,
-    input::{
-        keyboard::KeyboardHandle,
-        pointer::PointerHandle,
-        Seat, SeatHandler, SeatState,
-    },
+    desktop::PopupManager,
+    input::{keyboard::KeyboardHandle, pointer::PointerHandle, Seat, SeatState},
     output::{Mode, Output, PhysicalProperties, Scale, Subpixel},
-    reexports::wayland_protocols::xdg::shell::server::xdg_toplevel,
     reexports::wayland_server::{
         backend::{ClientData, ClientId, DisconnectReason},
-        protocol::{
-            wl_buffer,
-            wl_seat,
-            wl_surface::WlSurface,
-        },
-        Client, DisplayHandle, Resource,
+        protocol::wl_surface::WlSurface,
+        DisplayHandle,
     },
-    utils::{Serial, Transform},
+    utils::Transform,
     wayland::{
-        buffer::BufferHandler,
         compositor::{
-            with_surface_tree_downward, CompositorClientState, CompositorHandler, CompositorState,
-            SurfaceAttributes, TraversalAction,
+            with_surface_tree_downward, CompositorClientState, CompositorState, SurfaceAttributes,
+            TraversalAction,
         },
-        output::OutputHandler,
-        selection::{
-            data_device::{ClientDndGrabHandler, DataDeviceHandler, DataDeviceState, ServerDndGrabHandler},
-            SelectionHandler, SelectionSource, SelectionTarget,
-        },
-        shell::xdg::{
-            PopupSurface, PositionerState, ToplevelSurface, XdgShellHandler, XdgShellState,
-            decoration::{XdgDecorationHandler, XdgDecorationState},
-            XDG_POPUP_ROLE,
-        },
-        shm::{ShmHandler, ShmState},
+        selection::data_device::DataDeviceState,
+        shell::xdg::{decoration::XdgDecorationState, ToplevelSurface, XdgShellState},
+        shm::ShmState,
     },
 };
-
-use smithay::desktop::{
-    find_popup_root_surface, PopupKind, PopupManager, PopupPointerGrab,
-};
-use smithay::input::pointer::Focus;
-use smithay::reexports::wayland_protocols::xdg::decoration::zv1::server::zxdg_toplevel_decoration_v1::Mode as DecorationMode;
 
 #[derive(Default)]
 pub struct ClientState {
@@ -55,7 +40,8 @@ impl ClientData for ClientState {
     fn disconnected(&self, _client_id: ClientId, _reason: DisconnectReason) {}
 }
 
-use super::window::{ManagedWindow, WindowDragState, WindowSurface, BORDER_WIDTH, TITLEBAR_HEIGHT};
+use super::window::{ManagedWindow, WindowSurface};
+use super::window_manager::WindowManager;
 
 pub struct TermwayState {
     pub dh: DisplayHandle,
@@ -72,11 +58,12 @@ pub struct TermwayState {
     pub output: Output,
     pub data_device_state: DataDeviceState,
 
-    pub windows: Vec<ToplevelSurface>,
+    /// Raw xdg toplevels known to the compositor (used when the built-in WM is disabled
+    /// and for liveness tracking). Managed window state lives in `wm`.
+    pub toplevels: Vec<ToplevelSurface>,
     pub x11_windows: Vec<smithay::xwayland::X11Surface>,
-    pub managed_windows: Vec<ManagedWindow>,
-    pub drag_state: WindowDragState,
-    pub next_window_id: usize,
+    /// Window management domain (Z-order, activation, minimize, drag interaction).
+    pub wm: WindowManager,
     pub unassociated_surfaces: Vec<WlSurface>,
     pub xwayland_shell_state: smithay::wayland::xwayland_shell::XWaylandShellState,
     pub xwm: Option<smithay::xwayland::xwm::X11Wm>,
@@ -94,7 +81,6 @@ pub struct TermwayState {
     pub splash_info: String,
     pub splash_command: String,
     pub start_time: std::time::Instant,
-    pub last_titlebar_click: Option<(std::time::Instant, usize)>,
 }
 
 impl TermwayState {
@@ -144,11 +130,9 @@ impl TermwayState {
             pointer,
             output,
             data_device_state,
-            windows: Vec::new(),
+            toplevels: Vec::new(),
             x11_windows: Vec::new(),
-            managed_windows: Vec::new(),
-            drag_state: WindowDragState::None,
-            next_window_id: 1,
+            wm: WindowManager::new(),
             unassociated_surfaces: Vec::new(),
             xwayland_shell_state,
             xwm: None,
@@ -165,90 +149,72 @@ impl TermwayState {
             splash_info: format!("Wayland + XWayland | {}x{}", width, height),
             splash_command: String::from("gui-app"),
             start_time: std::time::Instant::now(),
-            last_titlebar_click: None,
+        }
+    }
+
+    /// Moves keyboard focus to the given surface (or clears it).
+    pub fn set_keyboard_focus(&mut self, surface: Option<WlSurface>) {
+        let keyboard = self.keyboard.clone();
+        keyboard.set_focus(self, surface, smithay::utils::SERIAL_COUNTER.next_serial());
+    }
+
+    /// Dismisses the startup splash screen (no-op if already hidden).
+    pub fn dismiss_splash(&mut self) {
+        if self.show_splash {
+            self.show_splash = false;
+            self.needs_clear = true;
         }
     }
 
     pub fn minimize_window(&mut self, id: usize) {
-        if let Some(win) = self.managed_windows.iter_mut().find(|w| w.id == id) {
-            win.is_minimized = true;
-            win.active = false;
-            match &win.surface {
-                super::window::WindowSurface::Wayland(toplevel) => {
-                    toplevel.with_pending_state(|state| {
-                        state.states.unset(xdg_toplevel::State::Activated);
-                    });
-                    toplevel.send_configure();
-                }
-                super::window::WindowSurface::X11(xsurface) => {
-                    let _ = xsurface.set_activated(false);
-                }
-                _ => {}
-            }
-        }
+        self.wm.set_minimized(id, true);
         // Focus the next available non-minimized window (from top to bottom of Z-order)
-        let top_non_min = self.managed_windows.iter().rev().find(|w| !w.is_minimized).map(|w| w.id);
-        if let Some(top_id) = top_non_min {
+        if let Some(top_id) = self.wm.top_visible_id() {
             self.raise_window(top_id);
         } else {
-            let keyboard = self.keyboard.clone();
-            keyboard.set_focus(self, None, smithay::utils::SERIAL_COUNTER.next_serial());
+            self.set_keyboard_focus(None);
         }
         self.needs_clear = true;
         self.dirty = true;
     }
 
     pub fn restore_window(&mut self, id: usize) {
-        if let Some(win) = self.managed_windows.iter_mut().find(|w| w.id == id) {
-            win.is_minimized = false;
-            match &win.surface {
-                super::window::WindowSurface::Wayland(toplevel) => {
-                    toplevel.with_pending_state(|state| {
-                        state.states.set(xdg_toplevel::State::Activated);
-                    });
-                    toplevel.send_configure();
-                }
-                super::window::WindowSurface::X11(xsurface) => {
-                    let _ = xsurface.set_activated(true);
-                }
-                _ => {}
-            }
-        }
+        self.wm.set_minimized(id, false);
         self.raise_window(id);
         self.needs_clear = true;
         self.dirty = true;
     }
 
+    /// Raises the window to the top of the Z-order, activates it and gives it keyboard focus.
     pub fn raise_window(&mut self, id: usize) {
-        if let Some(pos) = self.managed_windows.iter().position(|w| w.id == id) {
-            let mut win = self.managed_windows.remove(pos);
-            for w in &mut self.managed_windows {
-                w.active = false;
-            }
-            win.active = true;
-            let wl_surface = self.surface_for_managed_window(&win);
-            self.managed_windows.push(win);
+        if !self.wm.bring_to_top(id) {
+            return;
+        }
+        let wl_surface = self.wm.windows.last().and_then(|w| self.surface_for_managed_window(w));
+        if let Some(surface) = wl_surface {
+            self.set_keyboard_focus(Some(surface));
+        }
+        self.dirty = true;
+    }
 
-            if let Some(surface) = wl_surface {
-                let keyboard = self.keyboard.clone();
-                keyboard.set_focus(
-                    self,
-                    Some(surface),
-                    smithay::utils::SERIAL_COUNTER.next_serial(),
-                );
-            }
-            self.dirty = true;
+    /// Re-activates the topmost window and focuses it (used after a window is destroyed).
+    pub fn focus_top_window(&mut self) {
+        self.wm.activate_top();
+        let top_surface = self.wm.windows.last().and_then(|top| self.surface_for_managed_window(top));
+        if let Some(s) = top_surface {
+            self.set_keyboard_focus(Some(s));
         }
     }
 
+
     pub fn surface_for_managed_window(&self, window: &ManagedWindow) -> Option<WlSurface> {
         match &window.surface {
-            super::window::WindowSurface::Wayland(w) => Some(w.wl_surface().clone()),
-            super::window::WindowSurface::X11(w) => w
+            WindowSurface::Wayland(w) => Some(w.wl_surface().clone()),
+            WindowSurface::X11(w) => w
                 .wl_surface()
                 .or_else(|| window.cached_wl_surface())
                 .or_else(|| self.surface_for_x11(w)),
-            super::window::WindowSurface::Dummy => None,
+            WindowSurface::Dummy => None,
         }
     }
 
@@ -333,15 +299,15 @@ impl TermwayState {
 
         // Windows
         out.push_str("  \"windows\": [\n");
-        for (i, win) in self.managed_windows.iter().enumerate() {
+        for (i, win) in self.wm.windows.iter().enumerate() {
             let kind = match win.surface {
-                super::window::WindowSurface::Wayland(_) => "wayland",
-                super::window::WindowSurface::X11(_) => "x11",
-                super::window::WindowSurface::Dummy => "dummy",
+                WindowSurface::Wayland(_) => "wayland",
+                WindowSurface::X11(_) => "x11",
+                WindowSurface::Dummy => "dummy",
             };
             let content_geo = win.content_geometry();
             let title_escaped = win.title.replace('\\', "\\\\").replace('\"', "\\\"");
-            let comma = if i + 1 < self.managed_windows.len() { "," } else { "" };
+            let comma = if i + 1 < self.wm.windows.len() { "," } else { "" };
             out.push_str(&format!(
                 "    {{\"id\": {}, \"kind\": \"{}\", \"title\": \"{}\", \"active\": {}, \"is_maximized\": {}, \"is_minimized\": {}, \"x\": {}, \"y\": {}, \"width\": {}, \"height\": {}}}{}\n",
                 win.id, kind, title_escaped, win.active, win.is_maximized, win.is_minimized, content_geo.loc.x, content_geo.loc.y, content_geo.size.w, content_geo.size.h, comma
@@ -352,8 +318,8 @@ impl TermwayState {
         // Popups
         out.push_str("  \"popups\": [\n");
         let mut popup_entries = Vec::new();
-        for win in &self.managed_windows {
-            if let super::window::WindowSurface::Wayland(ref toplevel) = win.surface {
+        for win in &self.wm.windows {
+            if let WindowSurface::Wayland(ref toplevel) = win.surface {
                 for (popup, popup_offset) in smithay::desktop::PopupManager::popups_for_surface(toplevel.wl_surface()) {
                     let popup_x = win.loc.x + popup_offset.x - popup.geometry().loc.x;
                     let popup_y = win.loc.y + popup_offset.y - popup.geometry().loc.y;
@@ -378,518 +344,6 @@ impl TermwayState {
     }
 }
 
-// 1. BufferHandler
-impl BufferHandler for TermwayState {
-    fn buffer_destroyed(&mut self, _buffer: &wl_buffer::WlBuffer) {}
-}
-
-// 2. CompositorHandler
-impl CompositorHandler for TermwayState {
-    fn compositor_state(&mut self) -> &mut CompositorState {
-        &mut self.compositor_state
-    }
-
-    fn client_compositor_state<'a>(&self, client: &'a Client) -> &'a CompositorClientState {
-        &client.get_data::<ClientState>().unwrap().compositor_state
-    }
-
-    fn commit(&mut self, surface: &WlSurface) {
-        smithay::backend::renderer::utils::on_commit_buffer_handler::<Self>(surface);
-        self.popups.commit(surface);
-        self.dirty = true;
-        
-        // 破棄済みサーフェスをフォーカス・描画候補から除く
-        self.unassociated_surfaces.retain(smithay::reexports::wayland_server::Resource::is_alive);
-        self.managed_windows.retain(|w| {
-            w.wl_surface().as_ref().map(smithay::reexports::wayland_server::Resource::is_alive).unwrap_or(true)
-        });
-
-        // Dismiss splash screen upon first real client surface commit
-        if self.show_splash {
-            self.show_splash = false;
-            self.needs_clear = true;
-        }
-
-        // タイトルや状態の更新
-        let matched_win_id = self.managed_windows.iter().find(|w| {
-            w.wl_surface().as_ref() == Some(surface) || self.surface_for_managed_window(w).as_ref() == Some(surface)
-        }).map(|w| w.id);
-
-        if let Some(win_id) = matched_win_id {
-            // X11: remember the resolved surface and refresh the shape region
-            let x11_shape = self.managed_windows.iter().find(|w| w.id == win_id).and_then(|w| match &w.surface {
-                super::window::WindowSurface::X11(x) => Some(self.query_x11_shape(x)),
-                _ => None,
-            });
-            if let Some(w) = self.managed_windows.iter_mut().find(|w| w.id == win_id) {
-                if let Some(shape) = x11_shape {
-                    w.associated_wl_surface = Some(surface.clone());
-                    w.x11_shape = shape;
-                }
-                w.update_title();
-                if self.enable_wm {
-                    let bbox = smithay::desktop::utils::bbox_from_surface_tree(surface, (0, 0));
-                    if bbox.size.w > 0 && bbox.size.h > 0 {
-                        let top_margin = if w.has_ssd { TITLEBAR_HEIGHT + BORDER_WIDTH * 2 } else { 0 };
-                        let side_margin = if w.has_ssd { BORDER_WIDTH * 2 } else { 0 };
-                        let max_allowed_w = (self.width as i32 - side_margin).max(160);
-                        let max_allowed_h = (self.height as i32 - top_margin).max(100);
-
-                        if !w.is_maximized {
-                            if w.pending_unmaximize {
-                                // While pending_unmaximize is true, the target unmaximized geometry is already set in w.size/w.loc.
-                                // If the client commits a buffer that is still approximately the maximized size,
-                                // it is an in-flight buffer from the previous maximized state. Skip at most 2 frames.
-                                let is_old_large_buffer = (bbox.size.w >= self.width as i32 - 10 && bbox.size.h >= self.height as i32 - top_margin - 10)
-                                    && w.unmaximize_in_flight_count < 30;
-                                if is_old_large_buffer {
-                                    w.unmaximize_in_flight_count += 1;
-                                    return;
-                                }
-                                w.pending_unmaximize = false;
-
-                                let clamped_w = bbox.size.w.min(max_allowed_w);
-                                let clamped_h = bbox.size.h.min(max_allowed_h);
-                                w.size = (clamped_w, clamped_h).into();
-
-                                // Center the unmaximized window based on its actual frame size
-                                let total_frame_w = if w.has_ssd { w.size.w + BORDER_WIDTH * 2 } else { w.size.w };
-                                let total_frame_h = if w.has_ssd { w.size.h + TITLEBAR_HEIGHT + BORDER_WIDTH * 2 } else { w.size.h };
-                                let frame_x = ((self.width as i32 - total_frame_w) / 2).max(0);
-                                let frame_y = ((self.height as i32 - total_frame_h) / 2).max(0);
-                                w.loc.x = if w.has_ssd { frame_x + BORDER_WIDTH } else { frame_x };
-                                w.loc.y = if w.has_ssd { frame_y + TITLEBAR_HEIGHT + BORDER_WIDTH } else { frame_y };
-
-                                if clamped_w != bbox.size.w || clamped_h != bbox.size.h {
-                                    w.configure_size(clamped_w, clamped_h);
-                                }
-                            } else {
-                                let clamped_w = bbox.size.w.min(max_allowed_w);
-                                let clamped_h = bbox.size.h.min(max_allowed_h);
-                                w.size = (clamped_w, clamped_h).into();
-
-                                // 画面枠内に確実に収まるよう位置を調整
-                                let min_x = if w.has_ssd { BORDER_WIDTH } else { 0 };
-                                let max_x = (self.width as i32 - w.size.w - min_x).max(min_x);
-                                let min_y = if w.has_ssd { TITLEBAR_HEIGHT + BORDER_WIDTH } else { 0 };
-                                let max_y = (self.height as i32 - w.size.h - min_x).max(min_y);
-                                w.loc.x = w.loc.x.clamp(min_x, max_x);
-                                w.loc.y = w.loc.y.clamp(min_y, max_y);
-
-                                if clamped_w != bbox.size.w || clamped_h != bbox.size.h {
-                                    w.configure_size(clamped_w, clamped_h);
-                                }
-                            }
-                        }
-                    }
-                } else {
-                    w.loc = (0, 0).into();
-                    let bbox = smithay::desktop::utils::bbox_from_surface_tree(surface, (0, 0));
-                    if bbox.size.w > 0 && bbox.size.h > 0 {
-                        w.size = (bbox.size.w.min(self.width as i32), bbox.size.h.min(self.height as i32)).into();
-                        if bbox.size.w > self.width as i32 || bbox.size.h > self.height as i32 {
-                            w.configure_size(self.width as i32, self.height as i32);
-                        }
-                    } else {
-                        w.size = (self.width as i32, self.height as i32).into();
-                    }
-                }
-            }
-        }
-
-        let mut tracked = false;
-        for w in &self.windows {
-            if w.wl_surface() == surface {
-                tracked = true; break;
-            }
-        }
-        for w in &self.x11_windows {
-            if let Some(s) = w.wl_surface() {
-                if &s == surface {
-                    tracked = true; break;
-                }
-            }
-        }
-        for w in &self.managed_windows {
-            if w.wl_surface().as_ref() == Some(surface) || self.surface_for_managed_window(w).as_ref() == Some(surface) {
-                tracked = true; break;
-            }
-        }
-        // サブサーフェス（親あり）とカーソル画像は独立サーフェスとして扱わない
-        if smithay::wayland::compositor::get_parent(surface).is_some() {
-            tracked = true;
-        }
-        if smithay::wayland::compositor::get_role(surface) == Some("cursor_image") {
-            tracked = true;
-        }
-        if smithay::wayland::compositor::get_role(surface) == Some(XDG_POPUP_ROLE) {
-            tracked = true;
-        }
-        if !tracked {
-            use smithay::reexports::wayland_server::Resource;
-            let pid = surface.id().protocol_id();
-            // 同一 ID の古いサーフェスがあれば破棄して最新版に置き換える
-            self.unassociated_surfaces.retain(|s| s.id().protocol_id() != pid);
-            self.unassociated_surfaces.push(surface.clone());
-            
-            let keyboard = self.keyboard.clone();
-            keyboard.set_focus(
-                self,
-                Some(surface.clone()),
-                smithay::utils::SERIAL_COUNTER.next_serial(),
-            );
-        }
-    }
-}
-
-// 3. XdgShellHandler
-impl XdgShellHandler for TermwayState {
-    fn xdg_shell_state(&mut self) -> &mut XdgShellState {
-        &mut self.xdg_shell_state
-    }
-
-    fn new_toplevel(&mut self, surface: ToplevelSurface) {
-        let id = self.next_window_id;
-        self.next_window_id += 1;
-        let wl_id = surface.wl_surface().id().protocol_id();
-        crate::compositor::log_line(format!("[compositor] new_toplevel id={} surface={}", id, wl_id));
-
-        let has_parent = surface.parent().is_some();
-        let should_maximize = !has_parent;
-
-        let (loc, configure_size, init_window_size, is_maximized, saved_geometry) = if self.enable_wm {
-            if should_maximize {
-                let saved_geo = ManagedWindow::default_80pct_geometry(self.width, self.height, false);
-                let loc = smithay::utils::Point::from((0, 0));
-                let configure_size = smithay::utils::Size::from((self.width as i32, self.height as i32));
-                let init_window_size = configure_size;
-                (loc, configure_size, init_window_size, true, Some(saved_geo))
-            } else {
-                let offset = ((self.managed_windows.len() % 8) as i32) * 20;
-                let loc_x = (20 + offset).max(0);
-                let loc_y = (10 + offset).max(0);
-                let loc = smithay::utils::Point::from((loc_x, loc_y));
-
-                let max_w = (self.width as i32 - loc_x - 10).max(320);
-                let max_h = (self.height as i32 - loc_y - 10).max(200);
-
-                let init_w = (self.width as i32 * 8 / 10).clamp(320, max_w);
-                let init_h = (self.height as i32 * 8 / 10).clamp(240, max_h);
-                let configure_size = smithay::utils::Size::from((init_w, init_h));
-                let init_window_size = configure_size;
-
-                (loc, configure_size, init_window_size, false, None)
-            }
-        } else {
-            let s = smithay::utils::Size::from((self.width as i32, self.height as i32));
-            (smithay::utils::Point::from((0, 0)), s, s, true, None)
-        };
-
-        surface.with_pending_state(|state| {
-            state.states.set(xdg_toplevel::State::Activated);
-            if is_maximized {
-                state.states.set(xdg_toplevel::State::Maximized);
-            }
-            state.size = Some(configure_size);
-        });
-        surface.send_configure();
-
-        let wl = surface.wl_surface().clone();
-        self.unassociated_surfaces.retain(|s| s != &wl);
-        self.windows.push(surface.clone());
-
-        for w in &mut self.managed_windows {
-            w.active = false;
-        }
-        // Wayland clients default to CSD unless ServerSide is negotiated via zxdg_decoration
-        let mut win = ManagedWindow::new_wayland(id, surface, loc, init_window_size, false);
-        win.is_maximized = is_maximized;
-        win.saved_geometry = saved_geometry;
-        self.managed_windows.push(win);
-
-        if self.show_splash {
-            self.show_splash = false;
-            self.needs_clear = true;
-        }
-
-        let keyboard = self.keyboard.clone();
-        keyboard.set_focus(
-            self,
-            Some(wl),
-            smithay::utils::SERIAL_COUNTER.next_serial(),
-        );
-
-        self.dirty = true;
-    }
-
-    fn new_popup(&mut self, surface: PopupSurface, positioner: PositionerState) {
-        let geo = positioner.get_geometry();
-        crate::compositor::log_line(format!(
-            "[compositor] new_popup id={} geo={:?}",
-            surface.wl_surface().id().protocol_id(),
-            geo
-        ));
-        surface.with_pending_state(|state| {
-            state.geometry = geo;
-        });
-        if let Err(err) = self.popups.track_popup(PopupKind::Xdg(surface.clone())) {
-            crate::compositor::log_line(format!("[compositor] Failed to track popup: {:?}", err));
-        }
-        let _ = surface.send_configure();
-        // NOTE: キーボードフォーカスは toplevel に残し、ポップアップへは移さない。
-        // Qt はメニュー切替時に旧ポップアップを自ら destroy するため、フォーカスが
-        // 旧ポップアップ上にあると「アプリが非アクティブ化した」と判断され、
-        // 直後に生成された新しいポップアップも閉じられてしまう。
-        // (Qt/GTK はキー入力をアプリ内部で最前面ポップアップへ配送する)
-        self.dirty = true;
-    }
-    fn grab(&mut self, surface: PopupSurface, seat: wl_seat::WlSeat, serial: Serial) {
-        crate::compositor::log_line(format!(
-            "[compositor] grab request id={} serial={:?}",
-            surface.wl_surface().id().protocol_id(),
-            serial
-        ));
-        let seat: Seat<Self> = match Seat::from_resource(&seat) {
-            Some(s) => s,
-            None => {
-                crate::compositor::log_line("[compositor] grab: Seat::from_resource returned None!");
-                return;
-            }
-        };
-        let kind = PopupKind::Xdg(surface.clone());
-        if let Ok(root) = find_popup_root_surface(&kind) {
-            match self.popups.grab_popup::<Self>(root, kind, &seat, serial) {
-                Ok(grab) => {
-                    crate::compositor::log_line(format!(
-                        "[compositor] grab_popup succeeded for id={}",
-                        surface.wl_surface().id().protocol_id()
-                    ));
-                    if let Some(pointer) = seat.get_pointer() {
-                        pointer.set_grab(self, PopupPointerGrab::new(&grab), serial, Focus::Keep);
-                    }
-                }
-                Err(err) => {
-                    crate::compositor::log_line(format!("[compositor] grab_popup error: {:?}", err));
-                }
-            }
-        } else {
-            crate::compositor::log_line("[compositor] grab: find_popup_root_surface failed!");
-        }
-    }
-    fn reposition_request(&mut self, surface: PopupSurface, positioner: PositionerState, token: u32) {
-        surface.with_pending_state(|state| {
-            state.geometry = positioner.get_geometry();
-        });
-        let _ = surface.send_repositioned(token);
-        self.dirty = true;
-    }
-
-    fn maximize_request(&mut self, surface: ToplevelSurface) {
-        if let Some(win) = self.managed_windows.iter_mut().find(|w| match &w.surface {
-            super::window::WindowSurface::Wayland(t) => t == &surface,
-            _ => false,
-        }) {
-            win.maximize(self.width, self.height);
-        } else {
-            surface.with_pending_state(|state| {
-                state.states.set(xdg_toplevel::State::Maximized);
-                state.size = Some((self.width as i32, self.height as i32).into());
-            });
-            surface.send_configure();
-        }
-        self.needs_clear = true;
-        self.dirty = true;
-    }
-
-    fn unmaximize_request(&mut self, surface: ToplevelSurface) {
-        if self.enable_wm {
-            if let Some(win) = self.managed_windows.iter_mut().find(|w| match &w.surface {
-                super::window::WindowSurface::Wayland(t) => t == &surface,
-                _ => false,
-            }) {
-                win.unmaximize(self.width, self.height);
-            }
-        } else {
-            surface.with_pending_state(|state| {
-                state.states.set(xdg_toplevel::State::Maximized);
-                state.size = Some((self.width as i32, self.height as i32).into());
-            });
-            surface.send_configure();
-        }
-        self.needs_clear = true;
-        self.dirty = true;
-    }
-
-    fn minimize_request(&mut self, surface: ToplevelSurface) {
-        if let Some(id) = self.managed_windows.iter().find(|w| match &w.surface {
-            super::window::WindowSurface::Wayland(t) => t == &surface,
-            _ => false,
-        }).map(|w| w.id) {
-            self.minimize_window(id);
-        }
-        self.needs_clear = true;
-        self.dirty = true;
-    }
-
-    fn move_request(&mut self, surface: ToplevelSurface, _seat: wl_seat::WlSeat, _serial: Serial) {
-        if !self.enable_wm {
-            return;
-        }
-        if let Some(win) = self.managed_windows.iter().find(|w| match &w.surface {
-            WindowSurface::Wayland(t) => t == &surface,
-            _ => false,
-        }) {
-            let cur_loc = self.pointer.current_location();
-            let win_loc = win.loc;
-            self.drag_state = WindowDragState::Moving {
-                start_cursor: (cur_loc.x, cur_loc.y),
-                start_window_pos: (win_loc.x, win_loc.y),
-            };
-        }
-    }
-
-    fn resize_request(
-        &mut self,
-        surface: ToplevelSurface,
-        _seat: wl_seat::WlSeat,
-        _serial: Serial,
-        _edges: xdg_toplevel::ResizeEdge,
-    ) {
-        if !self.enable_wm {
-            return;
-        }
-        if let Some(win) = self.managed_windows.iter().find(|w| match &w.surface {
-            WindowSurface::Wayland(t) => t == &surface,
-            _ => false,
-        }) {
-            let cur_loc = self.pointer.current_location();
-            let win_geo = win.content_geometry();
-            self.drag_state = WindowDragState::Resizing {
-                start_cursor: (cur_loc.x, cur_loc.y),
-                start_window_geo: win_geo,
-            };
-        }
-    }
-
-    fn toplevel_destroyed(&mut self, surface: ToplevelSurface) {
-        self.windows.retain(|w| w != &surface);
-        self.managed_windows.retain(|w| !matches!(&w.surface, WindowSurface::Wayland(t) if t == &surface));
-        if let Some(top) = self.managed_windows.last_mut() {
-            top.active = true;
-        }
-        let top_surface = self.managed_windows.last().and_then(|top| self.surface_for_managed_window(top));
-        if let Some(s) = top_surface {
-            let keyboard = self.keyboard.clone();
-            let serial = smithay::utils::SERIAL_COUNTER.next_serial();
-            keyboard.set_focus(self, Some(s), serial);
-        }
-        self.dirty = true;
-    }
-}
-
-// 4. ShmHandler
-impl ShmHandler for TermwayState {
-    fn shm_state(&self) -> &ShmState {
-        &self.shm_state
-    }
-}
-
-// 5. SeatHandler
-impl SeatHandler for TermwayState {
-    type KeyboardFocus = WlSurface;
-    type PointerFocus = WlSurface;
-    type TouchFocus = WlSurface;
-
-    fn seat_state(&mut self) -> &mut SeatState<Self> {
-        &mut self.seat_state
-    }
-
-    fn focus_changed(&mut self, seat: &Seat<Self>, focused: Option<&WlSurface>) {
-        let client = focused.and_then(|s| self.dh.get_client(s.id()).ok());
-        smithay::wayland::selection::data_device::set_data_device_focus(&self.dh, seat, client);
-    }
-    fn cursor_image(&mut self, _seat: &Seat<Self>, _image: smithay::input::pointer::CursorImageStatus) {}
-}
-
-// 6. OutputHandler
-impl OutputHandler for TermwayState {}
-
-// 7. SelectionHandler & DataDeviceHandler
-impl SelectionHandler for TermwayState {
-    type SelectionUserData = Vec<u8>;
-
-    fn new_selection(&mut self, ty: SelectionTarget, source: Option<SelectionSource>, seat: Seat<Self>) {
-        if ty != SelectionTarget::Clipboard {
-            return;
-        }
-        let Some(source) = source else {
-            return;
-        };
-        let mimes = source.mime_types();
-        let text_mime = mimes.iter().find(|m| {
-            m.as_str() == "text/plain;charset=utf-8"
-                || m.as_str() == "UTF8_STRING"
-                || m.as_str() == "text/plain"
-                || m.starts_with("text/")
-        }).cloned();
-
-        if let Some(mime) = text_mime {
-            let mut fds = [0i32; 2];
-            if unsafe { libc::pipe(fds.as_mut_ptr()) } == 0 {
-                let read_fd = unsafe { OwnedFd::from_raw_fd(fds[0]) };
-                let write_fd = unsafe { OwnedFd::from_raw_fd(fds[1]) };
-
-                if smithay::wayland::selection::data_device::request_data_device_client_selection(
-                    &seat,
-                    mime,
-                    write_fd,
-                ).is_ok() {
-                    std::thread::spawn(move || {
-                        use std::io::{Read, Write};
-                        use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
-                        let mut file = std::fs::File::from(read_fd);
-                        let mut data = Vec::new();
-                        if file.read_to_end(&mut data).is_ok() {
-                            if let Ok(text) = std::str::from_utf8(&data) {
-                                if !text.is_empty() {
-                                    let b64 = BASE64.encode(text);
-                                    eprintln!("[termway] Copied to host clipboard: {:?}", text);
-                                    print!("\x1b]52;c;{}\x07", b64);
-                                    let _ = std::io::stdout().flush();
-                                }
-                            }
-                        }
-                    });
-                }
-            }
-        }
-    }
-
-    fn send_selection(
-        &mut self,
-        _ty: SelectionTarget,
-        _mime_type: String,
-        fd: OwnedFd,
-        _seat: Seat<Self>,
-        user_data: &Self::SelectionUserData,
-    ) {
-        use std::io::Write;
-        let mut file = std::fs::File::from(fd);
-        let _ = file.write_all(user_data);
-    }
-}
-
-impl DataDeviceHandler for TermwayState {
-    fn data_device_state(&self) -> &DataDeviceState {
-        &self.data_device_state
-    }
-}
-
-impl ClientDndGrabHandler for TermwayState {}
-impl ServerDndGrabHandler for TermwayState {
-    fn send(&mut self, _mime_type: String, _fd: OwnedFd, _seat: Seat<Self>) {}
-}
-
 pub fn send_frames_surface_tree(surface: &WlSurface, time: u32) {
     with_surface_tree_downward(
         surface,
@@ -908,92 +362,4 @@ pub fn send_frames_surface_tree(surface: &WlSurface, time: u32) {
         },
         |_, _, &()| true,
     );
-}
-
-// Protocol delegates
-delegate_compositor!(TermwayState);
-delegate_xdg_shell!(TermwayState);
-delegate_shm!(TermwayState);
-delegate_seat!(TermwayState);
-delegate_output!(TermwayState);
-delegate_data_device!(TermwayState);
-smithay::delegate_xdg_decoration!(TermwayState);
-
-impl TermwayState {
-    fn update_toplevel_decoration_mode(&mut self, toplevel: &ToplevelSurface, mode: DecorationMode) {
-        let new_has_ssd = self.enable_wm && mode == DecorationMode::ServerSide;
-        for w in &mut self.managed_windows {
-            if let WindowSurface::Wayland(ref s) = w.surface {
-                if s == toplevel && w.has_ssd != new_has_ssd {
-                    w.has_ssd = new_has_ssd;
-                    if w.is_maximized {
-                        let (new_loc, new_w, new_h) = if w.has_ssd {
-                            (
-                                smithay::utils::Point::from((BORDER_WIDTH, TITLEBAR_HEIGHT + BORDER_WIDTH)),
-                                (self.width as i32 - BORDER_WIDTH * 2).max(100),
-                                (self.height as i32 - TITLEBAR_HEIGHT - BORDER_WIDTH * 2).max(60),
-                            )
-                        } else {
-                            (
-                                smithay::utils::Point::from((0, 0)),
-                                (self.width as i32).max(100),
-                                (self.height as i32).max(60),
-                            )
-                        };
-                        w.loc = new_loc;
-                        w.size = (new_w, new_h).into();
-                        w.saved_geometry = Some(ManagedWindow::default_80pct_geometry(self.width, self.height, w.has_ssd));
-                        toplevel.with_pending_state(|state| {
-                            state.size = Some((new_w, new_h).into());
-                        });
-                    }
-                }
-            }
-        }
-    }
-}
-
-impl XdgDecorationHandler for TermwayState {
-    fn new_decoration(&mut self, toplevel: ToplevelSurface) {
-        let mode = if self.enable_wm {
-            DecorationMode::ServerSide
-        } else {
-            DecorationMode::ClientSide
-        };
-        toplevel.with_pending_state(|state| {
-            state.decoration_mode = Some(mode);
-        });
-        self.update_toplevel_decoration_mode(&toplevel, mode);
-        toplevel.send_configure();
-    }
-
-    fn request_mode(&mut self, toplevel: ToplevelSurface, mode: DecorationMode) {
-        let chosen_mode = if self.enable_wm {
-            if mode == DecorationMode::ClientSide {
-                DecorationMode::ClientSide
-            } else {
-                DecorationMode::ServerSide
-            }
-        } else {
-            DecorationMode::ClientSide
-        };
-        toplevel.with_pending_state(|state| {
-            state.decoration_mode = Some(chosen_mode);
-        });
-        self.update_toplevel_decoration_mode(&toplevel, chosen_mode);
-        toplevel.send_configure();
-    }
-
-    fn unset_mode(&mut self, toplevel: ToplevelSurface) {
-        let mode = if self.enable_wm {
-            DecorationMode::ServerSide
-        } else {
-            DecorationMode::ClientSide
-        };
-        toplevel.with_pending_state(|state| {
-            state.decoration_mode = Some(mode);
-        });
-        self.update_toplevel_decoration_mode(&toplevel, mode);
-        toplevel.send_configure();
-    }
 }

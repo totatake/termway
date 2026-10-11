@@ -59,7 +59,7 @@ impl TermwayRenderer {
         // Collect before creating `frame` to avoid multiple mutable borrows of `self.renderer`.
         let mut window_layers: Vec<(Vec<WaylandSurfaceRenderElement<PixmanRenderer>>, Vec<Rectangle<i32, Physical>>)> = Vec::new();
 
-        for window in &state.managed_windows {
+        for window in &state.wm.windows {
             if window.is_minimized {
                 continue;
             }
@@ -109,7 +109,7 @@ impl TermwayRenderer {
 
         let mut x11_layers: Vec<(Vec<WaylandSurfaceRenderElement<PixmanRenderer>>, Rectangle<i32, Physical>)> = Vec::new();
         for xwindow in &state.x11_windows {
-            let is_managed = state.managed_windows.iter().any(|mw| matches!(&mw.surface, WindowSurface::X11(w) if w == xwindow));
+            let is_managed = state.wm.windows.iter().any(|mw| matches!(&mw.surface, WindowSurface::X11(w) if w == xwindow));
             if !is_managed {
                 let geo = xwindow.geometry();
                 if let Some(surface) = state.surface_for_x11(xwindow) {
@@ -137,7 +137,7 @@ impl TermwayRenderer {
         }
 
         let mut popup_layers: Vec<(Vec<WaylandSurfaceRenderElement<PixmanRenderer>>, Rectangle<i32, Physical>)> = Vec::new();
-        for window in &state.managed_windows {
+        for window in &state.wm.windows {
             if window.is_minimized {
                 continue;
             }
@@ -165,13 +165,13 @@ impl TermwayRenderer {
             }
         }
 
-        let any_managed = !state.managed_windows.is_empty();
-        let all_managed_minimized = any_managed && state.managed_windows.iter().all(|w| w.is_minimized);
+        let any_managed = !state.wm.windows.is_empty();
+        let all_managed_minimized = any_managed && state.wm.windows.iter().all(|w| w.is_minimized);
         let mut fallback_layers: Vec<(Vec<WaylandSurfaceRenderElement<PixmanRenderer>>, Rectangle<i32, Physical>)> = Vec::new();
 
         if window_layers.is_empty() && !all_managed_minimized {
             let managed_surfaces: Vec<smithay::reexports::wayland_server::protocol::wl_surface::WlSurface> = state
-                .managed_windows
+                .wm.windows
                 .iter()
                 .filter_map(|w| state.surface_for_managed_window(w))
                 .collect();
@@ -225,7 +225,7 @@ impl TermwayRenderer {
 
         // 3. Draw Openbox/Fluxbox window decorations (Bottom to Top order) if WM is enabled
         if state.enable_wm {
-            for window in &state.managed_windows {
+            for window in &state.wm.windows {
                 if window.is_minimized {
                     continue;
                 }

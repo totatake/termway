@@ -1,4 +1,6 @@
 pub mod state;
+pub mod window_manager;
+mod handlers;
 pub mod renderer;
 pub mod xwayland;
 pub mod window;
@@ -435,9 +437,9 @@ impl TermwayCompositor {
             }
 
             // Clean up destroyed windows/surfaces
-            self.state.windows.retain(|w| w.alive() && smithay::reexports::wayland_server::Resource::is_alive(w.wl_surface()));
-            let prev_count = self.state.managed_windows.len();
-            self.state.managed_windows.retain(|w| {
+            self.state.toplevels.retain(|w| w.alive() && smithay::reexports::wayland_server::Resource::is_alive(w.wl_surface()));
+            let prev_count = self.state.wm.windows.len();
+            self.state.wm.windows.retain(|w| {
                 match &w.surface {
                     WindowSurface::Wayland(t) => {
                         t.alive() && smithay::reexports::wayland_server::Resource::is_alive(t.wl_surface())
@@ -446,8 +448,8 @@ impl TermwayCompositor {
                     WindowSurface::Dummy => true,
                 }
             });
-            if self.state.managed_windows.len() != prev_count {
-                if let Some(top) = self.state.managed_windows.last_mut() {
+            if self.state.wm.windows.len() != prev_count {
+                if let Some(top) = self.state.wm.windows.last_mut() {
                     top.active = true;
                 }
                 self.state.dirty = true;
@@ -480,17 +482,17 @@ impl TermwayCompositor {
             };
 
             let is_unmanaged_real_x11 = |w: &smithay::xwayland::X11Surface| -> bool {
-                let is_managed = self.state.managed_windows.iter().any(|mw| matches!(&mw.surface, WindowSurface::X11(x) if x == w));
+                let is_managed = self.state.wm.windows.iter().any(|mw| matches!(&mw.surface, WindowSurface::X11(x) if x == w));
                 let geo = w.geometry();
                 !is_managed && geo.size.w > 1 && geo.size.h > 1
             };
 
-            let active_window_count = self.state.managed_windows.len()
-                + self.state.windows.len()
+            let active_window_count = self.state.wm.windows.len()
+                + self.state.toplevels.len()
                 + self.state.x11_windows.iter().filter(|w| is_unmanaged_real_x11(w)).count();
 
-            let client_window_count = self.state.managed_windows.iter().filter(|w| !w.is_polkit(polkit_pid)).count()
-                + self.state.windows.iter().filter(|w| !is_wayland_polkit(w)).count()
+            let client_window_count = self.state.wm.windows.iter().filter(|w| !w.is_polkit(polkit_pid)).count()
+                + self.state.toplevels.iter().filter(|w| !is_wayland_polkit(w)).count()
                 + self.state.x11_windows.iter().filter(|w| !is_x11_polkit(w) && is_unmanaged_real_x11(w)).count();
 
             if client_window_count > 0 {
@@ -651,7 +653,7 @@ impl TermwayCompositor {
                     }
 
                     let time = self.state.start_time.elapsed().as_millis() as u32;
-                    for window in &self.state.managed_windows {
+                    for window in &self.state.wm.windows {
                         if let Some(surface) = self.state.surface_for_managed_window(window) {
                             send_frames_surface_tree(&surface, time);
                         }
@@ -661,7 +663,7 @@ impl TermwayCompositor {
                             }
                         }
                     }
-                    for window in &self.state.windows {
+                    for window in &self.state.toplevels {
                         send_frames_surface_tree(window.wl_surface(), time);
                     }
                     for window in &self.state.x11_windows {
@@ -740,7 +742,7 @@ impl TermwayCompositor {
         self.state.output.set_preferred(new_mode);
 
         if self.state.enable_wm {
-            for m_win in &mut self.state.managed_windows {
+            for m_win in &mut self.state.wm.windows {
                 if m_win.is_maximized {
                     m_win.update_maximized_size(self.state.width, self.state.height);
                 } else {
@@ -785,7 +787,7 @@ impl TermwayCompositor {
                 }
             }
         } else {
-            for window in &self.state.windows {
+            for window in &self.state.toplevels {
                 window.with_pending_state(|state| {
                     state.states.set(xdg_toplevel::State::Activated);
                     state.states.set(xdg_toplevel::State::Maximized);
@@ -800,7 +802,7 @@ impl TermwayCompositor {
                 );
                 let _ = xwin.configure(rect);
             }
-            for m_win in &mut self.state.managed_windows {
+            for m_win in &mut self.state.wm.windows {
                 m_win.loc = (0, 0).into();
                 m_win.size = (self.state.width as i32, self.state.height as i32).into();
             }
@@ -965,7 +967,7 @@ impl TermwayCompositor {
 
     /// Builds the bottom row taskbar chip string and records chip click bounds
     fn build_taskbar(&mut self) -> Option<String> {
-        if !self.state.enable_wm || self.state.managed_windows.is_empty() {
+        if !self.state.enable_wm || self.state.wm.windows.is_empty() {
             self.taskbar_chips.clear();
             return None;
         }
@@ -983,7 +985,7 @@ impl TermwayCompositor {
         let mut out = String::new();
         let mut cur_col: u16 = 2;
 
-        let mut sorted_windows = self.state.managed_windows.clone();
+        let mut sorted_windows = self.state.wm.windows.clone();
         sorted_windows.sort_by_key(|w| w.id);
 
         for win in &sorted_windows {
@@ -1041,7 +1043,7 @@ impl TermwayCompositor {
             for chip in &self.taskbar_chips {
                 if ev.col >= chip.start_col && ev.col <= chip.end_col {
                     let chip_id = chip.window_id;
-                    if let Some(win) = self.state.managed_windows.iter().find(|w| w.id == chip_id) {
+                    if let Some(win) = self.state.wm.windows.iter().find(|w| w.id == chip_id) {
                         if win.is_minimized {
                             self.state.restore_window(chip_id);
                         } else if win.active {
