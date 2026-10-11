@@ -53,7 +53,7 @@ fn test_encode_fullscreen_frame() {
     let encoded = KittyEncoder::encode_fullscreen_frame(&rgba, 32, 32, 80, 24, 1);
 
     // Must prepend cursor home sequence to align to top-left of terminal and specify o=z for compression
-    assert!(encoded.starts_with("\x1b[H\x1b_Ga=T,q=2,i=1,C=1,f=32,o=z,z=-1,s=32,v=32,c=80,r=24"));
+    assert!(encoded.starts_with("\x1b[H\x1b_Ga=T,q=2,i=1,C=1,f=32,o=z,z=-2147483648,s=32,v=32,c=80,r=24"));
     assert!(encoded.ends_with("\x1b\\"));
 
     // Extract payload between ';' and '\x1b\'
@@ -78,7 +78,7 @@ fn test_encode_fullscreen_frame_large_chunked_roundtrip() {
     }
 
     let encoded = KittyEncoder::encode_fullscreen_frame(&rgba, 256, 256, 120, 40, 42);
-    assert!(encoded.starts_with("\x1b[H\x1b_Ga=T,q=2,i=42,C=1,f=32,o=z,z=-1,s=256,v=256,c=120,r=40"));
+    assert!(encoded.starts_with("\x1b[H\x1b_Ga=T,q=2,i=42,C=1,f=32,o=z,z=-2147483648,s=256,v=256,c=120,r=40"));
     assert!(encoded.ends_with("\x1b\\"));
 
     // Verify chunking occurred and recombine base64 payload

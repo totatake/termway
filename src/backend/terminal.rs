@@ -97,12 +97,13 @@ impl TerminalBackend {
                         );
                         bytes_encoded = sixel_out.len();
                     } else {
+                        let image_rows = job.term_rows.saturating_sub(1).max(1);
                         KittyEncoder::encode_fullscreen_frame_into(
                             &job.pixels,
                             job.width,
                             job.height,
                             job.term_cols,
-                            job.term_rows,
+                            image_rows,
                             1,
                             &mut kitty_b64,
                             &mut kitty_out,

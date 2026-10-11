@@ -78,7 +78,7 @@ impl KittyEncoder {
             if first {
                 let _ = write!(
                     output,
-                    "\x1b_Ga=T,q=2,i={},C=1,f=32,o=z,z=-1,s={},v={},c={},r={},m={};",
+                    "\x1b_Ga=T,q=2,i={},C=1,f=32,o=z,z=-2147483648,s={},v={},c={},r={},m={};",
                     image_id, width, height, term_cols, term_rows, m_flag
                 );
                 first = false;

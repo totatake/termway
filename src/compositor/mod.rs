@@ -133,21 +133,16 @@ impl TermwayCompositor {
             term_size.width_px as u32
         };
         let width = config.width.unwrap_or(effective_w).max(320);
+        let avail_rows = term_size.rows.saturating_sub(1).max(1);
+        let raw_h = avail_rows as u32 * term_size.cell_height_px as u32;
         let height = if let Some(h) = config.height {
             h.max(240)
         } else if config.use_sixel {
             // Sixel 出力時は最下行（ステータス表示行）を空け、高さを 6 の倍数に切り捨てて端末スクロールを完全に防止
-            let avail_rows = term_size.rows.saturating_sub(1).max(1);
-            let raw_h = avail_rows as u32 * term_size.cell_height_px as u32;
             (raw_h / 6 * 6).max(240)
         } else {
-            let max_grid_h = term_size.rows as u32 * term_size.cell_height_px as u32;
-            let effective_h = if max_grid_h > 0 {
-                (term_size.height_px as u32).min(max_grid_h)
-            } else {
-                term_size.height_px as u32
-            };
-            effective_h.max(240)
+            // Kitty 出力時も最下行（タスクバー・ステータス表示行）を空けてウィンドウとの重なりを防止
+            raw_h.max(240)
         };
 
         Self::ensure_xdg_runtime_dir();
@@ -712,15 +707,12 @@ impl TermwayCompositor {
         if max_grid_w > 0 {
             new_size.width_px = (new_size.width_px as u32).min(max_grid_w).max(320) as u16;
         }
+        let avail_rows = new_size.rows.saturating_sub(1).max(1);
+        let raw_h = avail_rows as u32 * new_size.cell_height_px as u32;
         if self.backend.is_sixel() {
-            let avail_rows = new_size.rows.saturating_sub(1).max(1);
-            let raw_h = avail_rows as u32 * new_size.cell_height_px as u32;
             new_size.height_px = ((raw_h / 6 * 6).max(240)) as u16;
         } else {
-            let max_grid_h = new_size.rows as u32 * new_size.cell_height_px as u32;
-            if max_grid_h > 0 {
-                new_size.height_px = (new_size.height_px as u32).min(max_grid_h).max(240) as u16;
-            }
+            new_size.height_px = (raw_h.max(240)) as u16;
         }
 
         if self.term_cols == new_size.cols
@@ -1064,11 +1056,7 @@ impl TermwayCompositor {
             }
         }
 
-        let avail_rows = if self.backend.is_sixel() {
-            self.term_rows.saturating_sub(1).max(1)
-        } else {
-            self.term_rows.max(1)
-        };
+        let avail_rows = self.term_rows.saturating_sub(1).max(1);
         self::input::dispatch_mouse_event(
             &mut self.state,
             self.renderer.width(),
