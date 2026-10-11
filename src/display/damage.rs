@@ -36,15 +36,84 @@ impl DamageTracker {
         }
     }
 
-    /// Fast FNV-1a 64-bit hash
+    /// Fast 64-bit block hash using 8-byte word folding (with tail handling)
     #[inline(always)]
     pub fn fnv1a_hash(data: &[u8]) -> u64 {
-        let mut hash = 0xcbf29ce484222325u64;
-        for &byte in data {
-            hash ^= byte as u64;
-            hash = hash.wrapping_mul(0x100000001b3u64);
+        Self::hash_row_words(0xcbf29ce484222325u64, data)
+    }
+
+    #[inline(always)]
+    fn hash_row_words(mut hash: u64, row: &[u8]) -> u64 {
+        const PRIME: u64 = 0x100000001b3u64;
+        let mut chunks = row.chunks_exact(8);
+        for chunk in &mut chunks {
+            let word = u64::from_le_bytes(chunk.try_into().unwrap());
+            hash = (hash ^ word).wrapping_mul(PRIME);
+        }
+        for &byte in chunks.remainder() {
+            hash = (hash ^ (byte as u64)).wrapping_mul(PRIME);
         }
         hash
+    }
+
+    /// AVX2 SIMD accelerated tile hash for 32-pixel wide rows (128 bytes per row)
+    #[cfg(target_arch = "x86_64")]
+    #[target_feature(enable = "avx2")]
+    unsafe fn hash_tile_avx2(
+        rgba_data: &[u8],
+        stride: usize,
+        rect_x: usize,
+        rect_y: usize,
+        rect_w: usize,
+        rect_h: usize,
+    ) -> u64 {
+        use std::arch::x86_64::*;
+        let mut acc0 = _mm256_set1_epi64x(0x517cc1b727220a95u64 as i64);
+        let mut acc1 = _mm256_set1_epi64x(0x9e3779b97f4a7c15u64 as i64);
+        let row_bytes = rect_w * 4;
+        let base_ptr = rgba_data.as_ptr();
+
+        for y in 0..rect_h {
+            let row_start = (rect_y + y) * stride + rect_x * 4;
+            let mut ptr = base_ptr.add(row_start);
+            let mut rem = row_bytes;
+
+            while rem >= 64 {
+                let v0 = _mm256_loadu_si256(ptr as *const __m256i);
+                let v1 = _mm256_loadu_si256(ptr.add(32) as *const __m256i);
+                acc0 = _mm256_xor_si256(acc0, v0);
+                acc0 = _mm256_add_epi64(_mm256_slli_epi64(acc0, 13), _mm256_srli_epi64(acc0, 51));
+                acc0 = _mm256_add_epi64(acc0, v1);
+
+                acc1 = _mm256_xor_si256(acc1, v1);
+                acc1 = _mm256_add_epi64(_mm256_slli_epi64(acc1, 17), _mm256_srli_epi64(acc1, 47));
+                acc1 = _mm256_add_epi64(acc1, v0);
+
+                ptr = ptr.add(64);
+                rem -= 64;
+            }
+            while rem >= 32 {
+                let v0 = _mm256_loadu_si256(ptr as *const __m256i);
+                acc0 = _mm256_xor_si256(acc0, v0);
+                acc0 = _mm256_add_epi64(_mm256_slli_epi64(acc0, 13), _mm256_srli_epi64(acc0, 51));
+                ptr = ptr.add(32);
+                rem -= 32;
+            }
+            if rem > 0 {
+                let tail_slice = std::slice::from_raw_parts(ptr, rem);
+                let tail_h = Self::hash_row_words(0xcbf29ce484222325u64, tail_slice);
+                acc1 = _mm256_xor_si256(acc1, _mm256_set1_epi64x(tail_h as i64));
+            }
+        }
+
+        let combined = _mm256_xor_si256(acc0, acc1);
+        let mut lanes = [0u64; 4];
+        _mm256_storeu_si256(lanes.as_mut_ptr() as *mut __m256i, combined);
+        let mut h = 0xcbf29ce484222325u64;
+        for &lane in &lanes {
+            h = (h ^ lane).wrapping_mul(0x100000001b3u64);
+        }
+        if h == 0 { 1 } else { h }
     }
 
     /// Resize damage tracker to new resolution
@@ -56,10 +125,12 @@ impl DamageTracker {
     }
 
     /// Compare current frame buffer against previous frame and return modified bounding rectangles.
-    /// Completely zero-allocation: streams FNV-1a hash across tile rows directly from rgba_data.
+    /// Uses AVX2 SIMD vector hashing when available on x86_64, falling back to 64-bit word folding.
     pub fn track_damage(&mut self, rgba_data: &[u8]) -> Vec<DamageRect> {
         let stride = (self.width * 4) as usize;
         let mut dirty_tiles = Vec::new();
+        #[cfg(target_arch = "x86_64")]
+        let has_avx2 = std::is_x86_feature_detected!("avx2");
 
         for ty in 0..self.tiles_y {
             for tx in 0..self.tiles_x {
@@ -70,19 +141,48 @@ impl DamageTracker {
                 let rect_w = (self.tile_size).min(self.width.saturating_sub(rect_x));
                 let rect_h = (self.tile_size).min(self.height.saturating_sub(rect_y));
 
-                // Compute hash of this tile in-place with zero allocations
-                let mut current_hash = 0xcbf29ce484222325u64;
-                for y in 0..rect_h {
-                    let cur_y = (rect_y + y) as usize;
-                    let row_start = cur_y * stride + (rect_x * 4) as usize;
-                    let row_end = row_start + (rect_w * 4) as usize;
-                    if row_end <= rgba_data.len() {
-                        for &byte in &rgba_data[row_start..row_end] {
-                            current_hash ^= byte as u64;
-                            current_hash = current_hash.wrapping_mul(0x100000001b3u64);
+                let last_row_end = ((rect_y + rect_h.saturating_sub(1)) as usize) * stride
+                    + ((rect_x + rect_w) * 4) as usize;
+
+                let current_hash = if last_row_end <= rgba_data.len() && rect_h > 0 && rect_w > 0 {
+                    #[cfg(target_arch = "x86_64")]
+                    {
+                        if has_avx2 {
+                            unsafe {
+                                Self::hash_tile_avx2(
+                                    rgba_data,
+                                    stride,
+                                    rect_x as usize,
+                                    rect_y as usize,
+                                    rect_w as usize,
+                                    rect_h as usize,
+                                )
+                            }
+                        } else {
+                            let mut h = 0xcbf29ce484222325u64;
+                            for y in 0..rect_h {
+                                let cur_y = (rect_y + y) as usize;
+                                let row_start = cur_y * stride + (rect_x * 4) as usize;
+                                let row_end = row_start + (rect_w * 4) as usize;
+                                h = Self::hash_row_words(h, &rgba_data[row_start..row_end]);
+                            }
+                            if h == 0 { 1 } else { h }
                         }
                     }
-                }
+                    #[cfg(not(target_arch = "x86_64"))]
+                    {
+                        let mut h = 0xcbf29ce484222325u64;
+                        for y in 0..rect_h {
+                            let cur_y = (rect_y + y) as usize;
+                            let row_start = cur_y * stride + (rect_x * 4) as usize;
+                            let row_end = row_start + (rect_w * 4) as usize;
+                            h = Self::hash_row_words(h, &rgba_data[row_start..row_end]);
+                        }
+                        if h == 0 { 1 } else { h }
+                    }
+                } else {
+                    1
+                };
 
                 if current_hash != self.prev_tile_hashes[tile_idx] {
                     self.prev_tile_hashes[tile_idx] = current_hash;

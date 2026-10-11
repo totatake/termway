@@ -32,10 +32,27 @@ impl SixelEncoder {
 
         // 1. Quantize the image to RGB332 and collect used colors globally
         let mut used_colors = [false; 256];
-        for (i, pixel) in rgba.chunks_exact(4).enumerate() {
-            let idx = (pixel[0] & 0xE0) | ((pixel[1] & 0xE0) >> 3) | (pixel[2] >> 6);
-            quantized[i] = idx;
-            used_colors[idx as usize] = true;
+        #[cfg(target_arch = "x86_64")]
+        {
+            if std::is_x86_feature_detected!("avx2") {
+                unsafe {
+                    Self::quantize_rgb332_avx2(rgba, &mut quantized[..total_pixels], &mut used_colors);
+                }
+            } else {
+                for (i, pixel) in rgba.chunks_exact(4).take(total_pixels).enumerate() {
+                    let idx = (pixel[0] & 0xE0) | ((pixel[1] & 0xE0) >> 3) | (pixel[2] >> 6);
+                    quantized[i] = idx;
+                    used_colors[idx as usize] = true;
+                }
+            }
+        }
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            for (i, pixel) in rgba.chunks_exact(4).take(total_pixels).enumerate() {
+                let idx = (pixel[0] & 0xE0) | ((pixel[1] & 0xE0) >> 3) | (pixel[2] >> 6);
+                quantized[i] = idx;
+                used_colors[idx as usize] = true;
+            }
         }
 
         // 2. Emit palette definitions ONLY for used colors
@@ -61,6 +78,8 @@ impl SixelEncoder {
         let w = width as usize;
         let h = height as usize;
         let mut band_colors = Vec::with_capacity(32);
+        #[cfg(target_arch = "x86_64")]
+        let has_avx2 = std::is_x86_feature_detected!("avx2");
 
         // 3. Process 6-pixel high bands
         for band_y in (0..height).step_by(6) {
@@ -130,6 +149,17 @@ impl SixelEncoder {
 
                     if start_col > 0 {
                         Self::emit_rle(out, 63, start_col);
+                    }
+
+                    #[cfg(target_arch = "x86_64")]
+                    if has_avx2 && end_col >= start_col + 32 {
+                        unsafe {
+                            Self::encode_band_color_avx2(
+                                out, r0, r1, r2, r3, r4, r5, c_u8, start_col, end_col,
+                            );
+                        }
+                        out.push(b'$');
+                        continue;
                     }
 
                     let mut run_char = 0u8;
@@ -259,6 +289,233 @@ impl SixelEncoder {
             out.push(b'!');
             Self::emit_u32_ascii(out, count as u32);
             out.push(ch);
+        }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[target_feature(enable = "avx2")]
+    unsafe fn quantize_rgb332_avx2(
+        rgba: &[u8],
+        quantized: &mut [u8],
+        used_colors: &mut [bool; 256],
+    ) {
+        use std::arch::x86_64::*;
+
+        let total_pixels = quantized.len().min(rgba.len() / 4);
+        let src_ptr = rgba.as_ptr();
+        let dst_ptr = quantized.as_mut_ptr();
+
+        let mask_r = _mm256_set1_epi32(0x0000_00E0);
+        let mask_g = _mm256_set1_epi32(0x0000_E000);
+        let mask_b = _mm256_set1_epi32(0x00C0_0000);
+        let shuf = _mm256_setr_epi8(
+            0, 4, 8, 12, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+            0, 4, 8, 12, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+        );
+
+        let mut i = 0usize;
+        while i + 8 <= total_pixels {
+            let v = _mm256_loadu_si256(src_ptr.add(i * 4) as *const __m256i);
+            let r = _mm256_and_si256(v, mask_r);
+            let g = _mm256_srli_epi32(_mm256_and_si256(v, mask_g), 11);
+            let b = _mm256_srli_epi32(_mm256_and_si256(v, mask_b), 22);
+            let idx32 = _mm256_or_si256(_mm256_or_si256(r, g), b);
+            let packed = _mm256_shuffle_epi8(idx32, shuf);
+
+            let lo4 = _mm256_cvtsi256_si32(packed) as u32;
+            let hi4 = _mm256_extract_epi32::<4>(packed) as u32;
+            let combined = (lo4 as u64) | ((hi4 as u64) << 32);
+            (dst_ptr.add(i) as *mut u64).write_unaligned(combined);
+
+            used_colors[(lo4 & 0xFF) as usize] = true;
+            used_colors[((lo4 >> 8) & 0xFF) as usize] = true;
+            used_colors[((lo4 >> 16) & 0xFF) as usize] = true;
+            used_colors[(lo4 >> 24) as usize] = true;
+            used_colors[(hi4 & 0xFF) as usize] = true;
+            used_colors[((hi4 >> 8) & 0xFF) as usize] = true;
+            used_colors[((hi4 >> 16) & 0xFF) as usize] = true;
+            used_colors[(hi4 >> 24) as usize] = true;
+
+            i += 8;
+        }
+
+        while i < total_pixels {
+            let p = i * 4;
+            let idx = (rgba[p] & 0xE0) | ((rgba[p + 1] & 0xE0) >> 3) | (rgba[p + 2] >> 6);
+            quantized[i] = idx;
+            used_colors[idx as usize] = true;
+            i += 1;
+        }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[target_feature(enable = "avx2")]
+    #[allow(clippy::too_many_arguments)]
+    unsafe fn encode_band_color_avx2(
+        out: &mut Vec<u8>,
+        r0: &[u8],
+        r1: &[u8],
+        r2: &[u8],
+        r3: &[u8],
+        r4: &[u8],
+        r5: &[u8],
+        c_u8: u8,
+        start_col: usize,
+        end_col: usize,
+    ) {
+        use std::arch::x86_64::*;
+
+        let c_vec = _mm256_set1_epi8(c_u8 as i8);
+        let mut run_char = 0u8;
+        let mut run_len = 0usize;
+        let mut x = start_col;
+
+        while x + 32 <= end_col {
+            let m0 = _mm256_movemask_epi8(_mm256_cmpeq_epi8(
+                _mm256_loadu_si256(r0.as_ptr().add(x) as *const __m256i),
+                c_vec,
+            )) as u32;
+            let m1 = _mm256_movemask_epi8(_mm256_cmpeq_epi8(
+                _mm256_loadu_si256(r1.as_ptr().add(x) as *const __m256i),
+                c_vec,
+            )) as u32;
+            let m2 = _mm256_movemask_epi8(_mm256_cmpeq_epi8(
+                _mm256_loadu_si256(r2.as_ptr().add(x) as *const __m256i),
+                c_vec,
+            )) as u32;
+            let m3 = _mm256_movemask_epi8(_mm256_cmpeq_epi8(
+                _mm256_loadu_si256(r3.as_ptr().add(x) as *const __m256i),
+                c_vec,
+            )) as u32;
+            let m4 = _mm256_movemask_epi8(_mm256_cmpeq_epi8(
+                _mm256_loadu_si256(r4.as_ptr().add(x) as *const __m256i),
+                c_vec,
+            )) as u32;
+            let m5 = _mm256_movemask_epi8(_mm256_cmpeq_epi8(
+                _mm256_loadu_si256(r5.as_ptr().add(x) as *const __m256i),
+                c_vec,
+            )) as u32;
+
+            let any = m0 | m1 | m2 | m3 | m4 | m5;
+            if any == 0 {
+                if run_char == 63 {
+                    run_len += 32;
+                } else {
+                    Self::emit_rle(out, run_char, run_len);
+                    run_char = 63;
+                    run_len = 32;
+                }
+            } else if (m0.wrapping_add(1)
+                | m1.wrapping_add(1)
+                | m2.wrapping_add(1)
+                | m3.wrapping_add(1)
+                | m4.wrapping_add(1)
+                | m5.wrapping_add(1))
+                <= 1
+            {
+                let mask = ((m0 & 1) as u8)
+                    | (((m1 & 1) as u8) << 1)
+                    | (((m2 & 1) as u8) << 2)
+                    | (((m3 & 1) as u8) << 3)
+                    | (((m4 & 1) as u8) << 4)
+                    | (((m5 & 1) as u8) << 5);
+                let ch = mask + 63;
+                if ch == run_char {
+                    run_len += 32;
+                } else {
+                    Self::emit_rle(out, run_char, run_len);
+                    run_char = ch;
+                    run_len = 32;
+                }
+            } else {
+                let mut b0 = m0;
+                let mut b1 = m1;
+                let mut b2 = m2;
+                let mut b3 = m3;
+                let mut b4 = m4;
+                let mut b5 = m5;
+                let mut b_any = any;
+                let mut bit_pos = 0usize;
+
+                while bit_pos < 32 {
+                    if b_any == 0 {
+                        let rem = 32 - bit_pos;
+                        if run_char == 63 {
+                            run_len += rem;
+                        } else {
+                            Self::emit_rle(out, run_char, run_len);
+                            run_char = 63;
+                            run_len = rem;
+                        }
+                        break;
+                    }
+
+                    let tz = b_any.trailing_zeros() as usize;
+                    if tz > 0 {
+                        if run_char == 63 {
+                            run_len += tz;
+                        } else {
+                            Self::emit_rle(out, run_char, run_len);
+                            run_char = 63;
+                            run_len = tz;
+                        }
+                        b0 >>= tz;
+                        b1 >>= tz;
+                        b2 >>= tz;
+                        b3 >>= tz;
+                        b4 >>= tz;
+                        b5 >>= tz;
+                        b_any >>= tz;
+                        bit_pos += tz;
+                    }
+
+                    let mask = ((b0 & 1) as u8)
+                        | (((b1 & 1) as u8) << 1)
+                        | (((b2 & 1) as u8) << 2)
+                        | (((b3 & 1) as u8) << 3)
+                        | (((b4 & 1) as u8) << 4)
+                        | (((b5 & 1) as u8) << 5);
+                    let ch = mask + 63;
+                    if ch == run_char {
+                        run_len += 1;
+                    } else {
+                        Self::emit_rle(out, run_char, run_len);
+                        run_char = ch;
+                        run_len = 1;
+                    }
+                    b0 >>= 1;
+                    b1 >>= 1;
+                    b2 >>= 1;
+                    b3 >>= 1;
+                    b4 >>= 1;
+                    b5 >>= 1;
+                    b_any >>= 1;
+                    bit_pos += 1;
+                }
+            }
+            x += 32;
+        }
+
+        while x < end_col {
+            let mask = ((r0[x] == c_u8) as u8)
+                | (((r1[x] == c_u8) as u8) << 1)
+                | (((r2[x] == c_u8) as u8) << 2)
+                | (((r3[x] == c_u8) as u8) << 3)
+                | (((r4[x] == c_u8) as u8) << 4)
+                | (((r5[x] == c_u8) as u8) << 5);
+            let ch = mask + 63;
+            if ch == run_char {
+                run_len += 1;
+            } else {
+                Self::emit_rle(out, run_char, run_len);
+                run_char = ch;
+                run_len = 1;
+            }
+            x += 1;
+        }
+
+        if run_char != 63 {
+            Self::emit_rle(out, run_char, run_len);
         }
     }
 }

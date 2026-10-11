@@ -70,3 +70,36 @@ fn test_damage_tracker_resize() {
     let damage = tracker.track_damage(&frame2);
     assert!(!damage.is_empty());
 }
+
+#[test]
+fn test_damage_tracker_simd_edge_tiles_and_benchmark_1080x720() {
+    let w = 1080u32; // 1080 = 33 * 32 + 24 (tests both 32px full tiles and 24px edge tiles)
+    let h = 720u32;
+    let mut tracker = DamageTracker::new(w, h, 32);
+    let mut frame = vec![42u8; (w * h * 4) as usize];
+
+    // Warmup initial frame
+    let initial_damage = tracker.track_damage(&frame);
+    assert!(!initial_damage.is_empty());
+
+    // Benchmark unchanged frame scan across 1080x720 (3.1 MB)
+    let start = std::time::Instant::now();
+    for _ in 0..20 {
+        let d = tracker.track_damage(&frame);
+        assert!(d.is_empty());
+    }
+    let elapsed = start.elapsed() / 20;
+    eprintln!(
+        "\n[BENCHMARK] 1080x720 DamageTracker SIMD scan avg took: {:?}",
+        elapsed
+    );
+
+    // Mutate the last pixel in the rightmost 24px partial edge tile (x=1079, y=719)
+    let last_pixel_idx = ((719 * w + 1079) * 4) as usize;
+    frame[last_pixel_idx] ^= 0xFF;
+    let edge_damage = tracker.track_damage(&frame);
+    assert_eq!(edge_damage.len(), 1);
+    assert_eq!(edge_damage[0].x, 33 * 32);
+    assert_eq!(edge_damage[0].width, 24);
+}
+

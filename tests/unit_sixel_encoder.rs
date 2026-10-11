@@ -105,3 +105,30 @@ fn test_sixel_solid_band_fastpath() {
     assert!(encoded.contains("!100~"));
 }
 
+#[test]
+fn test_sixel_simd_mixed_patterns_and_widths() {
+    for &w in &[31u32, 32, 33, 64, 77, 128] {
+        let h = 12u32;
+        let mut rgba = vec![0u8; (w * h * 4) as usize];
+        // Draw a red horizontal stripe on row 0 across the entire width,
+        // and sparse green pixels at x = 0, w/2, w-1 on row 3.
+        for x in 0..w {
+            let p0 = (x * 4) as usize;
+            rgba[p0] = 255; // Red (224)
+            rgba[p0 + 3] = 255;
+        }
+        for &gx in &[0, w / 2, w - 1] {
+            let p3 = ((3 * w + gx) * 4) as usize;
+            rgba[p3 + 1] = 255; // Green (28)
+            rgba[p3 + 3] = 255;
+        }
+
+        let encoded = SixelEncoder::encode_fullscreen_frame(&rgba, w, h);
+        assert!(encoded.starts_with(&format!("\x1bP7;0;q\"1;1;{};{}", w, h)));
+        assert!(encoded.contains("#224;2;100;0;0"));
+        assert!(encoded.contains("#28;2;0;100;0"));
+        assert!(encoded.ends_with("\x1b\\"));
+    }
+}
+
+
