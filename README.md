@@ -252,6 +252,8 @@ export TERMWAY_CELL_SIZE=10x22
 | `--width` | `<PIXELS>` | Virtual display resolution width | Auto-calculated from terminal |
 | `--height` | `<PIXELS>` | Virtual display resolution height | Auto-calculated from terminal |
 | `--fps` | `<FPS>` | Target frame rate limit | `30` |
+| `--hud` | - | Show real-time performance HUD overlay (FPS, encode time, bandwidth, damage tiles) | Disabled |
+| `--no-splash` | - | Disable the animated startup splash screen while waiting for the first window | Disabled |
 | `--demo` | - | Launch built-in demo application (GTK3 for Wayland, Tkinter for X11) | - |
 | `-V`, `--version` | - | Print version information | - |
 | `-h`, `--help` | - | Print help information | - |
