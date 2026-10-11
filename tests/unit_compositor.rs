@@ -815,3 +815,90 @@ fn test_free_x11_display_candidates_never_returns_host_displays() {
         );
     }
 }
+
+#[test]
+fn test_foreground_window_occludes_background_ssd_decorations() {
+    use smithay::reexports::wayland_server::Display;
+    use smithay::utils::{Point, Size};
+    use termway::compositor::renderer::TermwayRenderer;
+    use termway::compositor::state::TermwayState;
+    use termway::compositor::window::ManagedWindow;
+
+    let display = Display::<TermwayState>::new().expect("Failed to create Wayland Display");
+    let dh = display.handle();
+
+    let mut state = TermwayState::new(&dh, 800, 600, true);
+    state.show_splash = false;
+    let mut renderer = TermwayRenderer::new(800, 600).expect("Failed to create TermwayRenderer");
+
+    // Background SSD window (like xeyes) at (400, 100), size 200x150.
+    let mut bg_xeyes = ManagedWindow::new_dummy(1, "xeyes".into(), Point::from((400, 100)), Size::from((200, 150)));
+    bg_xeyes.has_ssd = true;
+    bg_xeyes.active = false;
+    let bg_frame = bg_xeyes.frame_geometry();
+    let border_y = bg_frame.loc.y as usize;
+
+    // Foreground CSD window (like gnome-terminal) at (50, 50), size 450x400 (x=50..500, y=50..450).
+    // This overlaps the left half of xeyes's titlebar and border (x=bg_frame.loc.x..500).
+    let mut fg_term = ManagedWindow::new_dummy(2, "gnome-terminal".into(), Point::from((50, 50)), Size::from((450, 400)));
+    fg_term.has_ssd = false;
+    fg_term.active = true;
+
+    state.wm.windows.push(bg_xeyes);
+    state.wm.windows.push(fg_term);
+
+    let pixels = renderer.render(&state).expect("Render failed");
+
+    let get_rgb = |x: usize, y: usize| -> (u8, u8, u8) {
+        let idx = (y * 800 + x) * 4;
+        (pixels[idx], pixels[idx + 1], pixels[idx + 2])
+    };
+
+    // Inside the overlapped region of xeyes's top border (x=450, y=border_y),
+    // the foreground window must have occluded xeyes's inactive_border [45, 48, 55].
+    let (r_occ, g_occ, b_occ) = get_rgb(450, border_y);
+    assert!(
+        !(r_occ == 45 && g_occ == 48 && b_occ == 55),
+        "Background SSD window top border at (450, {}) should be occluded by foreground window, got {:?}",
+        border_y,
+        (r_occ, g_occ, b_occ)
+    );
+
+    // Outside the foreground window (x=550, y=border_y), xeyes's top border [45, 48, 55] MUST still be visible.
+    let (r_vis, g_vis, b_vis) = get_rgb(550, border_y);
+    assert_eq!(
+        (r_vis, g_vis, b_vis),
+        (45, 48, 55),
+        "Uncovered portion of background SSD window border at (550, {}) should remain visible",
+        border_y
+    );
+}
+
+#[test]
+fn test_sixel_neutral_gray_quantization() {
+    use termway::protocol::SixelEncoder;
+
+    // Two rows of 4 pixels:
+    // Row 0: warm light gray RGB(225, 221, 223) (previously quantized to pink #251 -> 100;85;100)
+    // Row 1: neutral light gray RGB(218, 216, 218) (previously quantized to light purple #219 -> 85;85;100)
+    let mut rgba = Vec::with_capacity(4 * 2 * 4);
+    for _ in 0..4 {
+        rgba.extend_from_slice(&[225, 221, 223, 255]);
+    }
+    for _ in 0..4 {
+        rgba.extend_from_slice(&[218, 216, 218, 255]);
+    }
+
+    let encoded = SixelEncoder::encode_fullscreen_frame(&rgba, 4, 2);
+    // Both rows have |max - min| <= 12 and G in 192..=223 (g=6 -> 85%), so both map to neutral gray #219;2;85;85;85
+    assert!(
+        encoded.contains("#219;2;85;85;85"),
+        "Expected neutral gray palette #219;2;85;85;85 in Sixel output, got: {}",
+        encoded
+    );
+    assert!(
+        !encoded.contains(";2;100;85;100") && !encoded.contains(";2;85;85;100"),
+        "Sixel output should not contain pink (100;85;100) or purple (85;85;100) for near-neutral grays: {}",
+        encoded
+    );
+}

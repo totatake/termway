@@ -40,7 +40,7 @@ impl SixelEncoder {
                 }
             } else {
                 for (i, pixel) in rgba.chunks_exact(4).take(total_pixels).enumerate() {
-                    let idx = (pixel[0] & 0xE0) | ((pixel[1] & 0xE0) >> 3) | (pixel[2] >> 6);
+                    let idx = Self::quantize_pixel_rgb332(pixel[0], pixel[1], pixel[2]);
                     quantized[i] = idx;
                     used_colors[idx as usize] = true;
                 }
@@ -49,7 +49,7 @@ impl SixelEncoder {
         #[cfg(not(target_arch = "x86_64"))]
         {
             for (i, pixel) in rgba.chunks_exact(4).take(total_pixels).enumerate() {
-                let idx = (pixel[0] & 0xE0) | ((pixel[1] & 0xE0) >> 3) | (pixel[2] >> 6);
+                let idx = Self::quantize_pixel_rgb332(pixel[0], pixel[1], pixel[2]);
                 quantized[i] = idx;
                 used_colors[idx as usize] = true;
             }
@@ -63,7 +63,13 @@ impl SixelEncoder {
                 let b = i & 3;
                 let r_pct = r * 100 / 7;
                 let g_pct = g * 100 / 7;
-                let b_pct = b * 100 / 3;
+                // Keep the 8 diagonal grayscale entries (r == g && b == r >> 1) strictly neutral
+                // instead of skewing toward blue/purple (b * 100 / 3) or olive.
+                let b_pct = if r == g && b == (r >> 1) {
+                    r_pct
+                } else {
+                    b * 100 / 3
+                };
                 out.push(b'#');
                 Self::emit_u8_ascii(out, i as u8);
                 out.extend_from_slice(b";2;");
@@ -292,6 +298,18 @@ impl SixelEncoder {
         }
     }
 
+    #[inline(always)]
+    fn quantize_pixel_rgb332(r: u8, g: u8, b: u8) -> u8 {
+        let max_c = r.max(g).max(b);
+        let min_c = r.min(g).min(b);
+        if max_c - min_c <= 12 {
+            let luma = g & 0xE0;
+            luma | (luma >> 3) | (luma >> 6)
+        } else {
+            (r & 0xE0) | ((g & 0xE0) >> 3) | (b >> 6)
+        }
+    }
+
     #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "avx2")]
     unsafe fn quantize_rgb332_avx2(
@@ -305,9 +323,9 @@ impl SixelEncoder {
         let src_ptr = rgba.as_ptr();
         let dst_ptr = quantized.as_mut_ptr();
 
-        let mask_r = _mm256_set1_epi32(0x0000_00E0);
-        let mask_g = _mm256_set1_epi32(0x0000_E000);
-        let mask_b = _mm256_set1_epi32(0x00C0_0000);
+        let mask_byte = _mm256_set1_epi32(0x0000_00FF);
+        let mask_e0 = _mm256_set1_epi32(0x0000_00E0);
+        let gray_thresh = _mm256_set1_epi32(13);
         let shuf = _mm256_setr_epi8(
             0, 4, 8, 12, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
             0, 4, 8, 12, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
@@ -316,10 +334,23 @@ impl SixelEncoder {
         let mut i = 0usize;
         while i + 8 <= total_pixels {
             let v = _mm256_loadu_si256(src_ptr.add(i * 4) as *const __m256i);
-            let r = _mm256_and_si256(v, mask_r);
-            let g = _mm256_srli_epi32(_mm256_and_si256(v, mask_g), 11);
-            let b = _mm256_srli_epi32(_mm256_and_si256(v, mask_b), 22);
-            let idx32 = _mm256_or_si256(_mm256_or_si256(r, g), b);
+            let r8 = _mm256_and_si256(v, mask_byte);
+            let g8 = _mm256_and_si256(_mm256_srli_epi32(v, 8), mask_byte);
+            let b8 = _mm256_and_si256(_mm256_srli_epi32(v, 16), mask_byte);
+
+            let r_top = _mm256_and_si256(r8, mask_e0);
+            let g_top = _mm256_and_si256(g8, mask_e0);
+            let b_top = _mm256_srli_epi32(b8, 6);
+            let color_idx32 = _mm256_or_si256(_mm256_or_si256(r_top, _mm256_srli_epi32(g_top, 3)), b_top);
+
+            let max_c = _mm256_max_epi32(r8, _mm256_max_epi32(g8, b8));
+            let min_c = _mm256_min_epi32(r8, _mm256_min_epi32(g8, b8));
+            let is_gray = _mm256_cmpgt_epi32(gray_thresh, _mm256_sub_epi32(max_c, min_c));
+            let gray_idx32 = _mm256_or_si256(
+                _mm256_or_si256(g_top, _mm256_srli_epi32(g_top, 3)),
+                _mm256_srli_epi32(g_top, 6),
+            );
+            let idx32 = _mm256_blendv_epi8(color_idx32, gray_idx32, is_gray);
             let packed = _mm256_shuffle_epi8(idx32, shuf);
 
             let lo4 = _mm256_cvtsi256_si32(packed) as u32;
@@ -341,7 +372,7 @@ impl SixelEncoder {
 
         while i < total_pixels {
             let p = i * 4;
-            let idx = (rgba[p] & 0xE0) | ((rgba[p + 1] & 0xE0) >> 3) | (rgba[p + 2] >> 6);
+            let idx = Self::quantize_pixel_rgb332(rgba[p], rgba[p + 1], rgba[p + 2]);
             quantized[i] = idx;
             used_colors[idx as usize] = true;
             i += 1;
