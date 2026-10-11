@@ -217,6 +217,9 @@ impl<'a> DecorationCanvas<'a> {
 
     #[inline]
     fn set_pixel(&mut self, x: i32, y: i32, color: [u8; 4]) {
+        if x < 0 || y < 0 || x >= self.inner.width || y >= self.inner.height {
+            return;
+        }
         let offset = y as usize * self.inner.stride + x as usize * 4;
         self.inner.data[offset] = color[0];
         self.inner.data[offset + 1] = color[1];

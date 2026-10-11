@@ -413,9 +413,9 @@ fn test_titlebar_buttons_geometry_and_hit_testing() {
     let min_hit = win.minimize_button_hit_geometry();
 
     // Verify non-overlapping distinct hit regions from right to left
-    assert_eq!(close_hit.size.w, 24);
-    assert_eq!(max_hit.size.w, 24);
-    assert_eq!(min_hit.size.w, 24);
+    assert_eq!(close_hit.size.w, 22);
+    assert_eq!(max_hit.size.w, 20);
+    assert_eq!(min_hit.size.w, 20);
 
     assert_eq!(max_hit.loc.x + max_hit.size.w, close_hit.loc.x);
     assert_eq!(min_hit.loc.x + min_hit.size.w, max_hit.loc.x);

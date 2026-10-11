@@ -192,19 +192,33 @@ impl XwmHandler for TermwayState {
             let top_margin = managed.map(|mw| if mw.has_ssd { TITLEBAR_HEIGHT + BORDER_WIDTH * 2 } else { 0 }).unwrap_or(0);
             let mut max_w = (self.width as i32 - cur_loc.x - side_margin).max(160);
             let mut max_h = (self.height as i32 - cur_loc.y - top_margin).max(100);
-            if let Some(mw) = managed.filter(|mw| mw.pending_unmaximize) {
-                // Do not allow in-flight configure requests to enlarge the window back to maximized
-                let is_old_maximized = w.map(|v| v as i32 >= self.width as i32 - 10).unwrap_or(false);
-                if is_old_maximized && mw.unmaximize_in_flight_count < 30 {
-                    max_w = max_w.min(mw.size.w);
-                    max_h = max_h.min(mw.size.h);
+            if let Some(mw) = managed {
+                if mw.is_maximized {
+                    // Do not allow client configure request to resize away from maximized state
+                    max_w = max_w.max(mw.size.w);
+                    max_h = max_h.max(mw.size.h);
+                } else if mw.pending_unmaximize {
+                    // Do not allow in-flight configure requests to enlarge the window back to maximized
+                    let is_old_maximized = w.map(|v| v as i32 >= self.width as i32 - 10).unwrap_or(false);
+                    if is_old_maximized && mw.unmaximize_in_flight_count < 30 {
+                        max_w = max_w.min(mw.size.w);
+                        max_h = max_h.min(mw.size.h);
+                    }
                 }
             }
             // Unspecified width/height keeps the current size (e.g. move-only requests)
             let cur_w = managed.map(|mw| mw.size.w).unwrap_or(max_w);
             let cur_h = managed.map(|mw| mw.size.h).unwrap_or(max_h);
-            let target_w = w.map(|v| v as i32).unwrap_or(cur_w).min(max_w);
-            let target_h = h.map(|v| v as i32).unwrap_or(cur_h).min(max_h);
+            let target_w = if managed.map(|mw| mw.is_maximized).unwrap_or(false) {
+                cur_w
+            } else {
+                w.map(|v| v as i32).unwrap_or(cur_w).min(max_w)
+            };
+            let target_h = if managed.map(|mw| mw.is_maximized).unwrap_or(false) {
+                cur_h
+            } else {
+                h.map(|v| v as i32).unwrap_or(cur_h).min(max_h)
+            };
             Rectangle::new(cur_loc, (target_w, target_h).into())
         } else {
             Rectangle::new(

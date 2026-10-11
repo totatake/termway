@@ -479,22 +479,11 @@ pub fn dispatch_mouse_event(
 
             if let Some(id) = hit_window_id {
                 if clicked_close {
-                    // Close target window
+                    // Close target window gracefully
+                    crate::compositor::log_line(format!("[input] Close button clicked for window {}", id));
                     if let Some(pos) = state.managed_windows.iter().position(|w| w.id == id) {
                         let win = state.managed_windows.remove(pos);
                         win.close();
-
-                        // If this was an X11 surface, send SIGTERM to its process if PID is available
-                        if let WindowSurface::X11(ref xwin) = win.surface {
-                            if let Ok(pid) = xwin.get_client_pid() {
-                                if pid > 0 {
-                                    let _ = nix::sys::signal::kill(
-                                        nix::unistd::Pid::from_raw(pid as i32),
-                                        nix::sys::signal::Signal::SIGTERM,
-                                    );
-                                }
-                            }
-                        }
 
                         // If all managed windows closed, terminate compositor or client process
                         if state.managed_windows.is_empty() {

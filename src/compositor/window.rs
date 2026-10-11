@@ -219,13 +219,13 @@ impl ManagedWindow {
         Rectangle::new((btn_x, btn_y).into(), (BUTTON_SIZE, BUTTON_SIZE).into())
     }
 
-    /// Expanded hit test area for close button (24px width and full titlebar height for terminal mouse cells)
+    /// Expanded hit test area for close button (spans from right edge to divider before maximize button)
     pub fn close_button_hit_geometry(&self) -> Rectangle<i32, Logical> {
         if !self.has_ssd {
             return Rectangle::new((0, 0).into(), (0, 0).into());
         }
         let tb = self.titlebar_geometry();
-        let hit_w = 24;
+        let hit_w = BUTTON_SIZE + 6; // 22px: covers tb.size.w - 22 to tb.size.w
         let btn_x = tb.loc.x + tb.size.w - hit_w;
         Rectangle::new((btn_x, tb.loc.y).into(), (hit_w, TITLEBAR_HEIGHT).into())
     }
@@ -241,14 +241,15 @@ impl ManagedWindow {
         Rectangle::new((btn_x, btn_y).into(), (BUTTON_SIZE, BUTTON_SIZE).into())
     }
 
-    /// Expanded hit test area for maximize button (24px width)
+    /// Expanded hit test area for maximize button (centered on maximize button, immediately adjacent to close hit area)
     pub fn maximize_button_hit_geometry(&self) -> Rectangle<i32, Logical> {
         if !self.has_ssd {
             return Rectangle::new((0, 0).into(), (0, 0).into());
         }
         let tb = self.titlebar_geometry();
-        let hit_w = 24;
-        let btn_x = tb.loc.x + tb.size.w - hit_w * 2;
+        let close_w = BUTTON_SIZE + 6; // 22px
+        let hit_w = BUTTON_SIZE + 4;  // 20px: covers tb.size.w - 42 to tb.size.w - 22
+        let btn_x = tb.loc.x + tb.size.w - close_w - hit_w;
         Rectangle::new((btn_x, tb.loc.y).into(), (hit_w, TITLEBAR_HEIGHT).into())
     }
 
@@ -263,14 +264,16 @@ impl ManagedWindow {
         Rectangle::new((btn_x, btn_y).into(), (BUTTON_SIZE, BUTTON_SIZE).into())
     }
 
-    /// Expanded hit test area for minimize button (24px width)
+    /// Expanded hit test area for minimize button (to the left of maximize hit area)
     pub fn minimize_button_hit_geometry(&self) -> Rectangle<i32, Logical> {
         if !self.has_ssd {
             return Rectangle::new((0, 0).into(), (0, 0).into());
         }
         let tb = self.titlebar_geometry();
-        let hit_w = 24;
-        let btn_x = tb.loc.x + tb.size.w - hit_w * 3;
+        let close_w = BUTTON_SIZE + 6; // 22px
+        let max_w = BUTTON_SIZE + 4;   // 20px
+        let hit_w = BUTTON_SIZE + 4;   // 20px: covers tb.size.w - 62 to tb.size.w - 42
+        let btn_x = tb.loc.x + tb.size.w - close_w - max_w - hit_w;
         Rectangle::new((btn_x, tb.loc.y).into(), (hit_w, TITLEBAR_HEIGHT).into())
     }
 
