@@ -1098,8 +1098,12 @@ impl TermwayCompositor {
         }
 
         let mode_desc = self.backend.name();
-        let overlay_len = mode_desc.len() + 37;
-        let overlay_col = self.term_cols.saturating_sub(overlay_len as u16 + 2).max(1);
+        let overlay_len = mode_desc.len() + 30;
+        let overlay_col = self
+            .term_cols
+            .saturating_sub(overlay_len as u16)
+            .saturating_add(1)
+            .max(1);
         let max_cols = overlay_col.saturating_sub(2);
         if max_cols < 6 {
             self.taskbar_chips.clear();

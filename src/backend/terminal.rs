@@ -122,14 +122,21 @@ impl TerminalBackend {
                         stat_start = std::time::Instant::now();
                     }
 
-                    let overlay_text = format!(
-                        "\x1b[40;37m [{}] [F12: Shot] [Ctrl-Q: Exit] \x1b[0m",
+                    let visible_overlay = format!(
+                        " [{}] [F12: Shot] [Ctrl-Q: Exit]",
                         mode_desc
                     );
-                    let overlay_len = mode_desc.len() + 32;
+                    let overlay_len = visible_overlay.chars().count();
                     let overlay_row = job.term_rows;
-                    let overlay_col = job.term_cols.saturating_sub(overlay_len as u16 + 2).max(1);
-                    let overlay_seq = format!("\x1b[{};{}H{}", overlay_row, overlay_col, overlay_text);
+                    let overlay_col = job
+                        .term_cols
+                        .saturating_sub(overlay_len as u16)
+                        .saturating_add(1)
+                        .max(1);
+                    let overlay_seq = format!(
+                        "\x1b[?7l\x1b[{};{}H\x1b[40;37m{}\x1b[0m\x1b[?7h",
+                        overlay_row, overlay_col, visible_overlay
+                    );
 
                     let taskbar_str = job.taskbar.as_deref().unwrap_or("");
                     let taskbar_seq = format!("\x1b[{};1H\x1b[2K{}", overlay_row, taskbar_str);
@@ -142,21 +149,33 @@ impl TerminalBackend {
                             clear_seq.push_str("\x1b[2J\x1b[H\x1b_Ga=d,d=a\x1b\\");
                         }
                     } else if prev_hud_shown && !job.show_hud {
-                        clear_seq.push_str("\x1b[1;1H\x1b[2K");
+                        for r in 2..=5 {
+                            clear_seq.push_str(&format!("\x1b[{};1H\x1b[2K", r));
+                        }
                     }
                     prev_hud_shown = job.show_hud;
 
-                    let hud_seq = if job.show_hud && job.term_cols >= 50 {
-                        let text_part = format!(
-                            " {:>4.1} FPS │ {}x{} │ {:>5.1} KB/s │ {:>4.1}ms ",
-                            fps, job.width, job.height, kb_per_sec, last_encode_ms
-                        );
-                        let vis_len = 9 + text_part.chars().count();
-                        let hud_col = job.term_cols.saturating_sub(vis_len as u16).max(1);
-                        format!(
-                            "\x1b[1;{}H\x1b[44;97m termway \x1b[48;5;236;97m{}\x1b[0m",
-                            hud_col, text_part
-                        )
+                    let hud_seq = if job.show_hud && job.term_cols >= 20 && job.term_rows >= 6 {
+                        let res_str = format!("{}x{}", job.width, job.height);
+                        let lines = [
+                            format!(" {:>8.1} FPS ", fps),
+                            format!(" {:>12} ", res_str),
+                            format!(" {:>7.1} KB/s ", kb_per_sec),
+                            format!(" {:>9.1} ms ", last_encode_ms),
+                        ];
+                        let mut seq = String::from("\x1b[?7l");
+                        for (idx, line) in lines.iter().enumerate() {
+                            let row = 2 + idx as u16;
+                            let vis_len = line.chars().count() as u16;
+                            let col = job
+                                .term_cols
+                                .saturating_sub(vis_len)
+                                .saturating_add(1)
+                                .max(1);
+                            seq.push_str(&format!("\x1b[{};{}H\x1b[48;5;236;97m{}\x1b[0m", row, col, line));
+                        }
+                        seq.push_str("\x1b[?7h");
+                        seq
                     } else {
                         String::new()
                     };
