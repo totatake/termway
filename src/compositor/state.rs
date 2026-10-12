@@ -28,7 +28,26 @@ use smithay::{
         shell::xdg::{decoration::XdgDecorationState, ToplevelSurface, XdgShellState},
         shm::ShmState,
     },
+    reexports::wayland_protocols::wp::text_input::zv3::server::{
+        zwp_text_input_manager_v3::ZwpTextInputManagerV3,
+        zwp_text_input_v3::ZwpTextInputV3,
+    },
 };
+
+#[derive(Debug, Clone)]
+pub struct TrackedTextInput {
+    pub instance: ZwpTextInputV3,
+    pub serial: u32,
+    pub enabled: bool,
+    pub pending_enable: Option<bool>,
+}
+
+#[derive(Debug, Clone)]
+pub struct UnicodeKeySlot {
+    pub keycode: u32,
+    pub xkb_name: String,
+    pub mapped_char: Option<char>,
+}
 
 #[derive(Default)]
 pub struct ClientState {
@@ -57,6 +76,12 @@ pub struct TermwayState {
 
     pub output: Output,
     pub data_device_state: DataDeviceState,
+    pub focused_surface: Option<WlSurface>,
+    pub text_inputs: Vec<TrackedTextInput>,
+    pub clipboard_text: Vec<u8>,
+    pub base_keymap_string: String,
+    pub unicode_key_slots: Vec<UnicodeKeySlot>,
+    pub unicode_slot_cursor: usize,
 
     /// Raw xdg toplevels known to the compositor (used when the built-in WM is disabled
     /// and for liveness tracking). Managed window state lives in `wm`.
@@ -96,6 +121,9 @@ impl TermwayState {
         let keyboard = seat.add_keyboard(Default::default(), 200, 25).unwrap();
         let pointer = seat.add_pointer();
 
+        // Advertise zwp_text_input_manager_v3 for native Wayland IME / UTF-8 text input
+        dh.create_global::<Self, ZwpTextInputManagerV3, _>(1, ());
+
         // Initialize output and advertise it to Wayland clients
         let output = Output::new(
             "termway-0".into(),
@@ -117,7 +145,7 @@ impl TermwayState {
 
         let data_device_state = DataDeviceState::new::<Self>(dh);
 
-        Self {
+        let mut state = Self {
             dh: dh.clone(),
             compositor_state,
             xdg_shell_state,
@@ -130,6 +158,12 @@ impl TermwayState {
             pointer,
             output,
             data_device_state,
+            focused_surface: None,
+            text_inputs: Vec::new(),
+            clipboard_text: Vec::new(),
+            base_keymap_string: String::new(),
+            unicode_key_slots: Vec::new(),
+            unicode_slot_cursor: 0,
             toplevels: Vec::new(),
             x11_windows: Vec::new(),
             wm: WindowManager::new(),
@@ -149,7 +183,57 @@ impl TermwayState {
             splash_info: format!("Wayland + XWayland | {}x{}", width, height),
             splash_command: String::from("gui-app"),
             start_time: std::time::Instant::now(),
-        }
+        };
+        state.init_unicode_keymap_cache();
+        state
+    }
+
+    /// Initializes the base XKB keymap string and discovers spare XKB keycodes (140..=247)
+    /// that can be dynamically remapped to Unicode keysyms (`Uxxxx`) for non-ASCII text input.
+    fn init_unicode_keymap_cache(&mut self) {
+        use smithay::input::keyboard::{xkb, Keycode};
+        let keyboard = self.keyboard.clone();
+        let (base_keymap, slots) = keyboard.with_xkb_state(self, |context| {
+            let xkb = context.xkb().lock().unwrap();
+            let keymap = unsafe { xkb.keymap() };
+            let base_str = keymap.get_as_string(xkb::KEYMAP_FORMAT_TEXT_V1);
+            let mut slots = Vec::new();
+            for kc in 140..=247u32 {
+                if let Some(name) = keymap.key_get_name(Keycode::new(kc)) {
+                    let syms = keymap.key_get_syms_by_level(Keycode::new(kc), 0, 0);
+                    if syms.is_empty() {
+                        slots.push(UnicodeKeySlot {
+                            keycode: kc,
+                            xkb_name: name.to_string(),
+                            mapped_char: None,
+                        });
+                        if slots.len() >= 64 {
+                            break;
+                        }
+                    }
+                }
+            }
+            if slots.len() < 64 {
+                for kc in (180..=247u32).rev() {
+                    if slots.iter().any(|s| s.keycode == kc) {
+                        continue;
+                    }
+                    if let Some(name) = keymap.key_get_name(Keycode::new(kc)) {
+                        slots.push(UnicodeKeySlot {
+                            keycode: kc,
+                            xkb_name: name.to_string(),
+                            mapped_char: None,
+                        });
+                        if slots.len() >= 64 {
+                            break;
+                        }
+                    }
+                }
+            }
+            (base_str, slots)
+        });
+        self.base_keymap_string = base_keymap;
+        self.unicode_key_slots = slots;
     }
 
     /// Moves keyboard focus to the given surface (or clears it).

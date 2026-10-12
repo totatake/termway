@@ -135,3 +135,30 @@ fn test_keyboard_modified_arrow_and_selection_keys() {
     assert!(KeyboardParser::parse(b"\x1b[1;").is_none());
 }
 
+#[test]
+fn test_keyboard_japanese_utf8_and_partial_sequences() {
+    let text = "日本語テスト";
+    let mut buf = text.as_bytes().to_vec();
+    // Append an incomplete trailing UTF-8 byte (e.g., first byte of 'あ' = 0xE3)
+    buf.push(0xE3);
+
+    let mut parsed_chars = Vec::new();
+    while let Some((ev, consumed)) = KeyboardParser::parse(&buf) {
+        if let KeyCode::Char(c) = ev.code {
+            parsed_chars.push(c);
+        }
+        buf.drain(..consumed);
+    }
+
+    let result: String = parsed_chars.into_iter().collect();
+    assert_eq!(result, "日本語テスト");
+    // Only the incomplete 1-byte prefix of 'あ' remains waiting for the next read
+    assert_eq!(buf, vec![0xE3]);
+
+    // Once the remaining 2 bytes of 'あ' (0x81, 0x82) arrive, it parses cleanly
+    buf.extend_from_slice(&[0x81, 0x82]);
+    let (ev, consumed) = KeyboardParser::parse(&buf).expect("parse completed 'あ'");
+    assert_eq!(consumed, 3);
+    assert_eq!(ev.code, KeyCode::Char('あ'));
+}
+

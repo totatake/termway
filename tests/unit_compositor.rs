@@ -902,3 +902,53 @@ fn test_sixel_neutral_gray_quantization() {
         encoded
     );
 }
+
+#[test]
+fn test_utf8_japanese_input_xkb_keymap_and_text_input_v3() {
+    use smithay::input::keyboard::Keycode;
+    use smithay::reexports::wayland_server::Display;
+    use termway::compositor::input::dispatch_utf8_text;
+    use termway::compositor::state::TermwayState;
+
+    let display = Display::<TermwayState>::new().expect("Failed to create Wayland Display");
+    let dh = display.handle();
+
+    let mut state = TermwayState::new(&dh, 800, 600, true);
+    assert!(
+        state.unicode_key_slots.len() >= 32,
+        "Expected at least 32 spare XKB keycode slots for Unicode input, got {}",
+        state.unicode_key_slots.len()
+    );
+    assert!(!state.base_keymap_string.is_empty());
+
+    // Dispatch Japanese string (Hiragana, Katakana, Kanji, Emoji)
+    let sample = "日本語あいうアイウ🎉";
+    dispatch_utf8_text(&mut state, sample);
+
+    // Verify that each unique character in `sample` is mapped to a distinct XKB keycode
+    // and that the compiled XKB state translates each keycode back to the exact UTF-8 character.
+    let keyboard = state.keyboard.clone();
+    for expected_ch in sample.chars() {
+        let slot = state
+            .unicode_key_slots
+            .iter()
+            .find(|s| s.mapped_char == Some(expected_ch))
+            .cloned()
+            .unwrap_or_else(|| panic!("Character {:?} was not mapped to any UnicodeKeySlot", expected_ch));
+        let kc = Keycode::new(slot.keycode);
+        let actual_utf8 = keyboard.with_xkb_state(&mut state, |context| {
+            let xkb = context.xkb().lock().unwrap();
+            let xkb_state = unsafe { xkb.state() };
+            xkb_state.key_get_utf8(kc)
+        });
+        assert_eq!(
+            actual_utf8,
+            expected_ch.to_string(),
+            "XKB keycode {} (<{}>) should produce {:?}, got {:?}",
+            slot.keycode,
+            slot.xkb_name,
+            expected_ch,
+            actual_utf8
+        );
+    }
+}

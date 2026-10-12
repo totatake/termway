@@ -477,6 +477,11 @@ impl TermwayCompositor {
                     cmd.env("QT_QPA_PLATFORM", "wayland;xcb");
                     cmd.env("CLUTTER_BACKEND", "wayland");
                     cmd.env("SDL_VIDEODRIVER", "wayland,x11");
+                    cmd.env("MOZ_ENABLE_WAYLAND", "1");
+                    cmd.env_remove("GTK_IM_MODULE");
+                    cmd.env_remove("QT_IM_MODULE");
+                    cmd.env_remove("SDL_IM_MODULE");
+                    cmd.env_remove("XMODIFIERS");
                     if self.state.enable_wm {
                         cmd.env("GTK_CSD", "0");
                         cmd.env("QT_WAYLAND_DISABLE_WINDOWDECORATION", "1");
@@ -995,6 +1000,25 @@ impl TermwayCompositor {
                     self.input_buffer.drain(..consumed);
                     continue;
                 }
+                if let KeyCode::Char(first_ch) = key_ev.code {
+                    if !first_ch.is_ascii() {
+                        let mut utf8_batch = String::new();
+                        utf8_batch.push(first_ch);
+                        self.input_buffer.drain(..consumed);
+                        while let Some((next_ev, next_consumed)) = KeyboardParser::parse(&self.input_buffer) {
+                            if let KeyCode::Char(next_ch) = next_ev.code {
+                                if !next_ch.is_ascii() {
+                                    utf8_batch.push(next_ch);
+                                    self.input_buffer.drain(..next_consumed);
+                                    continue;
+                                }
+                            }
+                            break;
+                        }
+                        self::input::dispatch_utf8_text(&mut self.state, &utf8_batch);
+                        continue;
+                    }
+                }
                 self.dispatch_key_event(key_ev.code);
                 self.input_buffer.drain(..consumed);
                 continue;
@@ -1014,6 +1038,8 @@ impl TermwayCompositor {
 
     fn handle_bracketed_paste(&mut self, text: String) {
         log_line(format!("[termway] Bracketed paste received ({} bytes)", text.len()));
+        let bytes = text.into_bytes();
+        self.state.clipboard_text = bytes.clone();
         smithay::wayland::selection::data_device::set_data_device_selection(
             &self.state.dh,
             &self.state.seat,
@@ -1023,8 +1049,21 @@ impl TermwayCompositor {
                 "UTF8_STRING".to_string(),
                 "STRING".to_string(),
             ],
-            text.into_bytes(),
+            bytes,
         );
+        if let Some(ref mut xwm) = self.state.xwm {
+            let _ = xwm.new_selection(
+                smithay::wayland::selection::SelectionTarget::Clipboard,
+                Some(vec![
+                    "text/plain;charset=utf-8".to_string(),
+                    "text/plain".to_string(),
+                    "UTF8_STRING".to_string(),
+                    "TEXT".to_string(),
+                    "STRING".to_string(),
+                ]),
+            );
+            let _ = xwm.get_randr_primary_output();
+        }
         self.dispatch_key_event(KeyCode::Ctrl('v'));
     }
 

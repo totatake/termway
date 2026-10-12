@@ -374,7 +374,15 @@ impl XwmHandler for TermwayState {
         }
     }
 
-    fn send_selection(&mut self, _xwm: XwmId, _selection: SelectionTarget, _mime_type: String, _fd: OwnedFd) {}
+    fn allow_selection_access(&mut self, _xwm: XwmId, _selection: SelectionTarget) -> bool {
+        true
+    }
+
+    fn send_selection(&mut self, _xwm: XwmId, _selection: SelectionTarget, _mime_type: String, fd: OwnedFd) {
+        use std::io::Write;
+        let mut file = std::fs::File::from(fd);
+        let _ = file.write_all(&self.clipboard_text);
+    }
 }
 
 delegate_xwayland_shell!(TermwayState);

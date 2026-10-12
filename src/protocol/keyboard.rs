@@ -240,9 +240,16 @@ impl KeyboardParser {
                 ))
             }
             _ => {
-                // UTF-8 character
-                let s = std::str::from_utf8(bytes).ok()?;
-                let ch = s.chars().next()?;
+                // UTF-8 character (at most 4 bytes for the first codepoint)
+                let head = &bytes[..bytes.len().min(4)];
+                let valid_str = match std::str::from_utf8(head) {
+                    Ok(s) => s,
+                    Err(e) if e.valid_up_to() > 0 => {
+                        std::str::from_utf8(&head[..e.valid_up_to()]).ok()?
+                    }
+                    Err(_) => return None,
+                };
+                let ch = valid_str.chars().next()?;
                 Some((
                     KeyEvent {
                         code: KeyCode::Char(ch),

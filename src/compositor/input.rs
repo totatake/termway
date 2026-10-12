@@ -207,6 +207,217 @@ pub fn dispatch_key_event(state: &mut TermwayState, code: KeyCode) {
     }
 }
 
+/// Patches the `xkb_symbols` section of a `KEYMAP_FORMAT_TEXT_V1` keymap string
+/// with `override key <NAME> { [ UXXXX ] };` entries for each active [`super::state::UnicodeKeySlot`].
+pub fn build_patched_xkb_keymap(
+    base_keymap: &str,
+    slots: &[super::state::UnicodeKeySlot],
+) -> Option<String> {
+    use std::fmt::Write as _;
+    let sym_start = base_keymap.find("xkb_symbols")?;
+    let mut brace_depth = 0usize;
+    let mut seen_open = false;
+    let mut close_brace_idx = None;
+
+    for (offset, ch) in base_keymap[sym_start..].char_indices() {
+        if ch == '{' {
+            brace_depth += 1;
+            seen_open = true;
+        } else if ch == '}' {
+            brace_depth = brace_depth.saturating_sub(1);
+            if seen_open && brace_depth == 0 {
+                close_brace_idx = Some(sym_start + offset);
+                break;
+            }
+        }
+    }
+
+    let insert_pos = close_brace_idx?;
+    let mut overrides = String::new();
+    for slot in slots {
+        if let Some(ch) = slot.mapped_char {
+            let _ = writeln!(
+                overrides,
+                "    override key <{}> {{ [ U{:04X} ] }};",
+                slot.xkb_name,
+                ch as u32
+            );
+        }
+    }
+
+    let mut out = String::with_capacity(base_keymap.len() + overrides.len() + 2);
+    out.push_str(&base_keymap[..insert_pos]);
+    out.push('\n');
+    out.push_str(&overrides);
+    out.push_str(&base_keymap[insert_pos..]);
+    Some(out)
+}
+
+/// Attempts to commit `text` directly via Wayland `zwp_text_input_v3` if the focused client
+/// has an enabled `ZwpTextInputV3` instance.
+pub fn commit_via_text_input_v3(state: &mut TermwayState, text: &str) -> bool {
+    use smithay::reexports::wayland_server::Resource;
+    state.text_inputs.retain(|ti| ti.instance.is_alive());
+    let Some(ref focus) = state.focused_surface else {
+        return false;
+    };
+    if !focus.is_alive() {
+        return false;
+    }
+    let focus_id = focus.id();
+    let mut committed = false;
+    for ti in &state.text_inputs {
+        if ti.instance.id().same_client_as(&focus_id)
+            && (ti.enabled || ti.pending_enable == Some(true))
+        {
+            ti.instance.commit_string(Some(text.to_string()));
+            ti.instance.done(ti.serial);
+            committed = true;
+        }
+    }
+    committed
+}
+
+/// Dispatches a UTF-8 string (such as Japanese IME output from the host terminal) to the
+/// currently focused window.
+///
+/// 1. First tries native Wayland `zwp_text_input_v3` (`commit_string` + `done`) if the focused
+///    Wayland client has enabled text input.
+/// 2. Otherwise dynamically maps spare XKB keycodes to `Uxxxx` Unicode keysyms on the seat's
+///    `wl_keyboard` and synthesizes key presses, which works across both Wayland and XWayland
+///    (X11) applications (including Firefox, XTerm, GTK/Qt apps).
+pub fn dispatch_utf8_text(state: &mut TermwayState, text: &str) {
+    if text.is_empty() {
+        return;
+    }
+
+    // 1. Try native Wayland zwp_text_input_v3 first
+    if commit_via_text_input_v3(state, text) {
+        crate::compositor::log_line(format!(
+            "[input] Committed UTF-8 text via zwp_text_input_v3 ({} bytes)",
+            text.len()
+        ));
+        state.dirty = true;
+        return;
+    }
+
+    // 2. Fallback: dynamic XKB Unicode keymap typing (works for both XWayland and Wayland)
+    let num_slots = state.unicode_key_slots.len();
+    if num_slots == 0 || state.base_keymap_string.is_empty() {
+        for c in text.chars() {
+            if c.is_ascii() {
+                dispatch_key_event(state, KeyCode::Char(c));
+            }
+        }
+        return;
+    }
+
+    let chars: Vec<char> = text.chars().collect();
+    let mut idx = 0;
+    let keyboard = state.keyboard.clone();
+
+    while idx < chars.len() {
+        let mut batch_actions: Vec<Result<u32, char>> = Vec::new();
+        let mut used_slots_in_batch: Vec<usize> = Vec::new();
+        let mut keymap_dirty = false;
+
+        while idx < chars.len() {
+            let c = chars[idx];
+            if c.is_ascii() {
+                batch_actions.push(Err(c));
+                idx += 1;
+                continue;
+            }
+
+            if let Some(slot_idx) = state
+                .unicode_key_slots
+                .iter()
+                .position(|s| s.mapped_char == Some(c))
+            {
+                if !used_slots_in_batch.contains(&slot_idx) {
+                    used_slots_in_batch.push(slot_idx);
+                }
+                batch_actions.push(Ok(state.unicode_key_slots[slot_idx].keycode));
+                idx += 1;
+                continue;
+            }
+
+            if used_slots_in_batch.len() >= num_slots {
+                // Flush current batch before reallocating slots
+                break;
+            }
+
+            // Find next slot not used in the current batch
+            let mut chosen_slot = None;
+            for offset in 0..num_slots {
+                let candidate = (state.unicode_slot_cursor + offset) % num_slots;
+                if !used_slots_in_batch.contains(&candidate) {
+                    chosen_slot = Some(candidate);
+                    state.unicode_slot_cursor = (candidate + 1) % num_slots;
+                    break;
+                }
+            }
+
+            if let Some(slot_idx) = chosen_slot {
+                state.unicode_key_slots[slot_idx].mapped_char = Some(c);
+                used_slots_in_batch.push(slot_idx);
+                batch_actions.push(Ok(state.unicode_key_slots[slot_idx].keycode));
+                keymap_dirty = true;
+                idx += 1;
+            } else {
+                break;
+            }
+        }
+
+        if keymap_dirty {
+            if let Some(patched) =
+                build_patched_xkb_keymap(&state.base_keymap_string, &state.unicode_key_slots)
+            {
+                let _ = keyboard.set_keymap_from_string(state, patched);
+            }
+        }
+
+        let mut time = state.start_time.elapsed().as_millis() as u32;
+        for action in batch_actions {
+            match action {
+                Err(ascii_ch) => {
+                    dispatch_key_event(state, KeyCode::Char(ascii_ch));
+                    time += 2;
+                }
+                Ok(kc) => {
+                    let key = Keycode::new(kc);
+                    let press_serial = SERIAL_COUNTER.next_serial();
+                    keyboard.input::<(), _>(
+                        state,
+                        key,
+                        KeyState::Pressed,
+                        press_serial,
+                        time,
+                        |_, _, _| FilterResult::Forward,
+                    );
+                    time += 1;
+                    let release_serial = SERIAL_COUNTER.next_serial();
+                    keyboard.input::<(), _>(
+                        state,
+                        key,
+                        KeyState::Released,
+                        release_serial,
+                        time,
+                        |_, _, _| FilterResult::Forward,
+                    );
+                    time += 1;
+                }
+            }
+        }
+    }
+
+    crate::compositor::log_line(format!(
+        "[input] Dispatched UTF-8 text via XKB Unicode keymap ({} chars)",
+        chars.len()
+    ));
+    state.dirty = true;
+}
+
 /// Helper to find any active popup at loc_i32 (Wayland XDG popups or unmanaged X11 popups)
 fn find_popup_focus(
     state: &TermwayState,

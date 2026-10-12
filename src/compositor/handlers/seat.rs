@@ -1,18 +1,27 @@
-//! Input seat focus tracking and clipboard selection bridging
+//! Input seat focus tracking, zwp_text_input_v3 IME protocol, and clipboard selection bridging
 //! (Wayland data device <-> host terminal via OSC 52).
 
 use std::os::unix::io::{FromRawFd, OwnedFd};
 
 use smithay::{
     input::{Seat, SeatHandler, SeatState},
-    reexports::wayland_server::{protocol::wl_surface::WlSurface, Resource},
+    reexports::{
+        wayland_protocols::wp::text_input::zv3::server::{
+            zwp_text_input_manager_v3::{self, ZwpTextInputManagerV3},
+            zwp_text_input_v3::{self, ZwpTextInputV3},
+        },
+        wayland_server::{
+            protocol::wl_surface::WlSurface, Client, DataInit, DisplayHandle, GlobalDispatch,
+            New, Resource,
+        },
+    },
     wayland::selection::{
         data_device::{ClientDndGrabHandler, DataDeviceHandler, DataDeviceState, ServerDndGrabHandler},
         SelectionHandler, SelectionSource, SelectionTarget,
     },
 };
 
-use crate::compositor::state::TermwayState;
+use crate::compositor::state::{TermwayState, TrackedTextInput};
 
 // 5. SeatHandler
 impl SeatHandler for TermwayState {
@@ -27,8 +36,109 @@ impl SeatHandler for TermwayState {
     fn focus_changed(&mut self, seat: &Seat<Self>, focused: Option<&WlSurface>) {
         let client = focused.and_then(|s| self.dh.get_client(s.id()).ok());
         smithay::wayland::selection::data_device::set_data_device_focus(&self.dh, seat, client);
+
+        self.text_inputs.retain(|ti| ti.instance.is_alive());
+        let new_focus = focused.cloned();
+        if self.focused_surface != new_focus {
+            if let Some(ref old_surface) = self.focused_surface {
+                if old_surface.is_alive() {
+                    for ti in &mut self.text_inputs {
+                        if ti.instance.id().same_client_as(&old_surface.id()) {
+                            ti.instance.leave(old_surface);
+                            ti.enabled = false;
+                            ti.pending_enable = None;
+                        }
+                    }
+                }
+            }
+            self.focused_surface = new_focus;
+            if let Some(ref new_surface) = self.focused_surface {
+                if new_surface.is_alive() {
+                    for ti in &mut self.text_inputs {
+                        if ti.instance.id().same_client_as(&new_surface.id()) {
+                            ti.instance.enter(new_surface);
+                        }
+                    }
+                }
+            }
+        }
     }
     fn cursor_image(&mut self, _seat: &Seat<Self>, _image: smithay::input::pointer::CursorImageStatus) {}
+}
+
+// 6. zwp_text_input_v3 (Wayland native IME / UTF-8 text input)
+impl GlobalDispatch<ZwpTextInputManagerV3, ()> for TermwayState {
+    fn bind(
+        _state: &mut Self,
+        _handle: &DisplayHandle,
+        _client: &Client,
+        resource: New<ZwpTextInputManagerV3>,
+        _global_data: &(),
+        data_init: &mut DataInit<'_, Self>,
+    ) {
+        data_init.init(resource, ());
+    }
+}
+
+impl smithay::reexports::wayland_server::Dispatch<ZwpTextInputManagerV3, ()> for TermwayState {
+    fn request(
+        state: &mut Self,
+        _client: &Client,
+        _resource: &ZwpTextInputManagerV3,
+        request: zwp_text_input_manager_v3::Request,
+        _data: &(),
+        _dhandle: &DisplayHandle,
+        data_init: &mut DataInit<'_, Self>,
+    ) {
+        if let zwp_text_input_manager_v3::Request::GetTextInput { id, .. } = request {
+            let instance: ZwpTextInputV3 = data_init.init(id, ());
+            if let Some(ref surface) = state.focused_surface {
+                if surface.is_alive() && surface.id().same_client_as(&instance.id()) {
+                    instance.enter(surface);
+                }
+            }
+            state.text_inputs.push(TrackedTextInput {
+                instance,
+                serial: 0,
+                enabled: false,
+                pending_enable: None,
+            });
+        }
+    }
+}
+
+impl smithay::reexports::wayland_server::Dispatch<ZwpTextInputV3, ()> for TermwayState {
+    fn request(
+        state: &mut Self,
+        _client: &Client,
+        resource: &ZwpTextInputV3,
+        request: zwp_text_input_v3::Request,
+        _data: &(),
+        _dhandle: &DisplayHandle,
+        _data_init: &mut DataInit<'_, Self>,
+    ) {
+        if matches!(request, zwp_text_input_v3::Request::Destroy) {
+            state.text_inputs.retain(|ti| &ti.instance != resource);
+            return;
+        }
+        if let Some(ti) = state.text_inputs.iter_mut().find(|ti| &ti.instance == resource) {
+            match request {
+                zwp_text_input_v3::Request::Enable => {
+                    ti.pending_enable = Some(true);
+                }
+                zwp_text_input_v3::Request::Disable => {
+                    ti.pending_enable = Some(false);
+                }
+                zwp_text_input_v3::Request::Commit => {
+                    ti.serial = ti.serial.wrapping_add(1);
+                    if let Some(en) = ti.pending_enable.take() {
+                        ti.enabled = en;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
 }
 
 // 7. SelectionHandler & DataDeviceHandler
