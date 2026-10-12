@@ -4,6 +4,8 @@
 
 **termway** is a high-performance terminal GUI bridge that embeds and renders Wayland and X11 GUI applications directly inside your terminal emulator. It features an integrated headless Wayland compositor powered by [Smithay](https://github.com/Smithay/smithay) and XWayland support.
 
+![termway demo](docs/demo.gif)
+
 ---
 
 ### Key Features

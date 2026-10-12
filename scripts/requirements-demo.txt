@@ -1,0 +1,5 @@
+pyautogui>=0.9.54
+mss>=9.0.1
+Pillow>=10.0.0
+pygetwindow>=0.0.9; platform_system == "Windows"
+

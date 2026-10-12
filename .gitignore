@@ -4,3 +4,9 @@ target/
 *.orig
 *.patch
 /tmp/termway_wrap/
+.venv-demo/
+.venv-demo-win/
+__pycache__/
+scripts/.demo_calibration.json
+scripts/record_demo_debug.log
+tmux-*.log
