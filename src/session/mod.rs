@@ -690,8 +690,8 @@ pub fn check_x11_unix_writability() -> Result<()> {
     if x11_dir.exists() {
         if let Err(e) = tempfile::Builder::new().prefix(".termway_test_").tempfile_in(x11_dir) {
             return Err(TermwayError::X11SocketDirNotWritable(format!(
-                "Cannot write to /tmp/.X11-unix ({}). X11/XWayland will not work: {}",
-                e.kind(),
+                "Cannot write to /tmp/.X11-unix ({}). X11/XWayland will not work.\n\
+                 On WSL2, remount it as writable via: sudo mount -o remount,rw /tmp/.X11-unix",
                 e
             )));
         }

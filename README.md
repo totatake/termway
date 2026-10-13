@@ -197,7 +197,7 @@ Specify the target command and arguments after `--`:
 > - Apps that keep credentials in the OS keyring through libsecret (e.g. VS Code, Chromium) can use the host keyring: Termway relays `org.freedesktop.secrets` from the host session bus into its isolated bus. If the host keyring is locked, the unlock prompt appears on the host display.
 > - Single-instance daemon applications like `gnome-terminal` work seamlessly inside `termway` thanks to the automated isolated D-Bus session.
 > - Privileged GUI tools like `gparted` or `pkexec` will display their authentication dialog within the terminal when `policykit-1-gnome` or `lxpolkit` is installed.
-> - Running legacy X11 applications requires write permissions to `/tmp/.X11-unix`. If `/tmp/.X11-unix` is read-only (such as in restricted container environments), `termway` proactively detects this and terminates with a descriptive error, preventing applications from unexpectedly escaping to the host desktop display.
+> - Running legacy X11 applications requires write permissions to `/tmp/.X11-unix`. If `/tmp/.X11-unix` is read-only (such as on WSL2 or restricted container environments), `termway` proactively detects this and terminates with a descriptive error (on WSL2, see [FAQ](#frequently-asked-questions-faq) to remount as writable via `sudo mount -o remount,rw /tmp/.X11-unix`).
 > - **Clipboard Support**: Bidirectional clipboard synchronization is fully supported across Wayland and XWayland applications. Copying inside applications via `Ctrl-C` (or mouse selection) synchronizes to the host clipboard via OSC 52, and pasting from the host via `Ctrl-V` (or terminal paste `Ctrl+Shift+V` / right-click) seamlessly pastes into the application via Bracketed Paste with full UTF-8 / multibyte character support.
 > - **Shortcuts**: Press `Ctrl-Q` at any time to safely exit. Press `F12` to instantly save the current GUI display to a PNG image file (one-key screenshot).
 
@@ -254,6 +254,25 @@ export TERMWAY_CELL_SIZE=10x22
 | `--demo` | - | Launch built-in GTK3 Wayland demo application | - |
 | `-V`, `--version` | - | Print version information | - |
 | `-h`, `--help` | - | Print help information | - |
+
+---
+
+## Frequently Asked Questions (FAQ)
+
+### Q. Write error on `/tmp/.X11-unix` / X11 applications fail to start on WSL2 (Ubuntu)
+**A.** On WSL2 with WSLg enabled, `/tmp/.X11-unix` is often mounted as read-only (`ro`) by default to share the host WSLg X11 socket. To allow `termway`'s internal XWayland server to create its isolated X11 display socket (`:10` and above), remount `/tmp/.X11-unix` as read-write (`rw`):
+
+```bash
+sudo mount -o remount,rw /tmp/.X11-unix
+```
+
+To automatically remount it on WSL2 startup, add the command to `/etc/wsl.conf`:
+
+```ini
+# /etc/wsl.conf
+[boot]
+command = "mount -o remount,rw /tmp/.X11-unix"
+```
 
 ---
 
