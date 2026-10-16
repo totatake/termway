@@ -146,4 +146,54 @@ impl WindowManager {
     pub fn cascade_offset(&self) -> i32 {
         ((self.windows.len() % 8) as i32) * 20
     }
+
+    /// Updates geometries and constraints of managed windows when terminal/screen resolution changes.
+    pub fn update_layout_for_resize(&mut self, width: u32, height: u32) {
+        use super::window::{BORDER_WIDTH, TITLEBAR_HEIGHT};
+
+        for m_win in &mut self.windows {
+            if m_win.is_maximized {
+                m_win.update_maximized_size(width, height);
+            } else {
+                let top_margin = if m_win.has_ssd { TITLEBAR_HEIGHT + BORDER_WIDTH * 2 } else { 0 };
+                let side_margin = if m_win.has_ssd { BORDER_WIDTH * 2 } else { 0 };
+                let max_w = (width as i32 - side_margin).max(160);
+                let max_h = (height as i32 - top_margin).max(100);
+                let new_w = m_win.size.w.min(max_w);
+                let new_h = m_win.size.h.min(max_h);
+
+                let min_x = if m_win.has_ssd { BORDER_WIDTH } else { 0 };
+                let max_x = (width as i32 - new_w - min_x).max(min_x);
+                let min_y = if m_win.has_ssd { TITLEBAR_HEIGHT + BORDER_WIDTH } else { 0 };
+                let max_y = (height as i32 - new_h - min_x).max(min_y);
+                let new_loc = smithay::utils::Point::from((
+                    m_win.loc.x.clamp(min_x, max_x),
+                    m_win.loc.y.clamp(min_y, max_y),
+                ));
+
+                let loc_changed = m_win.loc != new_loc;
+                let size_changed = new_w != m_win.size.w || new_h != m_win.size.h;
+                m_win.loc = new_loc;
+                m_win.size = (new_w, new_h).into();
+
+                if loc_changed || size_changed {
+                    match &m_win.surface {
+                        WindowSurface::Wayland(win) => {
+                            if size_changed {
+                                win.with_pending_state(|state| {
+                                    state.size = Some((new_w, new_h).into());
+                                });
+                                win.send_configure();
+                            }
+                        }
+                        WindowSurface::X11(win) => {
+                            let rect = smithay::utils::Rectangle::new(m_win.loc, m_win.size);
+                            let _ = win.configure(rect);
+                        }
+                        WindowSurface::Dummy => {}
+                    }
+                }
+            }
+        }
+    }
 }

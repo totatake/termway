@@ -7,30 +7,23 @@ pub mod window;
 pub mod bitmap_font;
 pub mod decoration;
 pub mod input;
+pub mod env;
+pub mod taskbar;
+pub mod profile;
+pub mod screenshot;
+
+pub use self::env::{
+    ensure_xdg_runtime_dir, free_x11_display_candidates, log_line, setup_test_signals,
+    CAPTURE_REQUESTED, STATE_DUMP_REQUESTED,
+};
+pub use self::profile::CompositorMetrics;
+pub use self::taskbar::{Taskbar, TaskbarChip};
 
 use std::io::{self, Read};
 use std::process::{Child, Command};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use crate::terminal::winsize::WINCH_RECEIVED;
-
-pub static CAPTURE_REQUESTED: AtomicBool = AtomicBool::new(false);
-pub static STATE_DUMP_REQUESTED: AtomicBool = AtomicBool::new(false);
-
-fn setup_test_signals() {
-    unsafe {
-        libc::signal(libc::SIGUSR1, handle_sigusr1 as *const () as usize);
-        libc::signal(libc::SIGUSR2, handle_sigusr2 as *const () as usize);
-    }
-}
-
-extern "C" fn handle_sigusr1(_: libc::c_int) {
-    CAPTURE_REQUESTED.store(true, Ordering::Relaxed);
-}
-
-extern "C" fn handle_sigusr2(_: libc::c_int) {
-    STATE_DUMP_REQUESTED.store(true, Ordering::Relaxed);
-}
 
 use smithay::reexports::{
     wayland_protocols::xdg::shell::server::xdg_toplevel,
@@ -42,9 +35,10 @@ use crate::error::{Result, TermwayError};
 use crate::protocol::{KeyCode, KeyboardParser, SgrMouseParser};
 use crate::terminal::{RawModeGuard, TerminalSize};
 
+use self::env::find_xwayland_binary;
 use self::renderer::TermwayRenderer;
 use self::state::{send_frames_surface_tree, ClientState, TermwayState};
-use self::window::{WindowSurface, BORDER_WIDTH, TITLEBAR_HEIGHT};
+use self::window::WindowSurface;
 
 #[derive(Debug, Clone)]
 pub struct EngineConfig {
@@ -77,50 +71,6 @@ impl Default for EngineConfig {
     }
 }
 
-// Helper to find Xwayland binary safely without invoking `which`
-fn find_xwayland_binary() -> Option<std::path::PathBuf> {
-    if let Ok(path_var) = std::env::var("PATH") {
-        for dir in path_var.split(':') {
-            let candidate = std::path::Path::new(dir).join("Xwayland");
-            if candidate.is_file() {
-                return Some(candidate);
-            }
-        }
-    }
-    for default_path in &["/usr/bin/Xwayland", "/usr/local/bin/Xwayland", "/usr/lib/xorg/Xwayland"] {
-        let p = std::path::Path::new(default_path);
-        if p.is_file() {
-            return Some(p.to_path_buf());
-        }
-    }
-    None
-}
-
-// Raw mode では `\n` だけだと行頭に戻らず表示が崩れるため、CRLF で出力する。
-pub(crate) fn log_line(msg: impl AsRef<str>) {
-    use std::io::Write;
-    let log_path = if let Ok(path) = std::env::var("TERMWAY_DEBUG_LOG") {
-        Some(std::path::PathBuf::from(path))
-    } else if let Ok(runtime_dir) = std::env::var("XDG_RUNTIME_DIR") {
-        Some(std::path::Path::new(&runtime_dir).join("termway_debug.log"))
-    } else {
-        None
-    };
-
-    if let Some(path) = log_path {
-        if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
-            let _ = writeln!(file, "{}", msg.as_ref());
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct TaskbarChip {
-    pub window_id: usize,
-    pub start_col: u16,
-    pub end_col: u16,
-}
-
 pub struct TermwayCompositor {
     display: Display<TermwayState>,
     listener: ListeningSocket,
@@ -132,7 +82,7 @@ pub struct TermwayCompositor {
     // ターミナルのセル数（マウス座標変換に使用）
     term_cols: u16,
     term_rows: u16,
-    taskbar_chips: Vec<TaskbarChip>,
+    taskbar: Taskbar,
     input_buffer: Vec<u8>,
     pending_command: Option<Vec<String>>,
     client_child: Option<Child>,
@@ -148,12 +98,7 @@ pub struct TermwayCompositor {
     prev_taskbar: Option<String>,
     target_frame_duration: std::time::Duration,
     profile_enabled: bool,
-    metrics_render_frames: u64,
-    metrics_render_total_us: u64,
-    metrics_render_max_us: u64,
-    metrics_damage_total_us: u64,
-    metrics_damage_max_us: u64,
-    metrics_clean_skips: u64,
+    metrics: CompositorMetrics,
 }
 
 impl TermwayCompositor {
@@ -363,7 +308,7 @@ impl TermwayCompositor {
                 wrap_dir: wrap_dir_guard,
                 term_cols: term_size.cols.max(1),
                 term_rows: term_size.rows.max(1),
-                taskbar_chips: Vec::new(),
+                taskbar: Taskbar::new(),
                 input_buffer: Vec::with_capacity(1024),
                 damage_tracker,
                 prev_taskbar: None,
@@ -371,12 +316,7 @@ impl TermwayCompositor {
                     1_000_000_000 / (config.fps.clamp(1, 240) as u64),
                 ),
                 profile_enabled: config.profile || std::env::var("TERMWAY_PROFILE").is_ok(),
-                metrics_render_frames: 0,
-                metrics_render_total_us: 0,
-                metrics_render_max_us: 0,
-                metrics_damage_total_us: 0,
-                metrics_damage_max_us: 0,
-                metrics_clean_skips: 0,
+                metrics: CompositorMetrics::new(),
             })
     }
 
@@ -796,23 +736,23 @@ impl TermwayCompositor {
                 }
                 let w = self.renderer.width();
                 let h = self.renderer.height();
-                let taskbar = self.build_taskbar();
+                let taskbar = self.taskbar.build(
+                    &self.state.wm.windows,
+                    self.state.enable_wm,
+                    self.backend.name(),
+                    self.term_cols,
+                );
                 let t_r0 = std::time::Instant::now();
                 let render_res = self.renderer.render(&self.state);
                 let r_dur = t_r0.elapsed();
 
                 if let Ok(pixels) = render_res {
                     let r_us = r_dur.as_micros() as u64;
-                    self.metrics_render_frames += 1;
-                    self.metrics_render_total_us += r_us;
-                    self.metrics_render_max_us = self.metrics_render_max_us.max(r_us);
-
                     let t_d0 = std::time::Instant::now();
                     let damage = self.damage_tracker.track_damage(pixels);
                     let d_dur = t_d0.elapsed();
                     let d_us = d_dur.as_micros() as u64;
-                    self.metrics_damage_total_us += d_us;
-                    self.metrics_damage_max_us = self.metrics_damage_max_us.max(d_us);
+                    self.metrics.record_render(r_us, d_us);
 
                     let taskbar_changed = taskbar != self.prev_taskbar;
                     self.prev_taskbar = taskbar.clone();
@@ -825,7 +765,7 @@ impl TermwayCompositor {
                         };
                         let _ = self.backend.render_pixels_with_damage(pixels, w, h, taskbar.as_deref(), damage_arg);
                     } else {
-                        self.metrics_clean_skips += 1;
+                        self.metrics.record_clean_skip();
                     }
 
                     let time = self.state.start_time.elapsed().as_millis() as u32;
@@ -862,7 +802,7 @@ impl TermwayCompositor {
                 if std::env::var("TERMWAY_TEST_CAPTURE_NOW").is_ok() {
                     std::env::remove_var("TERMWAY_TEST_CAPTURE_NOW");
                 }
-                self.save_screenshot();
+                screenshot::save_screenshot(&mut self.renderer, &self.state);
             }
 
             if state_requested || std::env::var("TERMWAY_TEST_STATE_NOW").is_ok() {
@@ -878,87 +818,10 @@ impl TermwayCompositor {
         }
 
         if self.profile_enabled {
-            self.print_profile_summary();
+            self.metrics.print_summary(&self.backend, self.state.start_time);
         }
 
         Ok(())
-    }
-
-    fn print_profile_summary(&self) {
-        let b_metrics = self.backend.metrics();
-        let jobs_submitted = b_metrics.jobs_submitted.load(Ordering::Relaxed);
-        let jobs_rendered = b_metrics.jobs_rendered.load(Ordering::Relaxed);
-        let frames_dropped = b_metrics.frames_dropped.load(Ordering::Relaxed);
-        let total_encode_us = b_metrics.total_encode_us.load(Ordering::Relaxed);
-        let max_encode_us = b_metrics.max_encode_us.load(Ordering::Relaxed);
-        let total_write_us = b_metrics.total_write_us.load(Ordering::Relaxed);
-        let max_write_us = b_metrics.max_write_us.load(Ordering::Relaxed);
-        let total_bytes = b_metrics.total_bytes_written.load(Ordering::Relaxed);
-
-        let elapsed_secs = self.state.start_time.elapsed().as_secs_f64();
-        let avg_render_ms = if self.metrics_render_frames > 0 {
-            (self.metrics_render_total_us as f64 / self.metrics_render_frames as f64) / 1000.0
-        } else {
-            0.0
-        };
-        let avg_damage_us = if self.metrics_render_frames > 0 {
-            self.metrics_damage_total_us as f64 / self.metrics_render_frames as f64
-        } else {
-            0.0
-        };
-        let avg_encode_ms = if jobs_rendered > 0 {
-            (total_encode_us as f64 / jobs_rendered as f64) / 1000.0
-        } else {
-            0.0
-        };
-        let avg_write_ms = if jobs_rendered > 0 {
-            (total_write_us as f64 / jobs_rendered as f64) / 1000.0
-        } else {
-            0.0
-        };
-        let kb_per_sec = if elapsed_secs > 0.0 {
-            (total_bytes as f64 / 1024.0) / elapsed_secs
-        } else {
-            0.0
-        };
-
-        eprintln!("\n================================== TERMWAY PROFILE REPORT ==================================");
-        eprintln!("Session Duration:      {:.2}s", elapsed_secs);
-        eprintln!("Compositor Frames:     {} rendered, {} skipped (unchanged clean frames)",
-            self.metrics_render_frames, self.metrics_clean_skips);
-        eprintln!("Backend Async Jobs:    {} submitted, {} rendered, {} dropped",
-            jobs_submitted, jobs_rendered, frames_dropped);
-        eprintln!("Latency Breakdown:");
-        eprintln!("  1. Pixman Render:    avg = {:>6.2} ms,  max = {:>6.2} ms", avg_render_ms, self.metrics_render_max_us as f64 / 1000.0);
-        eprintln!("  2. Damage Tracker:   avg = {:>6.1} μs,  max = {:>6.1} μs", avg_damage_us, self.metrics_damage_max_us as f64);
-        eprintln!("  3. Protocol Encode:  avg = {:>6.2} ms,  max = {:>6.2} ms ({})", avg_encode_ms, max_encode_us as f64 / 1000.0, self.backend.name());
-        eprintln!("  4. Terminal Write:   avg = {:>6.2} ms,  max = {:>6.2} ms", avg_write_ms, max_write_us as f64 / 1000.0);
-        eprintln!("Output Data Bandwidth: total = {:.2} MB, throughput = {:.1} KB/s",
-            total_bytes as f64 / (1024.0 * 1024.0), kb_per_sec);
-        eprintln!("============================================================================================\n");
-
-        if let Ok(path) = std::env::var("TERMWAY_PROFILE_FILE") {
-            let report = format!(
-                r#"{{"duration_sec":{:.3},"render_frames":{},"clean_skips":{},"jobs_submitted":{},"jobs_rendered":{},"frames_dropped":{},"avg_render_ms":{:.3},"max_render_ms":{:.3},"avg_damage_us":{:.3},"max_damage_us":{:.3},"avg_encode_ms":{:.3},"max_encode_ms":{:.3},"avg_write_ms":{:.3},"max_write_ms":{:.3},"total_bytes":{},"kb_per_sec":{:.2}}}"#,
-                elapsed_secs,
-                self.metrics_render_frames,
-                self.metrics_clean_skips,
-                jobs_submitted,
-                jobs_rendered,
-                frames_dropped,
-                avg_render_ms,
-                self.metrics_render_max_us as f64 / 1000.0,
-                avg_damage_us,
-                self.metrics_damage_max_us as f64,
-                avg_encode_ms,
-                max_encode_us as f64 / 1000.0,
-                avg_write_ms,
-                max_write_us as f64 / 1000.0,
-                total_bytes,
-                kb_per_sec,
-            );
-            let _ = std::fs::write(path, report);
-        }
     }
 
     fn apply_terminal_size(&mut self, mut new_size: TerminalSize) {
@@ -1000,50 +863,7 @@ impl TermwayCompositor {
         self.state.output.set_preferred(new_mode);
 
         if self.state.enable_wm {
-            for m_win in &mut self.state.wm.windows {
-                if m_win.is_maximized {
-                    m_win.update_maximized_size(self.state.width, self.state.height);
-                } else {
-                    let top_margin = if m_win.has_ssd { TITLEBAR_HEIGHT + BORDER_WIDTH * 2 } else { 0 };
-                    let side_margin = if m_win.has_ssd { BORDER_WIDTH * 2 } else { 0 };
-                    let max_w = (self.state.width as i32 - side_margin).max(160);
-                    let max_h = (self.state.height as i32 - top_margin).max(100);
-                    let new_w = m_win.size.w.min(max_w);
-                    let new_h = m_win.size.h.min(max_h);
-
-                    let min_x = if m_win.has_ssd { BORDER_WIDTH } else { 0 };
-                    let max_x = (self.state.width as i32 - new_w - min_x).max(min_x);
-                    let min_y = if m_win.has_ssd { TITLEBAR_HEIGHT + BORDER_WIDTH } else { 0 };
-                    let max_y = (self.state.height as i32 - new_h - min_x).max(min_y);
-                    let new_loc = smithay::utils::Point::from((
-                        m_win.loc.x.clamp(min_x, max_x),
-                        m_win.loc.y.clamp(min_y, max_y),
-                    ));
-
-                    let loc_changed = m_win.loc != new_loc;
-                    let size_changed = new_w != m_win.size.w || new_h != m_win.size.h;
-                    m_win.loc = new_loc;
-                    m_win.size = (new_w, new_h).into();
-
-                    if loc_changed || size_changed {
-                        match &m_win.surface {
-                            WindowSurface::Wayland(win) => {
-                                if size_changed {
-                                    win.with_pending_state(|state| {
-                                        state.size = Some((new_w, new_h).into());
-                                    });
-                                    win.send_configure();
-                                }
-                            }
-                            WindowSurface::X11(win) => {
-                                let rect = smithay::utils::Rectangle::new(m_win.loc, m_win.size);
-                                let _ = win.configure(rect);
-                            }
-                            WindowSurface::Dummy => {}
-                        }
-                    }
-                }
-            }
+            self.state.wm.update_layout_for_resize(self.state.width, self.state.height);
         } else {
             for window in &self.state.toplevels {
                 window.with_pending_state(|state| {
@@ -1160,7 +980,7 @@ impl TermwayCompositor {
                     return;
                 }
                 if key_ev.code == KeyCode::F12 {
-                    self.save_screenshot();
+                    screenshot::save_screenshot(&mut self.renderer, &self.state);
                     self.input_buffer.drain(..consumed);
                     continue;
                 }
@@ -1231,123 +1051,24 @@ impl TermwayCompositor {
         self.dispatch_key_event(KeyCode::Ctrl('v'));
     }
 
-    fn save_screenshot(&mut self) {
-        let dump_dir = std::env::var("TERMWAY_SCREENSHOT_DIR")
-            .or_else(|_| std::env::var("TERMWAY_TEST_DUMP_DIR"))
-            .unwrap_or_else(|_| ".".into());
-        let _ = std::fs::create_dir_all(&dump_dir);
-        let w = self.renderer.width();
-        let h = self.renderer.height();
-        if let Ok(pixels) = self.renderer.render(&self.state) {
-            let ts = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_millis();
-            let png_bytes = crate::display::Framebuffer::encode_png(pixels, w, h);
-            let path = format!("{}/termway_screenshot_{}.png", dump_dir, ts);
-            if std::fs::write(&path, &png_bytes).is_ok() {
-                eprintln!("[termway] Screenshot saved: {}", path);
-                log_line(format!("[termway] Screenshot saved: {}", path));
-            }
-            let latest_path = format!("{}/termway_screenshot_latest.png", dump_dir);
-            let _ = std::fs::write(&latest_path, &png_bytes);
-        }
-    }
-
-    /// Builds the bottom row taskbar chip string and records chip click bounds
-    fn build_taskbar(&mut self) -> Option<String> {
-        if !self.state.enable_wm || self.state.wm.windows.is_empty() {
-            self.taskbar_chips.clear();
-            return None;
-        }
-
-        let mode_desc = self.backend.name();
-        let overlay_len = mode_desc.len() + 30;
-        let overlay_col = self
-            .term_cols
-            .saturating_sub(overlay_len as u16)
-            .saturating_add(1)
-            .max(1);
-        let max_cols = overlay_col.saturating_sub(2);
-        if max_cols < 6 {
-            self.taskbar_chips.clear();
-            return None;
-        }
-
-        let mut chips = Vec::new();
-        let mut out = String::new();
-        let mut cur_col: u16 = 2;
-
-        let mut sorted_windows = self.state.wm.windows.clone();
-        sorted_windows.sort_by_key(|w| w.id);
-
-        for win in &sorted_windows {
-            let raw_title = if win.title.trim().is_empty() {
-                "Window"
-            } else {
-                win.title.trim()
-            };
-            let short_title: String = raw_title.chars().take(8).collect();
-            let state_suffix = if win.is_minimized { " _" } else { "" };
-            let chip_label = format!("[{}: {}{}]", win.id, short_title, state_suffix);
-            let chip_len = chip_label.chars().count() as u16;
-
-            if cur_col + chip_len > max_cols {
-                break;
-            }
-
-            // Colors:
-            // Minimized: cyan bg (\x1b[46;30m)
-            // Active: blue bg (\x1b[44;37;1m)
-            // Inactive: dark gray bg (\x1b[100;37m)
-            let color_code = if win.is_minimized {
-                "\x1b[46;30m"
-            } else if win.active {
-                "\x1b[44;37;1m"
-            } else {
-                "\x1b[100;37m"
-            };
-
-            out.push_str(&format!(" {}{}\x1b[0m", color_code, chip_label));
-
-            chips.push(TaskbarChip {
-                window_id: win.id,
-                start_col: cur_col,
-                end_col: cur_col + chip_len - 1,
-            });
-
-            cur_col += chip_len + 1;
-        }
-
-        self.taskbar_chips = chips;
-        if out.is_empty() {
-            None
-        } else {
-            Some(out)
-        }
-    }
-
     fn dispatch_mouse_event(&mut self, ev: &crate::protocol::MouseEvent) {
         // Check taskbar click on the bottom row
         if ev.action == crate::protocol::MouseAction::Press
             && matches!(ev.button, crate::protocol::MouseButton::Left)
             && ev.row == self.term_rows
         {
-            for chip in &self.taskbar_chips {
-                if ev.col >= chip.start_col && ev.col <= chip.end_col {
-                    let chip_id = chip.window_id;
-                    if let Some(win) = self.state.wm.windows.iter().find(|w| w.id == chip_id) {
-                        if win.is_minimized {
-                            self.state.restore_window(chip_id);
-                        } else if win.active {
-                            self.state.minimize_window(chip_id);
-                        } else {
-                            self.state.raise_window(chip_id);
-                        }
+            if let Some(chip_id) = self.taskbar.find_chip_at_col(ev.col) {
+                if let Some(win) = self.state.wm.windows.iter().find(|w| w.id == chip_id) {
+                    if win.is_minimized {
+                        self.state.restore_window(chip_id);
+                    } else if win.active {
+                        self.state.minimize_window(chip_id);
+                    } else {
+                        self.state.raise_window(chip_id);
                     }
-                    self.state.dirty = true;
-                    return;
                 }
+                self.state.dirty = true;
+                return;
             }
         }
 
@@ -1367,106 +1088,15 @@ impl TermwayCompositor {
         self::input::dispatch_key_event(&mut self.state, code);
     }
 
-
     /// Ensures that `XDG_RUNTIME_DIR` is set to an existing, writable directory with 0700 permissions.
-    /// When running under `sudo` or minimal container environments, `XDG_RUNTIME_DIR` is often unset or invalid.
     pub fn ensure_xdg_runtime_dir() {
-        use std::os::unix::fs::PermissionsExt;
-
-        let needs_fallback = match std::env::var("XDG_RUNTIME_DIR") {
-            Ok(dir) => {
-                let path = std::path::Path::new(&dir);
-                if !path.is_dir() {
-                    true
-                } else {
-                    // Check if writable by creating/checking a test file
-                    let test_file = path.join(".termway_runtime_test");
-                    match std::fs::OpenOptions::new().create(true).truncate(true).write(true).open(&test_file) {
-                        Ok(_) => {
-                            let _ = std::fs::remove_file(test_file);
-                            false
-                        }
-                        Err(_) => true,
-                    }
-                }
-            }
-            Err(_) => true,
-        };
-
-        if needs_fallback {
-            let uid = unsafe { libc::getuid() };
-            let fallback_dir = format!("/tmp/termway-runtime-{}", uid);
-            let path = std::path::Path::new(&fallback_dir);
-            
-            // Check if existing path is safe (not a symlink, owned by current user)
-            let is_safe = if path.exists() {
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::MetadataExt;
-                    if let Ok(meta) = std::fs::symlink_metadata(path) {
-                        meta.is_dir() && meta.uid() == uid && !meta.file_type().is_symlink()
-                    } else {
-                        false
-                    }
-                }
-                #[cfg(not(unix))]
-                {
-                    path.is_dir()
-                }
-            } else {
-                std::fs::create_dir_all(path).is_ok()
-            };
-
-            if is_safe {
-                // Secure permissions to 0700 (owner read/write/execute only, required by Wayland specs)
-                let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700));
-                std::env::set_var("XDG_RUNTIME_DIR", &fallback_dir);
-                log_line(format!("[termway] Using fallback XDG_RUNTIME_DIR={}", fallback_dir));
-            } else if let Ok(tmp_dir) = tempfile::Builder::new().prefix(&format!("termway-runtime-{}-", uid)).tempdir() {
-                let safe_path = tmp_dir.keep();
-                let _ = std::fs::set_permissions(&safe_path, std::fs::Permissions::from_mode(0o700));
-                let path_str = safe_path.to_string_lossy().to_string();
-                std::env::set_var("XDG_RUNTIME_DIR", &path_str);
-                log_line(format!("[termway] Using secure fallback XDG_RUNTIME_DIR={}", path_str));
-            }
-        }
-
-        // On WSL2 with systemd enabled, pam_systemd mounts a new tmpfs on /run/user/<uid>,
-        // which hides WSLg's /mnt/wslg/runtime-dir/wayland-0 socket. Ensure the symlink
-        // exists so native WSLg Wayland apps continue working outside termway.
-        #[cfg(unix)]
-        if let Ok(dir) = std::env::var("XDG_RUNTIME_DIR") {
-            let wslg_wayland = std::path::Path::new("/mnt/wslg/runtime-dir/wayland-0");
-            if wslg_wayland.exists() {
-                let target_wayland = std::path::Path::new(&dir).join("wayland-0");
-                if std::fs::symlink_metadata(&target_wayland).is_err() {
-                    let _ = std::os::unix::fs::symlink(wslg_wayland, &target_wayland);
-                }
-                let wslg_lock = std::path::Path::new("/mnt/wslg/runtime-dir/wayland-0.lock");
-                let target_lock = std::path::Path::new(&dir).join("wayland-0.lock");
-                if wslg_lock.exists() && std::fs::symlink_metadata(&target_lock).is_err() {
-                    let _ = std::os::unix::fs::symlink(wslg_lock, &target_lock);
-                }
-            }
-        }
+        env::ensure_xdg_runtime_dir();
     }
 
     /// Returns candidate X11 display numbers in `10..=64` that have neither a lock file
-    /// (`/tmp/.X{d}-lock`) nor an existing socket (`/tmp/.X11-unix/X{d}` or `/mnt/wslg/.X11-unix/X{d}`).
-    ///
-    /// Never returns `0..=9` so host/WSLg X11 displays (such as `:0`) are never touched or unlinked,
-    /// even when the host X server's lock file lives in a different container namespace (e.g. WSLg).
+    /// nor an existing socket.
     pub fn free_x11_display_candidates() -> Vec<u32> {
-        (10..=64)
-            .filter(|&d| {
-                let lock_path = format!("/tmp/.X{}-lock", d);
-                let sock_path = format!("/tmp/.X11-unix/X{}", d);
-                let wslg_sock_path = format!("/mnt/wslg/.X11-unix/X{}", d);
-                std::fs::symlink_metadata(&lock_path).is_err()
-                    && std::fs::symlink_metadata(&sock_path).is_err()
-                    && std::fs::symlink_metadata(&wslg_sock_path).is_err()
-            })
-            .collect()
+        env::free_x11_display_candidates()
     }
 }
 
