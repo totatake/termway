@@ -99,9 +99,7 @@ impl TerminalBackend {
                     };
 
                     let encode_start = std::time::Instant::now();
-                    let bytes_encoded: usize;
-
-                    if use_sixel {
+                    let bytes_encoded = if use_sixel {
                         sixel_stream.encode_frame_into(
                             &job.pixels,
                             job.width,
@@ -109,7 +107,7 @@ impl TerminalBackend {
                             if job.needs_clear { None } else { job.damage.as_deref() },
                             &mut sixel_out,
                         );
-                        bytes_encoded = sixel_out.len();
+                        sixel_out.len()
                     } else {
                         let image_rows = job.term_rows.saturating_sub(1).max(1);
                         kitty_stream.encode_fullscreen_frame_into(
@@ -121,8 +119,8 @@ impl TerminalBackend {
                             1,
                             &mut kitty_out,
                         );
-                        bytes_encoded = kitty_out.len();
-                    }
+                        kitty_out.len()
+                    };
 
                     let encode_dur = encode_start.elapsed();
                     let encode_us = encode_dur.as_micros() as u64;

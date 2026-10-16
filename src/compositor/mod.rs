@@ -146,6 +146,7 @@ pub struct TermwayCompositor {
     wrap_dir: Option<tempfile::TempDir>,
     damage_tracker: crate::display::DamageTracker,
     prev_taskbar: Option<String>,
+    target_frame_duration: std::time::Duration,
     profile_enabled: bool,
     metrics_render_frames: u64,
     metrics_render_total_us: u64,
@@ -226,6 +227,13 @@ impl TermwayCompositor {
 
         // 2. Initialize Compositor State
         let state = TermwayState::new(&dh, width, height, config.enable_wm);
+        let refresh_mhz = (config.fps.clamp(1, 240) * 1000) as i32;
+        let mode = smithay::output::Mode {
+            size: (width as i32, height as i32).into(),
+            refresh: refresh_mhz,
+        };
+        state.output.change_current_state(Some(mode), None, None, None);
+        state.output.set_preferred(mode);
 
         // 3. Initialize Pixman Offscreen Renderer
         let renderer = TermwayRenderer::new(width, height)?;
@@ -359,6 +367,9 @@ impl TermwayCompositor {
                 input_buffer: Vec::with_capacity(1024),
                 damage_tracker,
                 prev_taskbar: None,
+                target_frame_duration: std::time::Duration::from_nanos(
+                    1_000_000_000 / (config.fps.clamp(1, 240) as u64),
+                ),
                 profile_enabled: config.profile || std::env::var("TERMWAY_PROFILE").is_ok(),
                 metrics_render_frames: 0,
                 metrics_render_total_us: 0,
@@ -446,6 +457,9 @@ impl TermwayCompositor {
 
         let mut loop_count = 0;
         let mut all_windows_closed_time: Option<std::time::Instant> = None;
+        let mut last_render_time = std::time::Instant::now()
+            .checked_sub(self.target_frame_duration)
+            .unwrap_or_else(std::time::Instant::now);
         while self.state.running {
             loop_count += 1;
             
@@ -692,11 +706,21 @@ impl TermwayCompositor {
                     .insert_client(stream, Arc::new(ClientState::default()));
             }
 
-            // C. Non-blocking read from terminal stdin
-            let mut poll_fds = [nix::poll::PollFd::new(
-                std::os::fd::AsFd::as_fd(&stdin),
-                nix::poll::PollFlags::POLLIN,
-            )];
+            // C. Unified polling: terminal stdin, Wayland listener, and Wayland client display FD
+            let mut poll_fds = [
+                nix::poll::PollFd::new(
+                    std::os::fd::AsFd::as_fd(&stdin),
+                    nix::poll::PollFlags::POLLIN,
+                ),
+                nix::poll::PollFd::new(
+                    std::os::fd::AsFd::as_fd(&self.listener),
+                    nix::poll::PollFlags::POLLIN,
+                ),
+                nix::poll::PollFd::new(
+                    self.display.backend().poll_fd(),
+                    nix::poll::PollFlags::POLLIN,
+                ),
+            ];
 
             // While splash screen is displayed, trigger dirty for animated spinner/pulse
             if self.state.show_splash {
@@ -709,16 +733,20 @@ impl TermwayCompositor {
                 }
             }
 
-            // When a new frame needs rendering (dirty == true), do not sleep 10ms in poll.
+            let elapsed_since_render = last_render_time.elapsed();
             let poll_timeout = if self.state.dirty {
-                if self.state.show_splash {
-                    // 33ms poll timeout for ~30 FPS splash animation
-                    nix::poll::PollTimeout::try_from(33).unwrap_or(nix::poll::PollTimeout::NONE)
-                } else {
+                if elapsed_since_render >= self.target_frame_duration
+                    || self.state.needs_clear
+                    || self.backend.needs_clear
+                {
                     nix::poll::PollTimeout::ZERO
+                } else {
+                    let remaining = self.target_frame_duration - elapsed_since_render;
+                    let ms = (remaining.as_millis() as u16).max(1);
+                    nix::poll::PollTimeout::from(ms)
                 }
             } else {
-                nix::poll::PollTimeout::try_from(10).unwrap_or(nix::poll::PollTimeout::NONE)
+                nix::poll::PollTimeout::from(50u16)
             };
 
             if let Ok(res) = nix::poll::poll(&mut poll_fds, poll_timeout) {
@@ -729,6 +757,16 @@ impl TermwayCompositor {
                                 if n > 0 {
                                     self.input_buffer.extend_from_slice(&chunk[..n]);
                                 }
+                            }
+                        }
+                    }
+                    if let Some(revents) = poll_fds[1].revents() {
+                        if revents.contains(nix::poll::PollFlags::POLLIN) {
+                            while let Ok(Some(stream)) = self.listener.accept() {
+                                let _ = self
+                                    .display
+                                    .handle()
+                                    .insert_client(stream, Arc::new(ClientState::default()));
                             }
                         }
                     }
@@ -743,8 +781,14 @@ impl TermwayCompositor {
             let _ = self.display.flush_clients();
             self.state.popups.cleanup();
 
-            // F. Render if damaged
-            if self.state.dirty {
+            // F. Render if damaged and frame pacing interval has elapsed
+            let should_render = self.state.dirty
+                && (last_render_time.elapsed() >= self.target_frame_duration
+                    || self.state.needs_clear
+                    || self.backend.needs_clear);
+
+            if should_render {
+                last_render_time = std::time::Instant::now();
                 if self.state.needs_clear {
                     self.state.needs_clear = false;
                     self.backend.needs_clear = true;
@@ -947,9 +991,10 @@ impl TermwayCompositor {
         self.damage_tracker.resize(self.state.width, self.state.height);
         self.backend.resize(new_size);
 
+        let refresh_mhz = (1_000_000_000u64 / self.target_frame_duration.as_nanos().max(1) as u64 * 1000) as i32;
         let new_mode = smithay::output::Mode {
             size: (self.state.width as i32, self.state.height as i32).into(),
-            refresh: 60000,
+            refresh: refresh_mhz,
         };
         self.state.output.change_current_state(Some(new_mode), None, None, None);
         self.state.output.set_preferred(new_mode);
