@@ -1,5 +1,5 @@
 use crate::display::{DamageRect, Framebuffer};
-use crate::protocol::{KittyEncoder, SixelEncoder};
+use crate::protocol::{KittyStreamEncoder, SixelStreamEncoder};
 use crate::terminal::TerminalSize;
 use std::io::{self, Write};
 
@@ -15,6 +15,7 @@ struct RenderJob {
     taskbar: Option<String>,
     needs_clear: bool,
     show_hud: bool,
+    damage: Option<Vec<DamageRect>>,
 }
 
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -71,9 +72,9 @@ impl TerminalBackend {
             .name("termway-async-render".into())
             .spawn(move || {
                 let mut stdout = io::stdout();
+                let mut sixel_stream = SixelStreamEncoder::new();
                 let mut sixel_out = Vec::new();
-                let mut sixel_quantized = Vec::new();
-                let mut kitty_b64 = String::new();
+                let mut kitty_stream = KittyStreamEncoder::new();
                 let mut kitty_out = String::new();
 
                 let mut stat_start = std::time::Instant::now();
@@ -101,24 +102,23 @@ impl TerminalBackend {
                     let bytes_encoded: usize;
 
                     if use_sixel {
-                        SixelEncoder::encode_fullscreen_frame_into(
+                        sixel_stream.encode_frame_into(
                             &job.pixels,
                             job.width,
                             job.height,
+                            if job.needs_clear { None } else { job.damage.as_deref() },
                             &mut sixel_out,
-                            &mut sixel_quantized,
                         );
                         bytes_encoded = sixel_out.len();
                     } else {
                         let image_rows = job.term_rows.saturating_sub(1).max(1);
-                        KittyEncoder::encode_fullscreen_frame_into(
+                        kitty_stream.encode_fullscreen_frame_into(
                             &job.pixels,
                             job.width,
                             job.height,
                             job.term_cols,
                             image_rows,
                             1,
-                            &mut kitty_b64,
                             &mut kitty_out,
                         );
                         bytes_encoded = kitty_out.len();
@@ -278,7 +278,7 @@ impl TerminalBackend {
         if damage.is_empty() {
             return Ok(());
         }
-        self.render_pixels(&fb.pixels, fb.width, fb.height, None)
+        self.render_pixels_with_damage(&fb.pixels, fb.width, fb.height, None, Some(damage.to_vec()))
     }
 
     pub fn render_pixels(
@@ -287,6 +287,17 @@ impl TerminalBackend {
         width: u32,
         height: u32,
         taskbar: Option<&str>,
+    ) -> io::Result<()> {
+        self.render_pixels_with_damage(pixels, width, height, taskbar, None)
+    }
+
+    pub fn render_pixels_with_damage(
+        &mut self,
+        pixels: &[u8],
+        width: u32,
+        height: u32,
+        taskbar: Option<&str>,
+        damage: Option<Vec<DamageRect>>,
     ) -> io::Result<()> {
         self.metrics.jobs_submitted.fetch_add(1, Ordering::Relaxed);
         let (lock, cvar) = &*self.async_state;
@@ -309,6 +320,17 @@ impl TerminalBackend {
             job.show_hud = self.show_hud;
             if needs_clear {
                 job.needs_clear = true;
+                job.damage = None;
+            } else {
+                // Union damage if both frames had damage rects
+                match (&mut job.damage, damage) {
+                    (Some(ref mut existing), Some(incoming)) => {
+                        existing.extend(incoming);
+                    }
+                    _ => {
+                        job.damage = None;
+                    }
+                }
             }
         } else {
             let mut buf = guard.spare_buffer.take().unwrap_or_else(|| Vec::with_capacity(pixels.len()));
@@ -323,6 +345,7 @@ impl TerminalBackend {
                 taskbar: taskbar.map(String::from),
                 needs_clear,
                 show_hud: self.show_hud,
+                damage,
             });
         }
         cvar.notify_one();

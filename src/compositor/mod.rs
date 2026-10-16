@@ -774,7 +774,12 @@ impl TermwayCompositor {
                     self.prev_taskbar = taskbar.clone();
 
                     if !damage.is_empty() || taskbar_changed || self.backend.needs_clear {
-                        let _ = self.backend.render_pixels(pixels, w, h, taskbar.as_deref());
+                        let damage_arg = if self.backend.needs_clear || taskbar_changed {
+                            None
+                        } else {
+                            Some(damage)
+                        };
+                        let _ = self.backend.render_pixels_with_damage(pixels, w, h, taskbar.as_deref(), damage_arg);
                     } else {
                         self.metrics_clean_skips += 1;
                     }

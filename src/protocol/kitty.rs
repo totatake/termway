@@ -4,6 +4,125 @@ use base64::Engine;
 /// Kitty Graphics Protocol escape sequence generator.
 pub struct KittyEncoder;
 
+use std::fmt::Write;
+use miniz_oxide::deflate::core::{
+    compress, create_comp_flags_from_zip_params, CompressionStrategy, CompressorOxide, TDEFLFlush,
+    TDEFLStatus,
+};
+
+/// High-performance stateful Kitty protocol encoder reusing zlib compression state and buffers.
+pub struct KittyStreamEncoder {
+    compressor: CompressorOxide,
+    compressed_buf: Vec<u8>,
+}
+
+impl Default for KittyStreamEncoder {
+    fn default() -> Self {
+        let flags = create_comp_flags_from_zip_params(1, 1, CompressionStrategy::Default as i32);
+        Self {
+            compressor: CompressorOxide::new(flags),
+            compressed_buf: Vec::with_capacity(256 * 1024),
+        }
+    }
+}
+
+impl KittyStreamEncoder {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Compresses and encodes an RGBA full-screen buffer into Kitty protocol chunked escape sequences.
+    /// Reuses internal compression state and output capacity with zero heap reallocations.
+    pub fn encode_fullscreen_frame_into(
+        &mut self,
+        rgba: &[u8],
+        width: u32,
+        height: u32,
+        term_cols: u16,
+        term_rows: u16,
+        image_id: u32,
+        output: &mut String,
+    ) {
+        // 1. Zero-allocation RFC 1950 zlib compression (level 1)
+        self.compressor.reset();
+        self.compressed_buf.clear();
+        let min_cap = (rgba.len() / 2).max(1024);
+        if self.compressed_buf.capacity() < min_cap {
+            self.compressed_buf.reserve(min_cap - self.compressed_buf.capacity());
+        }
+        self.compressed_buf.resize(self.compressed_buf.capacity(), 0);
+
+        let mut out_pos = 0;
+        let mut input = rgba;
+        loop {
+            let (status, bytes_in, bytes_out) = compress(
+                &mut self.compressor,
+                input,
+                &mut self.compressed_buf[out_pos..],
+                TDEFLFlush::Finish,
+            );
+            out_pos += bytes_out;
+
+            match status {
+                TDEFLStatus::Done => {
+                    self.compressed_buf.truncate(out_pos);
+                    break;
+                }
+                TDEFLStatus::Okay if bytes_in <= input.len() => {
+                    input = &input[bytes_in..];
+                    if self.compressed_buf.len().saturating_sub(out_pos) < 4096 {
+                        self.compressed_buf.resize(self.compressed_buf.len() * 2, 0);
+                    }
+                }
+                _ => panic!("miniz_oxide compress failed"),
+            }
+        }
+
+        // 2. Direct streaming Base64 encoding into Kitty chunk packets (no intermediate string)
+        output.clear();
+        let est_capacity = (out_pos * 4 / 3) + (out_pos / 3072 + 1) * 64 + 64;
+        if output.capacity() < est_capacity {
+            output.reserve(est_capacity - output.capacity());
+        }
+
+        output.push_str("\x1b[H");
+
+        let chunk_raw_size = 3072;
+        let total_raw = self.compressed_buf.len();
+        let mut offset = 0;
+        let mut first = true;
+
+        while offset < total_raw {
+            let next_offset = std::cmp::min(offset + chunk_raw_size, total_raw);
+            let raw_chunk = &self.compressed_buf[offset..next_offset];
+            let is_last = next_offset >= total_raw;
+            let m_flag = if is_last { 0 } else { 1 };
+
+            if first {
+                let _ = write!(
+                    output,
+                    "\x1b_Ga=T,q=2,i={},C=1,f=32,o=z,z=-2147483648,s={},v={},c={},r={},m={};",
+                    image_id, width, height, term_cols, term_rows, m_flag
+                );
+                first = false;
+            } else if m_flag == 1 {
+                output.push_str("\x1b_Gm=1;");
+            } else {
+                output.push_str("\x1b_Gm=0;");
+            }
+
+            BASE64.encode_string(raw_chunk, output);
+            output.push_str("\x1b\\");
+
+            offset = next_offset;
+        }
+    }
+}
+
+thread_local! {
+    static THREAD_KITTY_STREAM: std::cell::RefCell<KittyStreamEncoder> = std::cell::RefCell::new(KittyStreamEncoder::new());
+}
+
 impl KittyEncoder {
     /// Escape sequence to delete all placed images on screen
     pub fn clear_all_images() -> &'static str {
@@ -21,18 +140,12 @@ impl KittyEncoder {
         term_rows: u16,
         image_id: u32,
     ) -> String {
-        let mut b64_buf = String::new();
         let mut output = String::new();
-        Self::encode_fullscreen_frame_into(
-            rgba,
-            width,
-            height,
-            term_cols,
-            term_rows,
-            image_id,
-            &mut b64_buf,
-            &mut output,
-        );
+        THREAD_KITTY_STREAM.with(|stream| {
+            stream.borrow_mut().encode_fullscreen_frame_into(
+                rgba, width, height, term_cols, term_rows, image_id, &mut output,
+            );
+        });
         output
     }
 
@@ -46,53 +159,14 @@ impl KittyEncoder {
         term_cols: u16,
         term_rows: u16,
         image_id: u32,
-        b64_buf: &mut String,
+        _b64_buf: &mut String,
         output: &mut String,
     ) {
-        let compressed = miniz_oxide::deflate::compress_to_vec_zlib(rgba, 1);
-        b64_buf.clear();
-        BASE64.encode_string(&compressed, b64_buf);
-        use std::fmt::Write;
-
-        output.clear();
-        // Pre-reserve capacity to avoid re-allocations
-        let est_capacity = b64_buf.len() + (b64_buf.len() / 4096 + 1) * 32 + 64;
-        if output.capacity() < est_capacity {
-            output.reserve(est_capacity - output.capacity());
-        }
-
-        // Move cursor to top-left (1,1) before displaying
-        output.push_str("\x1b[H");
-
-        let chunk_size = 4096;
-        let total_len = b64_buf.len();
-        let mut offset = 0;
-        let mut first = true;
-
-        while offset < total_len {
-            let next_offset = std::cmp::min(offset + chunk_size, total_len);
-            let chunk = &b64_buf[offset..next_offset];
-            let is_last = next_offset >= total_len;
-            let m_flag = if is_last { 0 } else { 1 };
-
-            if first {
-                let _ = write!(
-                    output,
-                    "\x1b_Ga=T,q=2,i={},C=1,f=32,o=z,z=-2147483648,s={},v={},c={},r={},m={};",
-                    image_id, width, height, term_cols, term_rows, m_flag
-                );
-                first = false;
-            } else if m_flag == 1 {
-                output.push_str("\x1b_Gm=1;");
-            } else {
-                output.push_str("\x1b_Gm=0;");
-            }
-
-            output.push_str(chunk);
-            output.push_str("\x1b\\");
-
-            offset = next_offset;
-        }
+        THREAD_KITTY_STREAM.with(|stream| {
+            stream.borrow_mut().encode_fullscreen_frame_into(
+                rgba, width, height, term_cols, term_rows, image_id, output,
+            );
+        });
     }
 
     /// Encode RGBA pixel data to Kitty Graphics Protocol escape sequence chunks.

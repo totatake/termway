@@ -131,4 +131,36 @@ fn test_sixel_simd_mixed_patterns_and_widths() {
     }
 }
 
+#[test]
+fn test_sixel_stream_encoder_damage_caching() {
+    use termway::display::DamageRect;
+    use termway::protocol::SixelStreamEncoder;
+
+    let w = 64u32;
+    let h = 24u32; // 4 bands of 6 pixels
+    let mut rgba = vec![0u8; (w * h * 4) as usize];
+    let mut stream = SixelStreamEncoder::new();
+    let mut out1 = Vec::new();
+
+    // Initial frame
+    stream.encode_frame_into(&rgba, w, h, None, &mut out1);
+    assert!(out1.starts_with(b"\x1bP7;0;q\"1;1;64;24"));
+    assert!(out1.ends_with(b"\x1b\\"));
+
+    // Modify a single pixel in band 2 (y = 12..18)
+    let idx = ((14 * w + 5) * 4) as usize;
+    rgba[idx] = 255; // Red
+    rgba[idx + 3] = 255;
+
+    let mut out2 = Vec::new();
+    let damage = [DamageRect { x: 5, y: 14, width: 1, height: 1 }];
+    stream.encode_frame_into(&rgba, w, h, Some(&damage), &mut out2);
+
+    assert!(out2.starts_with(b"\x1bP7;0;q\"1;1;64;24"));
+    assert!(out2.ends_with(b"\x1b\\"));
+    // Color 224 (Red) should now be present in the stream
+    let s2 = String::from_utf8_lossy(&out2);
+    assert!(s2.contains("#224;2;100;0;0"));
+}
+
 

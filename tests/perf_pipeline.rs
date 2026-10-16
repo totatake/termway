@@ -1,6 +1,6 @@
 use std::time::Instant;
 use termway::display::DamageTracker;
-use termway::protocol::{KittyEncoder, SixelEncoder};
+use termway::protocol::{KittyStreamEncoder, SixelStreamEncoder};
 
 #[derive(Debug, Clone, Copy)]
 pub enum Workload {
@@ -107,11 +107,23 @@ pub fn run_scenario(
     // Warmup tracker
     let _ = tracker.track_damage(&base_frame);
 
-    // Buffers for zero-allocation reuse
+    // Streaming encoders and buffers
+    let mut sixel_stream = SixelStreamEncoder::new();
     let mut sixel_out = Vec::with_capacity((width * height) as usize / 2);
-    let mut sixel_quantized = Vec::with_capacity((width * height) as usize);
-    let mut kitty_b64 = String::with_capacity((width * height) as usize / 2);
+    let mut kitty_stream = KittyStreamEncoder::new();
     let mut kitty_out = String::with_capacity((width * height) as usize / 2);
+
+    // Warmup initial frame
+    sixel_stream.encode_frame_into(&base_frame, width, height, None, &mut sixel_out);
+    kitty_stream.encode_fullscreen_frame_into(
+        &base_frame,
+        width,
+        height,
+        (width / 10) as u16,
+        (height / 20) as u16,
+        1,
+        &mut kitty_out,
+    );
 
     let mut total_damage_us = 0.0;
     let mut total_damage_rects = 0;
@@ -131,29 +143,28 @@ pub fn run_scenario(
         total_damage_us += d_dur.as_secs_f64() * 1_000_000.0;
         total_damage_rects = damage.len();
 
-        // 2. Sixel Encoding stage (currently full frame)
+        // 2. Sixel Encoding stage (utilizing damage rects)
         let t_s0 = Instant::now();
-        SixelEncoder::encode_fullscreen_frame_into(
+        sixel_stream.encode_frame_into(
             &frame,
             width,
             height,
+            Some(&damage),
             &mut sixel_out,
-            &mut sixel_quantized,
         );
         let s_dur = t_s0.elapsed();
         total_sixel_ms += s_dur.as_secs_f64() * 1_000.0;
         sixel_bytes = sixel_out.len();
 
-        // 3. Kitty Encoding stage (currently full frame)
+        // 3. Kitty Encoding stage (zero-allocation stateful stream)
         let t_k0 = Instant::now();
-        KittyEncoder::encode_fullscreen_frame_into(
+        kitty_stream.encode_fullscreen_frame_into(
             &frame,
             width,
             height,
             (width / 10) as u16,
             (height / 20) as u16,
             1,
-            &mut kitty_b64,
             &mut kitty_out,
         );
         let k_dur = t_k0.elapsed();
