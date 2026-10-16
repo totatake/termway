@@ -25,3 +25,4 @@ pub fn save_screenshot(renderer: &mut TermwayRenderer, state: &TermwayState) {
         let _ = std::fs::write(&latest_path, &png_bytes);
     }
 }
+

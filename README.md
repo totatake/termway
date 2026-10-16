@@ -250,6 +250,7 @@ export TERMWAY_CELL_SIZE=10x22
 | `--height` | `<PIXELS>` | Virtual display resolution height | Auto-calculated from terminal |
 | `--fps` | `<FPS>` | Target frame rate limit | `30` |
 | `--hud` | - | Show real-time performance HUD overlay (FPS, encode time, bandwidth, damage tiles) | Disabled |
+| `--profile` | - | Print stage-by-stage performance profiling report on exit (also enabled via `TERMWAY_PROFILE=1`) | Disabled |
 | `--no-splash` | - | Disable the animated startup splash screen while waiting for the first window | Disabled |
 | `--demo` | - | Launch built-in GTK3 Wayland demo application | - |
 | `-V`, `--version` | - | Print version information | - |
@@ -278,7 +279,7 @@ command = "mount -o remount,rw /tmp/.X11-unix"
 
 ## Running Tests
 
-`termway` comes with a comprehensive test suite (unit, integration, and end-to-end tests: 75 tests total):
+`termway` comes with a comprehensive test suite (unit, integration, benchmark, and end-to-end tests: 84 tests total):
 
 ```bash
 cargo test --release

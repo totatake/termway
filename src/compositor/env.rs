@@ -155,3 +155,4 @@ pub fn free_x11_display_candidates() -> Vec<u32> {
         })
         .collect()
 }
+

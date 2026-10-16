@@ -1,4 +1,4 @@
-# termway システムアーキテクチャ詳細設計書 (v0.6.1)
+# termway システムアーキテクチャ詳細設計書 (v0.7.0)
 
 本書は、`termway` の**静的構造（モジュール構成・クラス/構造体関係・責務分割）**および**動的構造（起動シーケンス・非同期レンダリングパイプライン・ウィンドウ状態遷移・入力ディスパッチ）**について解説する技術設計ドキュメントです。
 
@@ -8,7 +8,7 @@
 
 ### 1.1 レイヤー構成とディレクトリツリー
 
-`termway` は単一バイナリの Smithay ベース自立型 Wayland コンポジタとして設計されており、以下の 5 つの疎結合なコアレイヤーで構成されています（v0.6.0 にてレガシー Xvfb エンジンを廃止し、Smithay + XWayland アーキテクチャへ完全一本化）。
+`termway` は単一バイナリの Smithay ベース自立型 Wayland コンポジタとして設計されており、以下の 5 つの疎結合なコアレイヤーで構成されています（v0.6.0 にてレガシー Xvfb エンジンを廃止し Smithay + XWayland アーキテクチャへ一本化、v0.7.0 にてコンポジタのモジュール分割とストリーム最適化を実施）。
 
 ```text
 src/
@@ -18,9 +18,13 @@ src/
 │   ├── mod.rs
 │   └── terminal.rs                 # TerminalBackend: 非同期エンコードワーカースレッド & 最新フレーム間引き
 ├── compositor/                     # 【Smithay Wayland コンポジタ & WM コア層】
-│   ├── mod.rs                      # TermwayCompositor: イベントループ統合、XWayland/子プロセス管理、タスクバー構築
+│   ├── mod.rs                      # TermwayCompositor: 統一 FD ポーリング、フレームペーシング、メインループ
+│   ├── env.rs                      # XDG ランタイム環境設定、X11 ディスプレイ候補検索、シグナル処理、ログ出力
+│   ├── taskbar.rs                  # Taskbar & TaskbarChip: 下部ステータスバー・タスクバーチップ生成とクリック判定
+│   ├── profile.rs                  # CompositorMetrics: パイプライン各段レイテンシ集計、帯域測定、レポート出力
+│   ├── screenshot.rs               # save_screenshot: フレームバッファからの PNG スクリーンショット出力
 │   ├── state.rs                    # TermwayState: コンポジタ全体のオーケストレータ状態 & JSON 状態ダンプ
-│   ├── window_manager.rs           # WindowManager: Z-order・フォーカス・ドラッグ状態・最小化/最大化の純粋ドメイン管理
+│   ├── window_manager.rs           # WindowManager: Z-order・フォーカス・ドラッグ・最小化/最大化・リサイズ再配置
 │   ├── window.rs                   # ManagedWindow / WindowSurface / WindowDragState: ウィンドウジオメトリ・ヒットテスト
 │   ├── handlers/                   # Smithay プロトコルハンドラ群（ドメイン別分割）
 │   │   ├── mod.rs                  # delegate_*! マクロ集約
@@ -29,7 +33,7 @@ src/
 │   │   └── seat.rs                 # SeatHandler / SelectionHandler / DataDeviceHandler (OSC 52 & クリップボード統合)
 │   ├── xwayland.rs                 # XwmHandler / XWaylandShellHandler: X11 ウィンドウ管理 & Override-Redirect 制御
 │   ├── input.rs                    # SGRマウス・ANSIキーイベントの座標変換、WM操作、Smithay Seat ディスパッチ
-│   ├── renderer.rs                 # TermwayRenderer: Pixman オフスクリーン合成、ポップアップ・カーソル・スプラッシュ描画
+│   ├── renderer.rs                 # TermwayRenderer: Pixman オフスクリーン合成（パス統合）、ポップアップ・スプラッシュ描画
 │   ├── decoration.rs               # Openbox/Fluxbox 風 SSD タイトルバー・ボタン・枠線描画
 │   ├── bitmap_font.rs              # ビットマップフォント文字列レンダラ・グラデーション描画
 │   └── font_data.rs                # 内蔵 8x8 ASCII ビットマップフォントデータ
@@ -39,8 +43,8 @@ src/
 │   └── framebuffer.rs              # Framebuffer: RGBA8888 バッファ & BGRX→RGBA 変換 (AVX2 SIMD 高速化)
 ├── protocol/                       # 【ターミナルプロトコル エンコード・デコード層】
 │   ├── mod.rs
-│   ├── kitty.rs                    # KittyEncoder: RFC 1950 zlib 圧縮 (o=z) & Base64 チャンク分割エンコーダ
-│   ├── sixel.rs                    # SixelEncoder: RGB332 減色・6行バンド走査・RLE 圧縮 (AVX2 + tzcnt 高速化)
+│   ├── kitty.rs                    # KittyEncoder & KittyStreamEncoder: RFC 1950 zlib 圧縮 (o=z) & ゼロアロケーション Base64 ストリーミング
+│   ├── sixel.rs                    # SixelEncoder & SixelStreamEncoder: ダーティバンドキャッシュ、RGB332 減色、RLE 圧縮 (AVX2 + tzcnt)
 │   ├── sgr_mouse.rs                # SgrMouseParser: xterm SGR 1006 (Any-event 1003h) マウスシーケンスパーサー
 │   └── keyboard.rs                 # KeyboardParser: UTF-8・ANSI/CSI 修飾キー・Bracketed Paste パーサー
 ├── session/                        # 【セッション管理・IPC ブリッジ層】

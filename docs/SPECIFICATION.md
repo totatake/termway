@@ -1,4 +1,4 @@
-# termway 要求仕様およびテスト仕様書 (v0.6.1)
+# termway 要求仕様およびテスト仕様書 (v0.7.0)
 
 本書は、`termway` の開発において策定された機能要件・非機能要件と、それらを検証するためのテスト仕様およびトレーサビリティ（対応関係）をまとめたドキュメントです。
 
@@ -28,20 +28,24 @@ flowchart LR
         FR26["FR-26: 動的ターミナルリサイズ追従 (SIGWINCH)"]
         FR27["FR-27: リアルタイムパフォーマンス HUD (--hud)"]
         FR28["FR-28: 起動時スプラッシュスクリーン (--no-splash)"]
+        FR29["FR-29: パフォーマンスプロファイリング (--profile)"]
+        FR30["FR-30: Sixelバンドキャッシュ & Kittyストリーミング"]
+        FR31["FR-31: 統一FDポーリング & fpsフレームペーシング"]
     end
 
     subgraph Verification["テスト検証 (Verification)"]
         T_Sys["system_e2e_gui<br/>(システムE2Eテスト: 2件)"]
-        T_Integ["integration_pipeline<br/>(結合テスト: 6件)"]
+        T_Integ["integration_pipeline<br/>(結合テスト: 7件)"]
         T_Mouse["unit_sgr_mouse<br/>(単体テスト: 6件)"]
         T_Kitty["unit_kitty_encoder<br/>(単体テスト: 7件)"]
         T_Term["unit_terminal<br/>(単体テスト: 4件)"]
         T_Damage["unit_damage_tracker<br/>(単体テスト: 6件)"]
-        T_Key["unit_keyboard<br/>(単体テスト: 4件)"]
-        T_Comp["unit_compositor<br/>(単体テスト: 23件)"]
+        T_Key["unit_keyboard<br/>(単体テスト: 5件)"]
+        T_Comp["unit_compositor<br/>(単体テスト: 28件)"]
         T_Sess["unit_session<br/>(単体テスト: 7件)"]
         T_Secret["unit_secret_bridge<br/>(単体テスト: 4件)"]
-        T_Sixel["unit_sixel_encoder<br/>(単体テスト: 6件)"]
+        T_Sixel["unit_sixel_encoder<br/>(単体テスト: 7件)"]
+        T_Perf["perf_pipeline<br/>(性能ベンチマーク: 1件)"]
     end
 
     FR1 --> T_Kitty
@@ -69,6 +73,12 @@ flowchart LR
     FR26 --> T_Comp
     FR27 --> T_Comp
     FR28 --> T_Comp
+    FR29 --> T_Perf
+    FR29 --> T_Comp
+    FR30 --> T_Sixel
+    FR30 --> T_Kitty
+    FR31 --> T_Comp
+    FR31 --> T_Integ
 ```
 
 ---
@@ -98,6 +108,9 @@ flowchart LR
 | **FR-26** | 動的ターミナルリサイズ追従 (`SIGWINCH`) | `SIGWINCH` シグナル検知時にコンポジタ出力・Pixman バッファ・DamageTracker・最大化/浮動ウィンドウを動的にリサイズ追従させること。 | `tests/unit_compositor.rs` | **PASS** |
 | **FR-27** | リアルタイムパフォーマンス HUD (`--hud`) | `--hud` 指定時に FPS、解像度、転送帯域（KB/s）、エンコード時間（ms）を画面右上にオーバーレイ表示すること。 | `tests/unit_compositor.rs` | **PASS** |
 | **FR-28** | 起動時スプラッシュスクリーン (`--no-splash`) | 最初のウィンドウが表示されるまでの間、ブルー〜シアンのグラデーションロゴ `>_ TERMWAY` とカーネル風テレメトリログを描画し、ウィンドウ表示時に自動消去すること（`--no-splash` で非表示化可能）。 | `tests/unit_compositor.rs` | **PASS** |
+| **FR-29** | パフォーマンスプロファイリング (`--profile`) | `--profile` オプションまたは環境変数 `TERMWAY_PROFILE=1` 指定時に、レンダリング・エンコード・I/Oステージごとの詳細レイテンシテレメトリ（avg/max/p95）を定期出力すること。また専用ベンチマークスイートによる継続的リグレッション検知を保証すること。 | `tests/perf_pipeline.rs`<br/>`tests/unit_compositor.rs` | **PASS** |
+| **FR-30** | Sixel ダーティバンドキャッシュ & Kitty ストリーミング | Sixel エンコーダにおいて 6 行バンド単位の FNV-1a ハッシュキャッシュによる完全同一バンドスキップを行い、Kitty エンコーダにおいては `KittyStreamEncoder` によるゼロアロケーションバッファ再利用ストリーミングを実現すること。 | `tests/unit_sixel_encoder.rs`<br/>`tests/unit_kitty_encoder.rs` | **PASS** |
+| **FR-31** | 統一 FD ポーリング & `--fps` フレームペーシング | `calloop` イベントループにおいて stdin, Wayland display, XWayland, clipboard, signal の全記述子を単一 epoll で統一監視し、`--fps`（デフォルト 60fps）による適応型フレームペーシング制御を行うこと。 | `tests/unit_compositor.rs`<br/>`tests/integration_pipeline.rs` | **PASS** |
 
 ### 2.2 非機能要件 (Non-Functional Requirements)
 
@@ -106,7 +119,7 @@ flowchart LR
 | **NFR-1** | レスポンス・低遅延 | 非同期エンコードワーカースレッド分離と最新フレーム間引きにより、高解像度でも入力遅延ゼロを実現すること。 | `TerminalBackend` 非同期ワーカー＆フレーム間引きにより達成 |
 | **NFR-2** | 堅牢性・端末保護 | プログラムが異常終了しても、端末のRawモードやマウストラッキングが残留してシェルが壊れる事故を100%防止すること。 | `RawModeGuard::drop` の RAII パターンにより保証 |
 | **NFR-3** | 依存関係の最小化 | C `libx11` / `Xvfb` / `openbox` への依存を排除し、Smithay + XWayland の単一バイナリとして動作すること。 | v0.6.0 にてレガシー Xvfb エンジンおよび `x11` クレート依存を完全排除 |
-| **NFR-4** | モジュール構造・テスタビリティ | `WindowManager` やプロトコルハンドラ群がドメイン分割され、全テストが外部 Xvfb サーバー不要で高速に実行できること。 | 全 75 テストが約 0.26 秒で完走 |
+| **NFR-4** | モジュール構造・テスタビリティ | `WindowManager` やプロトコルハンドラ群がドメイン分割され、全テストが外部 Xvfb サーバー不要で高速に実行できること。 | 全 84 テストが約 0.35 秒で完走 |
 | **NFR-5** | SIMD ベクトル高速化 | `x86_64` 環境において AVX2 SIMD 命令を実行時検出し、タイル差分ハッシュ計算、Sixel RGB332 減色・6行バンド走査、BGRX→RGBA ピクセル変換をベクトル高速化すること。 | 1080x720 差分スキャン約 0.20ms、Sixel エンコード約 3.78ms を達成 |
 
 ---
@@ -115,17 +128,18 @@ flowchart LR
 
 | テストターゲット | テスト数 | 検証内容 |
 | :--- | :---: | :--- |
-| `tests/unit_compositor.rs` | 23 | `TermwayState` / `WindowManager` ドメイン操作、SSD/CSD 装飾、最大化・80%中央復元・最小化、動的リサイズ (`SIGWINCH`)、OSC 52 クリップボード送信、マウスホイール、スプラッシュ描画・消去、JSON 状態ダンプ |
+| `tests/unit_compositor.rs` | 28 | `TermwayState` / `WindowManager` ドメイン操作、SSD/CSD 装飾、最大化・80%中央復元・最小化、動的リサイズ (`SIGWINCH`)、OSC 52 クリップボード送信、マウスホイール、スプラッシュ描画・消去、JSON 状態ダンプ、UTF-8 日本語入力 |
 | `tests/unit_session.rs` | 7 | ハイブリッド D-Bus セッション起動、Snap コマンド判定・PATH シムルーティング、Polkit エージェント検出、コマンド存在性検証、`/tmp/.X11-unix` 書込検査 |
 | `tests/unit_kitty_encoder.rs` | 7 | Kitty フルスクリーン RFC 1950 zlib 圧縮 (`o=z`)・4096B チャンク分割・ラウンドトリップ解凍検証、1080x720 パフォーマンス検証 |
-| `tests/unit_sixel_encoder.rs` | 6 | Sixel AVX2 SIMD 減色・6行バンド走査・単色バンド高速パス・RLE 圧縮・非8倍数幅エッジケース、1080x720 パフォーマンス検証 |
+| `tests/unit_sixel_encoder.rs` | 7 | Sixel AVX2 SIMD 減色・6行バンド走査・単色バンド高速パス・RLE 圧縮・非8倍数幅エッジケース、6行バンド差分キャッシュ (`SixelStreamEncoder`)、1080x720 パフォーマンス検証 |
 | `tests/unit_damage_tracker.rs` | 6 | 32x32 タイル FNV-1a ハッシュ比較、AVX2 SIMD 端数タイル一致検証、リセット・リサイズ検証 |
 | `tests/unit_sgr_mouse.rs` | 6 | SGR 1006 クリック・ドラッグ・リリース・ホイール・修飾キー・不正シーケンス耐性検証 |
-| `tests/integration_pipeline.rs` | 6 | Framebuffer → DamageTracker → Kitty エンコード結合検証、マウス座標変換、プロトコル自動検出、`--version` / `-V` 検証 |
-| `tests/unit_keyboard.rs` | 4 | UTF-8 文字、矢印キー、Ctrl 制御文字、Shift/Ctrl 修飾キー付きカーソル・選択キー解析検証 |
+| `tests/integration_pipeline.rs` | 7 | Framebuffer → DamageTracker → Kitty エンコード結合検証、マウス座標変換、プロトコル自動検出、`--version` / `-V` 検証 |
+| `tests/unit_keyboard.rs` | 5 | UTF-8 文字、矢印キー、Ctrl 制御文字、Shift/Ctrl 修飾キー付きカーソル・選択キー、日本語 UTF-8 複数バイト解析検証 |
 | `tests/unit_secret_bridge.rs` | 4 | D-Bus Secret Service (`org.freedesktop.secrets`) メッセージエンディアン解析・双方向リレー検証 |
 | `tests/unit_terminal.rs` | 4 | 端末サイズフォールバック、セル→ピクセル変換、`RawModeGuard` RAII 安全性検証 |
 | `tests/system_e2e_gui.rs` | 2 | Smithay コンポジタ描画 → DamageTracker → Kitty エンコード → SIMD BGRX 変換 E2E パイプライン検証、テストドライバ JSON ダンプ検証 |
+| `tests/perf_pipeline.rs` | 1 | 1080x720 擬似ウィンドウ描画・DamageTracker 差分検出・Kitty/Sixel エンコード総合パイプラインのベースライン性能ベンチマーク検証 |
 
 ---
 
@@ -133,20 +147,21 @@ flowchart LR
 
 ```bash
 $ cargo test --release
-   Compiling termway v0.6.1 (/path/to/termway)
+   Compiling termway v0.7.0 (/path/to/termway)
     Finished `release` profile [optimized] target(s)
-     Running tests/integration_pipeline.rs (6 tests) ... ok
+     Running tests/integration_pipeline.rs (7 tests) ... ok
+     Running tests/perf_pipeline.rs (1 test) ... ok
      Running tests/system_e2e_gui.rs (2 tests) ... ok
-     Running tests/unit_compositor.rs (23 tests) ... ok
+     Running tests/unit_compositor.rs (28 tests) ... ok
      Running tests/unit_damage_tracker.rs (6 tests) ... ok
-     Running tests/unit_keyboard.rs (4 tests) ... ok
+     Running tests/unit_keyboard.rs (5 tests) ... ok
      Running tests/unit_kitty_encoder.rs (7 tests) ... ok
      Running tests/unit_secret_bridge.rs (4 tests) ... ok
      Running tests/unit_session.rs (7 tests) ... ok
      Running tests/unit_sgr_mouse.rs (6 tests) ... ok
-     Running tests/unit_sixel_encoder.rs (6 tests) ... ok
+     Running tests/unit_sixel_encoder.rs (7 tests) ... ok
      Running tests/unit_terminal.rs (4 tests) ... ok
 
-test result: ok. 75 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.26s
+test result: ok. 84 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.35s
 ```
-全 75 テストが 100% 成功し、すべての要件定義項目が検証されました。
+全 84 テストが 100% 成功し、すべての要件定義項目が検証されました。
