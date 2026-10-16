@@ -48,3 +48,14 @@ fn test_raw_mode_guard_dummy_drop() {
     }
     // Verifies no panic on drop
 }
+
+#[test]
+fn test_terminal_backend_mode_names() {
+    let sixel_backend = termway::backend::TerminalBackend::new(TerminalSize::fallback(80, 24), true);
+    assert_eq!(sixel_backend.name(), "Sixel");
+    assert!(sixel_backend.is_sixel());
+
+    let kitty_backend = termway::backend::TerminalBackend::new(TerminalSize::fallback(80, 24), false);
+    assert_eq!(kitty_backend.name(), "Kitty");
+    assert!(!kitty_backend.is_sixel());
+}

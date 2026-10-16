@@ -63,9 +63,9 @@ impl TerminalBackend {
 
         let state_clone = Arc::clone(&async_state);
         let mode_desc = if use_sixel {
-            "Wayland (Sixel)"
+            "Sixel"
         } else {
-            "Wayland (Kitty)"
+            "Kitty"
         };
 
         let worker_handle = std::thread::Builder::new()
@@ -262,9 +262,9 @@ impl TerminalBackend {
 
     pub fn name(&self) -> &'static str {
         if self.use_sixel {
-            "Wayland (Sixel)"
+            "Sixel"
         } else {
-            "Wayland (Kitty)"
+            "Kitty"
         }
     }
 

@@ -38,7 +38,7 @@ flowchart LR
         T_Integ["integration_pipeline<br/>(結合テスト: 7件)"]
         T_Mouse["unit_sgr_mouse<br/>(単体テスト: 6件)"]
         T_Kitty["unit_kitty_encoder<br/>(単体テスト: 7件)"]
-        T_Term["unit_terminal<br/>(単体テスト: 4件)"]
+        T_Term["unit_terminal<br/>(単体テスト: 5件)"]
         T_Damage["unit_damage_tracker<br/>(単体テスト: 6件)"]
         T_Key["unit_keyboard<br/>(単体テスト: 5件)"]
         T_Comp["unit_compositor<br/>(単体テスト: 28件)"]
@@ -119,7 +119,7 @@ flowchart LR
 | **NFR-1** | レスポンス・低遅延 | 非同期エンコードワーカースレッド分離と最新フレーム間引きにより、高解像度でも入力遅延ゼロを実現すること。 | `TerminalBackend` 非同期ワーカー＆フレーム間引きにより達成 |
 | **NFR-2** | 堅牢性・端末保護 | プログラムが異常終了しても、端末のRawモードやマウストラッキングが残留してシェルが壊れる事故を100%防止すること。 | `RawModeGuard::drop` の RAII パターンにより保証 |
 | **NFR-3** | 依存関係の最小化 | C `libx11` / `Xvfb` / `openbox` への依存を排除し、Smithay + XWayland の単一バイナリとして動作すること。 | v0.6.0 にてレガシー Xvfb エンジンおよび `x11` クレート依存を完全排除 |
-| **NFR-4** | モジュール構造・テスタビリティ | `WindowManager` やプロトコルハンドラ群がドメイン分割され、全テストが外部 Xvfb サーバー不要で高速に実行できること。 | 全 84 テストが約 0.35 秒で完走 |
+| **NFR-4** | モジュール構造・テスタビリティ | `WindowManager` やプロトコルハンドラ群がドメイン分割され、全テストが外部 Xvfb サーバー不要で高速に実行できること。 | 全 85 テストが約 0.35 秒で完走 |
 | **NFR-5** | SIMD ベクトル高速化 | `x86_64` 環境において AVX2 SIMD 命令を実行時検出し、タイル差分ハッシュ計算、Sixel RGB332 減色・6行バンド走査、BGRX→RGBA ピクセル変換をベクトル高速化すること。 | 1080x720 差分スキャン約 0.20ms、Sixel エンコード約 3.78ms を達成 |
 
 ---
@@ -137,7 +137,7 @@ flowchart LR
 | `tests/integration_pipeline.rs` | 7 | Framebuffer → DamageTracker → Kitty エンコード結合検証、マウス座標変換、プロトコル自動検出、`--version` / `-V` 検証 |
 | `tests/unit_keyboard.rs` | 5 | UTF-8 文字、矢印キー、Ctrl 制御文字、Shift/Ctrl 修飾キー付きカーソル・選択キー、日本語 UTF-8 複数バイト解析検証 |
 | `tests/unit_secret_bridge.rs` | 4 | D-Bus Secret Service (`org.freedesktop.secrets`) メッセージエンディアン解析・双方向リレー検証 |
-| `tests/unit_terminal.rs` | 4 | 端末サイズフォールバック、セル→ピクセル変換、`RawModeGuard` RAII 安全性検証 |
+| `tests/unit_terminal.rs` | 5 | 端末サイズフォールバック、セル→ピクセル変換、TerminalBackend モード名検証、`RawModeGuard` RAII 安全性検証 |
 | `tests/system_e2e_gui.rs` | 2 | Smithay コンポジタ描画 → DamageTracker → Kitty エンコード → SIMD BGRX 変換 E2E パイプライン検証、テストドライバ JSON ダンプ検証 |
 | `tests/perf_pipeline.rs` | 1 | 1080x720 擬似ウィンドウ描画・DamageTracker 差分検出・Kitty/Sixel エンコード総合パイプラインのベースライン性能ベンチマーク検証 |
 
@@ -160,8 +160,8 @@ $ cargo test --release
      Running tests/unit_session.rs (7 tests) ... ok
      Running tests/unit_sgr_mouse.rs (6 tests) ... ok
      Running tests/unit_sixel_encoder.rs (7 tests) ... ok
-     Running tests/unit_terminal.rs (4 tests) ... ok
+     Running tests/unit_terminal.rs (5 tests) ... ok
 
-test result: ok. 84 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.35s
+test result: ok. 85 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.35s
 ```
-全 84 テストが 100% 成功し、すべての要件定義項目が検証されました。
+全 85 テストが 100% 成功し、すべての要件定義項目が検証されました。
