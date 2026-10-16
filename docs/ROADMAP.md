@@ -25,51 +25,35 @@ Smithay の `delegate_*!` マクロおよび `KeyboardHandle::set_focus(&mut Ter
 
 ---
 
-## 2. パフォーマンス最適化アーキテクチャ
+## 2. パフォーマンス最適化アーキテクチャ（v0.4.0〜v0.7.0 実装済み）
 
-### 2.1 差分更新（Damage Tracking / Partial Redraw）
+### 2.1 差分更新とダーティバンドキャッシュ（Damage Tracking & Dirty Band Caching）
 
-#### 現状と課題
-現在、Wayland コンポジタは画面の一部（例: xeyes の瞳移動、エディタのカーソル点滅、時計の更新など）が変化しただけでも、**毎フレーム全画面（全ピクセル・数MB）を再エンコードして端末へ送信**しています。
-高解像度端末やリモート接続環境（SSH 経由など）において、不要な全画面データが大量に流れることでネットワーク帯域を逼迫させ、著しいフレームレート低下と転送遅延を引き起こしています。
+#### 初期の課題
+初期実装では、画面の一部（xeyes の瞳移動、エディタのカーソル点滅、時計の更新など）が変化しただけでも毎フレーム全画面（数MB）を再エンコードして送信しており、高解像度端末や SSH 接続で帯域逼迫と遅延を招いていました。
 
-#### 改善方針
-- **ダメージ領域の局所抽出**: Smithay の `damage_tracker` から更新のあった矩形領域（Damage Rect）のみを抽出。
-- **Kitty プロトコルの部分配置**: Kitty Graphics Protocol は配置座標（行・列）や画像位置を指定できるため、変化のあった矩形領域のみをピンポイントでエンコード・上書き配置。
-- **Sixel の行バンド・矩形差分更新**: 変化のあった 6 ピクセル単位のバンドのみ送信するか、エスケープシーケンスによるカーソル移動（`\x1b[行;列H`）を併用して差分領域のみ転送。
-- **期待効果**: データ転送量および CPU エンコード負荷を **80%〜95% 削減**。
+#### 実装された構造（v0.4.0〜v0.7.0）
+- **32x32 タイル AVX2 差分検出 ([`DamageTracker`](../src/display/damage.rs))**: 画面を 32x32 タイルに分割し、AVX2 8 レーン並列 FNV-1a ハッシュ比較により 1080x720 画面を約 0.14〜0.20ms で走査し、無変化フレームの再エンコードを完全スキップ。
+- **Sixel 6 行ダーティバンドキャッシュ ([`SixelStreamEncoder`](../src/protocol/sixel.rs))**: 6 ピクセル高の水平バンドごとに FNV-1a ハッシュをキャッシュし、変化したバンドのみを RGB332 減色・RLE 圧縮して再構築。カーソル移動や部分更新時の Sixel エンコード時間を **4.3ms → 0.34ms（92〜95% 削減）** に高速化。
 
-### 2.2 フレームレンダリング・画像エンコードのパイプライン分離（非同期化）
+### 2.2 非同期エンコードワーカーと統一 FD ポーリング（Async Pipeline & Unified Polling）
 
-#### 現状と課題
-現在、フレームの Pixman レンダリングおよび端末用画像プロトコル（Kitty Graphics Protocol / Sixel）へのエンコード処理は、Smithay のメインイベントループ（Calloop）内で同期的に実行されています（`src/compositor/mod.rs`）。
-高解像度端末や大量の画面更新（動画再生、激しいスクロール等）が発生した際、エンコード処理の CPU 負荷や stdout 書き込みの I/O ブロックによりイベントループが停止し、マウスポインタやキー入力の応答レイテンシが増加します。
+#### 初期の課題
+Pixman レンダリングと画像エンコード、標準出力フラッシュがイベントループ内で同期実行されていたため、重い画面更新時に入力応答がブロックされるほか、アイドル時にも短いタイマーポーリングで CPU を消費していました。
 
-#### 改善方針
-レンダリングパイプラインをイベント駆動型のワーカースレッドへ分離します：
-1. **イベントループ**: ダメージ領域の収集とサーフェスバッファのコミット通知のみを高速にディスパッチ（1000Hz 以上の超低レイテンシ入力応答）。
-2. **レンダリング/エンコードスレッド**: ダメージ通知をチャネル経由で受け取り、バックグラウンドで画像エンコードを実行。
-3. **最新フレーム間引き（Frame Dropping / Rate Limiting）**: ワーカースレッドが前のフレームを処理中に新しいフレームが到着した場合、古いフレームを破棄して「常に最新の1フレームのみ」を処理。端末や PTY のバッファ溢れを完全に防止。
+#### 実装された構造（v0.4.0〜v0.7.0）
+- **非同期ワーカースレッド分離 ([`TerminalBackend`](../src/backend/terminal.rs))**: エンコードと stdout フラッシュを専用スレッド（`termway-async-render`）へ分離。ワーカー処理中に新しいフレームが到着した場合は `pending_job` を最新フレームで上書き（Frame Dropping）し、PTY のバッファブロートを防止。
+- **統一 FD ポーリング & フレームペーシング ([`TermwayCompositor`](../src/compositor/mod.rs))**: `stdin`・Wayland `ListeningSocket`・`display.backend().poll_fd()` を単一の `nix::poll` で一括監視し、アイドル時の CPU 使用率を 0% に削減。さらに `--fps`（デフォルト 30fps）に基づくフレームペーシングにより、連続コミット時の過剰な再描画を抑制。
 
-### 2.3 メモリアロケーションの排除（ゼロアロケーション / バッファ再利用）
+### 2.3 ゼロアロケーション・バッファ再利用と SIMD ベクトル化
 
-#### 現状と課題
-`SixelEncoder` や `KittyEncoder` は毎フレーム数MBの `Vec<u8>` や `String` を動的に確保・破棄しています。毎秒数十回の巨大アロケーションにより、glibc malloc のロック競合と CPU キャッシュ汚染が発生し、フレーム時間のブレ（ジッター）の原因となっています。
+#### 初期の課題
+毎フレーム数MBの `Vec<u8>` や `deflate` 状態が動的に確保・破棄され、アロケータのロック競合やキャッシュ汚染によるフレーム時間のジッターが発生していました。
 
-#### 改善方針
-- エンコード出力用バッファおよび一時作業バッファを構造体内で事前確保し、毎フレーム `buffer.clear()` して再利用。
-- 描画ループ中のヒープアロケーションをほぼゼロ化。
-
-### 2.4 エンコーダの並列化・SIMD 最適化
-
-#### 改善方針
-- **Sixel 量子化**: 1 画素ごとのビットシフト・パレット集計処理を、Rayon によるバンド並列化または SIMD 命令（AVX2 / NEON）を用いた一括変換に最適化。
-- **Kitty Base64 変換**: SIMD 最適化 Base64 クレート（`base64-simd` など）を導入し、数MBのエンコード時間を 1/3〜1/4 に短縮。
-
-### 2.5 バックプレッシャー制御（Frame Pacing）
-
-#### 改善方針
-端末や SSH ソケットの受信能力を超えたフレーム送出を検知・調停し、ソケットバッファの滞留による「操作が数秒遅れて反映されるバッファブロート現象」を根本防止。
+#### 実装された構造（v0.5.0〜v0.7.0）
+- **ゼロアロケーション・ストリーミング ([`KittyStreamEncoder`](../src/protocol/kitty.rs))**: `CompressorOxide` インスタンスの `reset()` 再利用と、Base64 エンコード結果の 4096B チャンク直接出力により、フレームごとの一時ヒープ確保を完全にゼロ化。また `TerminalBackend` の `spare_buffer` 往復により RGBA フレームバッファも完全再利用。
+- **AVX2 SIMD ベクトル高速化**: `x86_64` 環境で AVX2 命令を実行時検出し、Sixel の RGB332 減色・`tzcnt` ビットマスク走査、Damage タイルハッシュ、BGRX→RGBA 変換をベクトル高速化。
+- **Pixman レンダラ パス統合 ([`TermwayRenderer`](../src/compositor/renderer.rs))**: 可視ウィンドウとポップアップの逆順描画パスを整理・統合し、1080x720 フルフレーム合成を約 0.67ms に短縮。
 
 ---
 
@@ -97,9 +81,24 @@ Smithay の `delegate_*!` マクロおよび `KeyboardHandle::set_focus(&mut Ter
 
 ---
 
-## 5. ロードマップ概要
+## 5. コンポジタオーケストレータのサブモジュール分割（v0.7.0 実装済み）
 
-| マイルストーン | 項目 | 優先度 | 期待効果 | ステータス |
+### 背景と課題
+`src/compositor/mod.rs` に XDG 環境構築、X11 空きディスプレイ探索、テスト用シグナル処理、タスクバー生成・ヒットテスト、プロファイリング統計、スクリーンショット保存、およびメインイベントループが集約され、1,400 行を超えて肥大化していました。
+
+### 実装された構造（v0.7.0）
+単一責任の原則（SRP）に基づき、以下の機能別サブモジュールへ分割しました：
+- **[`src/compositor/env.rs`](../src/compositor/env.rs)**: `ensure_xdg_runtime_dir`, `free_x11_display_candidates`, `find_xwayland_binary`, `setup_test_signals`, `log_line`
+- **[`src/compositor/taskbar.rs`](../src/compositor/taskbar.rs)**: `Taskbar`, `TaskbarChip`（下部タスクバー文字列構築とクリック座標判定の純粋モジュール化）
+- **[`src/compositor/profile.rs`](../src/compositor/profile.rs)**: `CompositorMetrics`（`--profile` / `TERMWAY_PROFILE=1` 時の各ステージ avg/max/p95 レイテンシ集計と帯域レポート出力）
+- **[`src/compositor/screenshot.rs`](../src/compositor/screenshot.rs)**: `save_screenshot`（`F12` キーおよび `SIGUSR1` による PNG キャプチャ保存）
+- **[`src/compositor/window_manager.rs`](../src/compositor/window_manager.rs)**: `resize_windows`（端末リサイズ時の最大化・浮動ウィンドウ再配置ロジックの移管）
+
+---
+
+## 6. 完了済みマイルストーン一覧
+
+| マイルストーン | 項目 | 優先度 | 達成効果 | ステータス |
 | :--- | :--- | :---: | :--- | :---: |
 | **フェーズ 1**（パフォーマンス基礎刷新） | メモリアロケーション排除（バッファ再利用）＆ 差分更新（Damage Tracking） | 最優先 | CPU負荷大幅削減、リモート/SSH時の転送量 80〜95% 削減 | **実装済み (v0.4.0)** |
 | **フェーズ 2**（パイプライン非同期化） | レンダリング・エンコードのワーカースレッド分離 ＆ 最新フレーム間引き | 最優先 | 高負荷・高解像度時の入力レイテンシ削減、超低遅延応答 | **実装済み (v0.4.0)** |
@@ -112,5 +111,12 @@ Smithay の `delegate_*!` マクロおよび `KeyboardHandle::set_focus(&mut Ter
 | **フェーズ 7**（性能プロファイリング＆ストリームエンコーダ最適化） | パイプライン段別ベンチマーク (`tests/perf_pipeline.rs`) とランタイムプロファイラ (`--profile`) の導入、Sixel 6px ダーティバンドキャッシュ (`SixelStreamEncoder`)、Kitty ゼロアロケーション zlib リセット & Base64 ストリーミング (`KittyStreamEncoder`) | 最優先 | Sixel カーソル・部分更新レイテンシ 92〜95% 削減 (4.3ms→0.34ms)、Kitty 動的ヒープ確保ゼロ化 | **実装済み (v0.7.0)** |
 | **フェーズ 8**（統一ポーリング＆フレームペーシング＆モジュール分割） | `stdin` + `listener` + `display.backend().poll_fd()` の単一 `poll` 統合によるアイドル時 CPU 0% 化、`--fps` 目標フレームレート制御、Pixman レンダラ パス統合、`src/compositor/mod.rs` のサブモジュール分割 (`env.rs`, `taskbar.rs`, `profile.rs`, `screenshot.rs`, `window_manager.rs`) | 高 | アイドル時 CPU 負荷解消、高速コミット時の過度な再描画抑制、コンポジタ可読性・保守性向上 | **実装済み (v0.7.0)** |
 
+---
 
+## 7. 今後の展望 (Future Horizons)
 
+| テーマ | 概要 | 期待される価値 |
+| :--- | :--- | :--- |
+| **`aarch64` ビルド & ARM NEON SIMD 対応** | ARM64 Linux サーバー（AWS Graviton、Apple Silicon Linux VM、Raspberry Pi 等）向けのビルド検証および `std::arch::aarch64` (NEON) を用いた Damage / Sixel / BGRX 変換のベクトル高速化 | ARM64 クラウドインスタンスやエッジ環境でのネイティブ高速動作 |
+| **Kitty 部分矩形プレースメント転送** | `DamageTracker` の汚損バウンディングボックスが画面全体の一定割合以下の場合に、フルフレームではなく部分サブイメージ (`x=...,y=...,w=...,h=...`) のみを圧縮転送 | 高解像度（4K等）端末での微小更新時における zlib 圧縮コストのさらなる低減 |
+| **Wayland Fractional Scale / HiDPI 制御** | `wp_fractional_scale_v1` / `wp_viewporter` プロトコル対応および出力スケールオプション (`--scale`) の導入 | Retina / 高 DPI ターミナル環境でのフォント・UI 視認性向上 |

@@ -70,9 +70,10 @@ flowchart TB
     end
 
     subgraph CompositorLayer["コンポジタコア層 (src/compositor/)"]
-        Comp["TermwayCompositor<br/>(mod.rs)"]
+        Comp["TermwayCompositor<br/>(mod.rs / env.rs / profile.rs / screenshot.rs)"]
         State["TermwayState<br/>(state.rs)"]
         WM["WindowManager & ManagedWindow<br/>(window_manager.rs / window.rs)"]
+        Taskbar["Taskbar & TaskbarChip<br/>(taskbar.rs)"]
         Handlers["Protocol Handlers<br/>(handlers/{compositor,xdg_shell,seat}.rs)"]
         XWL["XWayland & X11Wm Handler<br/>(xwayland.rs)"]
         Input["Input Dispatcher<br/>(input.rs)"]
@@ -94,8 +95,8 @@ flowchart TB
     end
 
     subgraph ProtocolLayer["プロトコル変換層 (src/protocol/)"]
-        Kitty["KittyEncoder<br/>(zlib + Base64)"]
-        Sixel["SixelEncoder<br/>(AVX2 RGB332 + RLE)"]
+        Kitty["KittyEncoder & KittyStreamEncoder<br/>(Zero-Alloc zlib + Base64)"]
+        Sixel["SixelEncoder & SixelStreamEncoder<br/>(Dirty Band Cache + AVX2 RGB332 + RLE)"]
         MouseP["SgrMouseParser"]
         KeyP["KeyboardParser"]
     end
@@ -114,6 +115,7 @@ flowchart TB
     Comp --> Sess
     Comp --> Damage
     Comp --> Input
+    Comp --> Taskbar
     Comp --> Raw
     Comp --> WinSize
 
@@ -122,6 +124,7 @@ flowchart TB
     State --> XWL
     Input --> State
     Input --> WM
+    Input --> Taskbar
     Input --> MouseP
     Input --> KeyP
 
@@ -135,7 +138,7 @@ flowchart TB
 
 ### 1.3 コア構造体クラス図 (Class / Ownership Diagram)
 
-`v0.6.0` では、`TermwayState` に集中していたウィンドウ管理ロジックを [`WindowManager`](../src/compositor/window_manager.rs) (`state.wm`) として分離し、Smithay のトレイト実装を [`handlers/`](../src/compositor/handlers/mod.rs) 配下の各ドメインファイルへ分割しています。
+`v0.6.0`〜`v0.7.0` では、`TermwayState` に集中していたウィンドウ管理ロジックを [`WindowManager`](../src/compositor/window_manager.rs) (`state.wm`) として分離し、Smithay のトレイト実装を [`handlers/`](../src/compositor/handlers/mod.rs) 配下へ分割、さらにコンポジタオーケストレータの周辺責務を [`Taskbar`](../src/compositor/taskbar.rs)・[`CompositorMetrics`](../src/compositor/profile.rs)・[`env`](../src/compositor/env.rs)・[`screenshot`](../src/compositor/screenshot.rs) へ独立させています。
 
 ```mermaid
 classDiagram
@@ -148,12 +151,26 @@ classDiagram
         -DamageTracker damage_tracker
         -SessionManager session
         -Option~Child~ client_child
-        -Vec~TaskbarChip~ taskbar_chips
+        -Taskbar taskbar
+        -CompositorMetrics metrics
         +new(config: EngineConfig) Result~Self~
         +run() Result~()~
         -apply_terminal_size(new_size: TerminalSize)
         -process_terminal_input()
-        -build_taskbar() Option~String~
+    }
+
+    class Taskbar {
+        +Vec~TaskbarChip~ chips
+        +build(windows: &[ManagedWindow], cols: u16, has_opened: bool) Option~String~
+        +chip_at_col(col: u16) Option~usize~
+    }
+
+    class CompositorMetrics {
+        +bool enabled
+        +u64 rendered_frames
+        +u64 skipped_frames
+        +record_render(dur_us: u64, damaged_tiles: usize, bytes: usize)
+        +maybe_report_and_reset()
     }
 
     class TermwayState {
@@ -193,6 +210,7 @@ classDiagram
         +set_minimized(id: usize, minimized: bool) bool
         +top_visible_id() Option~usize~
         +cascade_offset() i32
+        +resize_windows(new_w: u32, new_h: u32)
     }
 
     class ManagedWindow {
@@ -274,6 +292,8 @@ classDiagram
     TermwayCompositor *-- TerminalBackend
     TermwayCompositor *-- DamageTracker
     TermwayCompositor *-- SessionManager
+    TermwayCompositor *-- Taskbar
+    TermwayCompositor *-- CompositorMetrics
     TermwayState *-- WindowManager
     WindowManager *-- "0..*" ManagedWindow
     WindowManager *-- WindowDragState
@@ -328,15 +348,16 @@ sequenceDiagram
 
 ### 2.2 イベント駆動メインループと非同期レンダリングパイプライン
 
-`TermwayCompositor::run` のメインスレッド（Calloop + Wayland ディスパッチ）と、`TerminalBackend` の専用ワーカースレッド（`termway-async-render`）間の非同期協調動作を示します。
+`TermwayCompositor::run` のメインスレッド（統一 FD ポーリング + Calloop + Wayland ディスパッチ）と、`TerminalBackend` の専用ワーカースレッド（`termway-async-render`）間の非同期協調動作を示します。
 
+- **統一 FD ポーリングとフレームペーシング (`--fps`)**: `stdin`・Wayland `ListeningSocket`・`display.backend().poll_fd()` の 3 記述子を単一の `nix::poll` で一括監視することでアイドル時の CPU 使用率を 0% に保ちつつ、`--fps`（デフォルト 30fps）のフレーム間隔に基づいて連続コミット時の再描画頻度を適応的に制御します。
 - **入力とイベント処理の非ブロッキング化**: 画像エンコード（Sixel 減色や Kitty zlib 圧縮）と標準出力フラッシュは別スレッドで実行されるため、高解像度描画中でもマウス・キー入力は遅延なく処理されます。
 - **最新フレーム間引き (Frame Dropping) とゼロアロケーション再利用**: ワーカースレッドが前フレームをエンコード中に次のフレームが到着した場合、`pending_job` のピクセルバッファを上書き置換することで古いフレームを破棄し、PTY バッファブロートを完全に防ぎます。また、描画完了後の `Vec<u8>` は `spare_buffer` としてメインスレッドへ返却・再利用されます。
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant TermIn as Terminal stdin
+    participant TermIn as Terminal stdin &<br/>Wayland FDs
     participant Main as Main Thread<br/>(TermwayCompositor)
     participant State as TermwayState & WM
     participant Pixman as TermwayRenderer &<br/>DamageTracker (AVX2)
@@ -344,13 +365,13 @@ sequenceDiagram
     participant Worker as Worker Thread<br/>(termway-async-render)
     participant TermOut as Terminal stdout
 
-    loop イベントループ (dirty 時は timeout=0ms / アイドル時は 10ms)
+    loop イベントループ (統一 nix::poll + --fps フレームペーシング)
         Main->>State: event_loop.dispatch(0ms) (XWayland / X11Wm イベント処理)
         opt SIGWINCH 受信時
-            Main->>Main: apply_terminal_size()<br/>(Renderer / DamageTracker / 最大化・浮動ウィンドウ再配置)
+            Main->>Main: apply_terminal_size()<br/>(Renderer / DamageTracker / WM.resize_windows)
         end
 
-        Main->>TermIn: nix::poll (Non-blocking)
+        Main->>TermIn: nix::poll([stdin, listener, display_fd], poll_timeout_ms)
         opt 端末入力あり (SGR Mouse / Key / Bracketed Paste / OSC 52)
             TermIn-->>Main: Raw bytes
             Main->>State: process_terminal_input()<br/>(SgrMouseParser / KeyboardParser -> Seat / WM 操作)
@@ -359,8 +380,8 @@ sequenceDiagram
         Main->>State: display.dispatch_clients() & flush_clients()
         Note over State: クライアントの commit / メニュー操作 / 移動により<br/>state.dirty = true がセットされる
 
-        opt state.dirty == true
-            Main->>Pixman: renderer.render(&state)
+        opt state.dirty == true && frame_interval 経過
+            Main->>Pixman: renderer.render(&state) [単一パス合成]
             Pixman-->>Main: RGBA8888 pixels (&[u8])
             Main->>Pixman: damage_tracker.track_damage(pixels) [AVX2 SIMD]
             Pixman-->>Main: Vec<DamageRect>
@@ -375,9 +396,9 @@ sequenceDiagram
     par バックグラウンド非同期エンコード
         Worker->>Queue: pending_job.take()
         alt Sixel モード
-            Worker->>Worker: SixelEncoder::encode_fullscreen_frame_into()<br/>(AVX2 RGB332 減色 + 6行バンド tzcnt 走査 + RLE)
+            Worker->>Worker: SixelStreamEncoder::encode_frame_into()<br/>(6行ダーティバンド FNV-1a キャッシュ + AVX2 RGB332 減色 + tzcnt RLE)
         else Kitty モード
-            Worker->>Worker: KittyEncoder::encode_fullscreen_frame_into()<br/>(RFC 1950 zlib 圧縮 + Base64 4096B チャンク, z=-2147483648)
+            Worker->>Worker: KittyStreamEncoder::encode_fullscreen_frame_into()<br/>(ゼロアロケーション CompressorOxide 再利用 + Base64 4096B ストリーミング)
         end
         Worker->>TermOut: Synchronized Output (\x1b[?2026h ... 画像 + タスクバー + HUD ... \x1b[?2026l)
         Worker->>Queue: spare_buffer = Some(job.pixels) (バッファ返却・再利用)
@@ -496,13 +517,14 @@ stateDiagram-v2
 ### 3.1 プロトコルエンコードと SIMD 高速化 (`src/protocol/`, `src/display/`)
 
 1. **Kitty Graphics Protocol (`src/protocol/kitty.rs`)**:
-   - **RFC 1950 zlib 圧縮 (`o=z`)**: RGBA8888 ピクセルデータを `miniz_oxide` で高速圧縮してから Base64 化し、4096 バイト単位でチャンク分割送信（`a=T,f=32,o=z,i=1,q=2,C=1,z=-2147483648`）。
+   - **RFC 1950 zlib 圧縮 (`o=z`) & ゼロアロケーション再利用 (`KittyStreamEncoder`)**: RGBA8888 ピクセルデータを `miniz_oxide` の `CompressorOxide` インスタンス再利用（`reset()`）によりヒープ確保なしで圧縮し、中間文字列を介さず直接 Base64 4096 バイトチャンクへストリーミング出力（`a=T,f=32,o=z,i=1,q=2,C=1,z=-2147483648`）。
    - **最背面レイヤ配置 (`z=-2147483648`) と最下行保護 (`rows - 1`)**: 画像をテキストレイヤより背面に配置し、さらに描画行数を `term_rows - 1` に制限することで、最下行のタスクバーおよびステータスオーバーレイ文字列との重なりを防止。
 2. **Sixel Graphics Protocol (`src/protocol/sixel.rs`)**:
-   - **AVX2 SIMD RGB332 減色 (`quantize_rgb332_avx2`)**: 1 フレームあたり 8 ピクセル（32 バイト）単位で RGBA から 8-bit RGB332 カラーインデックスへ一括変換。
-   - **AVX2 + `tzcnt` ビットマスク走査**: 6 ピクセル高のバンドごとに 32 列単位で `_mm256_cmpeq_epi8` + `_mm256_movemask_epi8` を実行し、存在する色だけを `trailing_zeros()` でジャンプ走査して RLE 出力（1080x720 フルフレームを約 3.7ms でエンコード）。
+   - **6 行ダーティバンドキャッシュ (`SixelStreamEncoder`)**: 6 ピクセル高の水平バンドごとに FNV-1a ハッシュとエンコード済み Sixel バイト列をキャッシュし、前フレームと同一のバンドは減色・走査を完全スキップしてキャッシュから即時結合（カーソル移動等の部分更新を約 4.3ms → 0.34ms へ 92〜95% 高速化）。
+   - **AVX2 SIMD RGB332 減色 (`quantize_rgb332_avx2`)**: 8 ピクセル（32 バイト）単位で RGBA から 8-bit RGB332 カラーインデックスへ一括ベクトル変換。
+   - **AVX2 + `tzcnt` ビットマスク走査**: 6 ピクセル高のバンドごとに 32 列単位で `_mm256_cmpeq_epi8` + `_mm256_movemask_epi8` を実行し、存在する色だけを `trailing_zeros()` でジャンプ走査して RLE 出力（1080x720 フルフレーム初回を約 3.7ms でエンコード）。
 3. **タイル差分検出 (`src/display/damage.rs`)**:
-   - 画面を 32x32 ピクセルのタイルに分割し、`x86_64` AVX2 環境では `_mm256_mullo_epi32` と `_mm256_xor_si256` による 8 レーン並列ハッシュで前回フレームと比較（1080x720 画面の差分スキャン約 0.20ms）。
+   - 画面を 32x32 ピクセルのタイルに分割し、`x86_64` AVX2 環境では `_mm256_mullo_epi32` と `_mm256_xor_si256` による 8 レーン並列ハッシュで前回フレームと比較（1080x720 画面の差分スキャン約 0.14〜0.20ms）。
 4. **Synchronized Output (`\x1b[?2026h` ... `\x1b[?2026l`)**:
    - フレーム画像・タスクバー・HUD の出力全体を DEC Mode 2026（同期更新ブロック）で囲み、ティアリングや画面のチラつきを防止。
 
