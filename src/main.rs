@@ -18,6 +18,7 @@ OPTIONS:
     --sixel                   Force Sixel graphics protocol
     --kitty                   Force Kitty graphics protocol
     --hud                     Enable real-time performance HUD indicator
+    --profile                 Enable performance profiling and latency breakdown
     --no-splash               Disable startup splash screen
     --demo                    Run built-in demo GUI application
     -V, --version             Print version information
@@ -101,6 +102,8 @@ fn main() -> Result<()> {
             explicit_kitty = true;
         } else if arg == "--hud" {
             config.hud = true;
+        } else if arg == "--profile" {
+            config.profile = true;
         } else if arg == "--no-splash" {
             config.no_splash = true;
         } else if arg == "--demo" {

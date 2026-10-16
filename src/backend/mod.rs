@@ -1,3 +1,2 @@
 pub mod terminal;
-
-pub use terminal::TerminalBackend;
+pub use terminal::{BackendMetrics, TerminalBackend};

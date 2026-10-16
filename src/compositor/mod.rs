@@ -55,6 +55,7 @@ pub struct EngineConfig {
     pub enable_wm: bool,
     pub use_sixel: bool,
     pub hud: bool,
+    pub profile: bool,
     pub no_splash: bool,
     pub command: Vec<String>,
 }
@@ -69,6 +70,7 @@ impl Default for EngineConfig {
             enable_wm: true,
             use_sixel: false,
             hud: false,
+            profile: false,
             no_splash: false,
             command: Vec::new(),
         }
@@ -144,6 +146,13 @@ pub struct TermwayCompositor {
     wrap_dir: Option<tempfile::TempDir>,
     damage_tracker: crate::display::DamageTracker,
     prev_taskbar: Option<String>,
+    profile_enabled: bool,
+    metrics_render_frames: u64,
+    metrics_render_total_us: u64,
+    metrics_render_max_us: u64,
+    metrics_damage_total_us: u64,
+    metrics_damage_max_us: u64,
+    metrics_clean_skips: u64,
 }
 
 impl TermwayCompositor {
@@ -350,6 +359,13 @@ impl TermwayCompositor {
                 input_buffer: Vec::with_capacity(1024),
                 damage_tracker,
                 prev_taskbar: None,
+                profile_enabled: config.profile || std::env::var("TERMWAY_PROFILE").is_ok(),
+                metrics_render_frames: 0,
+                metrics_render_total_us: 0,
+                metrics_render_max_us: 0,
+                metrics_damage_total_us: 0,
+                metrics_damage_max_us: 0,
+                metrics_clean_skips: 0,
             })
     }
 
@@ -737,13 +753,30 @@ impl TermwayCompositor {
                 let w = self.renderer.width();
                 let h = self.renderer.height();
                 let taskbar = self.build_taskbar();
-                if let Ok(pixels) = self.renderer.render(&self.state) {
+                let t_r0 = std::time::Instant::now();
+                let render_res = self.renderer.render(&self.state);
+                let r_dur = t_r0.elapsed();
+
+                if let Ok(pixels) = render_res {
+                    let r_us = r_dur.as_micros() as u64;
+                    self.metrics_render_frames += 1;
+                    self.metrics_render_total_us += r_us;
+                    self.metrics_render_max_us = self.metrics_render_max_us.max(r_us);
+
+                    let t_d0 = std::time::Instant::now();
                     let damage = self.damage_tracker.track_damage(pixels);
+                    let d_dur = t_d0.elapsed();
+                    let d_us = d_dur.as_micros() as u64;
+                    self.metrics_damage_total_us += d_us;
+                    self.metrics_damage_max_us = self.metrics_damage_max_us.max(d_us);
+
                     let taskbar_changed = taskbar != self.prev_taskbar;
                     self.prev_taskbar = taskbar.clone();
 
                     if !damage.is_empty() || taskbar_changed || self.backend.needs_clear {
                         let _ = self.backend.render_pixels(pixels, w, h, taskbar.as_deref());
+                    } else {
+                        self.metrics_clean_skips += 1;
                     }
 
                     let time = self.state.start_time.elapsed().as_millis() as u32;
@@ -795,7 +828,88 @@ impl TermwayCompositor {
             }
         }
 
+        if self.profile_enabled {
+            self.print_profile_summary();
+        }
+
         Ok(())
+    }
+
+    fn print_profile_summary(&self) {
+        let b_metrics = self.backend.metrics();
+        let jobs_submitted = b_metrics.jobs_submitted.load(Ordering::Relaxed);
+        let jobs_rendered = b_metrics.jobs_rendered.load(Ordering::Relaxed);
+        let frames_dropped = b_metrics.frames_dropped.load(Ordering::Relaxed);
+        let total_encode_us = b_metrics.total_encode_us.load(Ordering::Relaxed);
+        let max_encode_us = b_metrics.max_encode_us.load(Ordering::Relaxed);
+        let total_write_us = b_metrics.total_write_us.load(Ordering::Relaxed);
+        let max_write_us = b_metrics.max_write_us.load(Ordering::Relaxed);
+        let total_bytes = b_metrics.total_bytes_written.load(Ordering::Relaxed);
+
+        let elapsed_secs = self.state.start_time.elapsed().as_secs_f64();
+        let avg_render_ms = if self.metrics_render_frames > 0 {
+            (self.metrics_render_total_us as f64 / self.metrics_render_frames as f64) / 1000.0
+        } else {
+            0.0
+        };
+        let avg_damage_us = if self.metrics_render_frames > 0 {
+            self.metrics_damage_total_us as f64 / self.metrics_render_frames as f64
+        } else {
+            0.0
+        };
+        let avg_encode_ms = if jobs_rendered > 0 {
+            (total_encode_us as f64 / jobs_rendered as f64) / 1000.0
+        } else {
+            0.0
+        };
+        let avg_write_ms = if jobs_rendered > 0 {
+            (total_write_us as f64 / jobs_rendered as f64) / 1000.0
+        } else {
+            0.0
+        };
+        let kb_per_sec = if elapsed_secs > 0.0 {
+            (total_bytes as f64 / 1024.0) / elapsed_secs
+        } else {
+            0.0
+        };
+
+        eprintln!("\n================================== TERMWAY PROFILE REPORT ==================================");
+        eprintln!("Session Duration:      {:.2}s", elapsed_secs);
+        eprintln!("Compositor Frames:     {} rendered, {} skipped (unchanged clean frames)",
+            self.metrics_render_frames, self.metrics_clean_skips);
+        eprintln!("Backend Async Jobs:    {} submitted, {} rendered, {} dropped",
+            jobs_submitted, jobs_rendered, frames_dropped);
+        eprintln!("Latency Breakdown:");
+        eprintln!("  1. Pixman Render:    avg = {:>6.2} ms,  max = {:>6.2} ms", avg_render_ms, self.metrics_render_max_us as f64 / 1000.0);
+        eprintln!("  2. Damage Tracker:   avg = {:>6.1} μs,  max = {:>6.1} μs", avg_damage_us, self.metrics_damage_max_us as f64);
+        eprintln!("  3. Protocol Encode:  avg = {:>6.2} ms,  max = {:>6.2} ms ({})", avg_encode_ms, max_encode_us as f64 / 1000.0, self.backend.name());
+        eprintln!("  4. Terminal Write:   avg = {:>6.2} ms,  max = {:>6.2} ms", avg_write_ms, max_write_us as f64 / 1000.0);
+        eprintln!("Output Data Bandwidth: total = {:.2} MB, throughput = {:.1} KB/s",
+            total_bytes as f64 / (1024.0 * 1024.0), kb_per_sec);
+        eprintln!("============================================================================================\n");
+
+        if let Ok(path) = std::env::var("TERMWAY_PROFILE_FILE") {
+            let report = format!(
+                r#"{{"duration_sec":{:.3},"render_frames":{},"clean_skips":{},"jobs_submitted":{},"jobs_rendered":{},"frames_dropped":{},"avg_render_ms":{:.3},"max_render_ms":{:.3},"avg_damage_us":{:.3},"max_damage_us":{:.3},"avg_encode_ms":{:.3},"max_encode_ms":{:.3},"avg_write_ms":{:.3},"max_write_ms":{:.3},"total_bytes":{},"kb_per_sec":{:.2}}}"#,
+                elapsed_secs,
+                self.metrics_render_frames,
+                self.metrics_clean_skips,
+                jobs_submitted,
+                jobs_rendered,
+                frames_dropped,
+                avg_render_ms,
+                self.metrics_render_max_us as f64 / 1000.0,
+                avg_damage_us,
+                self.metrics_damage_max_us as f64,
+                avg_encode_ms,
+                max_encode_us as f64 / 1000.0,
+                avg_write_ms,
+                max_write_us as f64 / 1000.0,
+                total_bytes,
+                kb_per_sec,
+            );
+            let _ = std::fs::write(path, report);
+        }
     }
 
     fn apply_terminal_size(&mut self, mut new_size: TerminalSize) {

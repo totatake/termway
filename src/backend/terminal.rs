@@ -17,6 +17,20 @@ struct RenderJob {
     show_hud: bool,
 }
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
+#[derive(Debug, Default)]
+pub struct BackendMetrics {
+    pub jobs_submitted: AtomicU64,
+    pub jobs_rendered: AtomicU64,
+    pub frames_dropped: AtomicU64,
+    pub total_encode_us: AtomicU64,
+    pub max_encode_us: AtomicU64,
+    pub total_write_us: AtomicU64,
+    pub max_write_us: AtomicU64,
+    pub total_bytes_written: AtomicU64,
+}
+
 struct AsyncRenderState {
     pending_job: Option<RenderJob>,
     spare_buffer: Option<Vec<u8>>,
@@ -29,11 +43,14 @@ pub struct TerminalBackend {
     pub show_hud: bool,
     pub needs_clear: bool,
     async_state: Arc<(Mutex<AsyncRenderState>, Condvar)>,
+    metrics: Arc<BackendMetrics>,
     worker_handle: Option<JoinHandle<()>>,
 }
 
 impl TerminalBackend {
     pub fn new(term_size: TerminalSize, use_sixel: bool) -> Self {
+        let metrics = Arc::new(BackendMetrics::default());
+        let metrics_clone = Arc::clone(&metrics);
         let async_state = Arc::new((
             Mutex::new(AsyncRenderState {
                 pending_job: None,
@@ -108,6 +125,12 @@ impl TerminalBackend {
                     }
 
                     let encode_dur = encode_start.elapsed();
+                    let encode_us = encode_dur.as_micros() as u64;
+                    metrics_clone.jobs_rendered.fetch_add(1, Ordering::Relaxed);
+                    metrics_clone.total_encode_us.fetch_add(encode_us, Ordering::Relaxed);
+                    metrics_clone.max_encode_us.fetch_max(encode_us, Ordering::Relaxed);
+                    metrics_clone.total_bytes_written.fetch_add(bytes_encoded as u64, Ordering::Relaxed);
+
                     last_encode_ms = encode_dur.as_secs_f64() * 1000.0;
                     stat_frames += 1;
                     stat_bytes += bytes_encoded;
@@ -180,6 +203,7 @@ impl TerminalBackend {
                         String::new()
                     };
 
+                    let write_start = std::time::Instant::now();
                     if use_sixel {
                         let _ = write!(stdout, "\x1b[?2026h{}\x1b[H", clear_seq);
                         let _ = stdout.write_all(&sixel_out);
@@ -188,6 +212,9 @@ impl TerminalBackend {
                         let _ = write!(stdout, "\x1b[?2026h{}{}{}{}{}\x1b[?2026l", clear_seq, kitty_out, taskbar_seq, overlay_seq, hud_seq);
                     }
                     let _ = stdout.flush();
+                    let write_us = write_start.elapsed().as_micros() as u64;
+                    metrics_clone.total_write_us.fetch_add(write_us, Ordering::Relaxed);
+                    metrics_clone.max_write_us.fetch_max(write_us, Ordering::Relaxed);
 
                     let mut guard = lock.lock().unwrap();
                     guard.spare_buffer = Some(job.pixels);
@@ -201,6 +228,7 @@ impl TerminalBackend {
             show_hud: false,
             needs_clear: false,
             async_state,
+            metrics,
             worker_handle,
         }
     }
@@ -242,6 +270,10 @@ impl TerminalBackend {
         }
     }
 
+    pub fn metrics(&self) -> &Arc<BackendMetrics> {
+        &self.metrics
+    }
+
     pub fn render_damage(&mut self, fb: &Framebuffer, damage: &[DamageRect]) -> io::Result<()> {
         if damage.is_empty() {
             return Ok(());
@@ -256,6 +288,7 @@ impl TerminalBackend {
         height: u32,
         taskbar: Option<&str>,
     ) -> io::Result<()> {
+        self.metrics.jobs_submitted.fetch_add(1, Ordering::Relaxed);
         let (lock, cvar) = &*self.async_state;
         let mut guard = lock.lock().unwrap();
 
@@ -265,6 +298,7 @@ impl TerminalBackend {
         if let Some(ref mut job) = guard.pending_job {
             // Worker is still busy encoding/flushing previous frame.
             // Drop outdated pending frame and replace with this latest frame (Frame Dropping!).
+            self.metrics.frames_dropped.fetch_add(1, Ordering::Relaxed);
             job.pixels.clear();
             job.pixels.extend_from_slice(pixels);
             job.width = width;
