@@ -56,16 +56,14 @@ impl TermwayRenderer {
         let phys_size: Size<i32, Physical> = Size::from((self.width as i32, self.height as i32));
         let screen_damage: Rectangle<i32, Physical> = Rectangle::from_size(phys_size);
 
+        type PixmanSurfaceElement = WaylandSurfaceRenderElement<PixmanRenderer>;
+        type SurfaceLayer = (Vec<PixmanSurfaceElement>, Vec<Rectangle<i32, Physical>>);
+        type PopupLayer = (Vec<PixmanSurfaceElement>, Rectangle<i32, Physical>);
+
         struct ManagedWindowRenderLayer {
             window_index: usize,
-            surface_layer: Option<(
-                Vec<WaylandSurfaceRenderElement<PixmanRenderer>>,
-                Vec<Rectangle<i32, Physical>>,
-            )>,
-            popup_layers: Vec<(
-                Vec<WaylandSurfaceRenderElement<PixmanRenderer>>,
-                Rectangle<i32, Physical>,
-            )>,
+            surface_layer: Option<SurfaceLayer>,
+            popup_layers: Vec<PopupLayer>,
         }
 
         // 1. Collect render elements from surfaces with their clipping rectangles
@@ -153,7 +151,7 @@ impl TermwayRenderer {
             });
         }
 
-        let mut x11_layers: Vec<(Vec<WaylandSurfaceRenderElement<PixmanRenderer>>, Rectangle<i32, Physical>)> = Vec::new();
+        let mut x11_layers: Vec<PopupLayer> = Vec::new();
         for xwindow in &state.x11_windows {
             let is_managed = state.wm.windows.iter().any(|mw| matches!(&mw.surface, WindowSurface::X11(w) if w == xwindow));
             if !is_managed {
@@ -184,7 +182,7 @@ impl TermwayRenderer {
 
         let any_managed = !state.wm.windows.is_empty();
         let all_managed_minimized = any_managed && state.wm.windows.iter().all(|w| w.is_minimized);
-        let mut fallback_layers: Vec<(Vec<WaylandSurfaceRenderElement<PixmanRenderer>>, Rectangle<i32, Physical>)> = Vec::new();
+        let mut fallback_layers: Vec<PopupLayer> = Vec::new();
 
         if !any_surface_elems && !all_managed_minimized {
             let managed_surfaces: Vec<smithay::reexports::wayland_server::protocol::wl_surface::WlSurface> = state
@@ -211,74 +209,63 @@ impl TermwayRenderer {
             }
         }
 
-        // 2. Clear background to dark gray (#14141a)
-        {
-            let mut target = self.renderer.bind(&mut self.buffer)?;
-            let mut frame = self.renderer.render(&mut target, phys_size, Transform::Normal)?;
-            frame.clear(Color32F::new(0.08, 0.08, 0.10, 1.0), &[screen_damage])?;
-            let _ = frame.finish()?;
-        }
+        // 2. Render passes:
+        // Consolidate background clear, surface rendering, popups, and fallbacks into minimal passes.
+        // Re-binding is only done when SSD decorations require direct raw buffer access.
+        let mut target = self.renderer.bind(&mut self.buffer)?;
+        let mut frame = self.renderer.render(&mut target, phys_size, Transform::Normal)?;
+        frame.clear(Color32F::new(0.08, 0.08, 0.10, 1.0), &[screen_damage])?;
 
-        // 3. Draw managed windows in strict bottom-to-top Z-order:
-        //    For each window, render its client surface, then its SSD frame/titlebar, then its popups.
-        //    This ensures any window higher in the stacking order properly occludes both the content
-        //    and the window frame of windows behind it.
+        // 3. Draw managed windows in strict bottom-to-top Z-order
         for layer in &managed_layers {
             let window = &state.wm.windows[layer.window_index];
 
             if let Some((ref elems, ref win_clips)) = layer.surface_layer {
-                let mut target = self.renderer.bind(&mut self.buffer)?;
-                let mut frame = self.renderer.render(&mut target, phys_size, Transform::Normal)?;
                 draw_render_elements(&mut frame, 1.0, elems, win_clips)
                     .map_err(|e| TermwayError::Renderer(format!("{:?}", e)))?;
-                let _ = frame.finish()?;
             } else if window.x11_shape.is_none() {
                 let win_clip: Rectangle<i32, Physical> = Rectangle::new(
                     Point::from((window.loc.x, window.loc.y)),
                     Size::from((window.size.w, window.size.h)),
                 );
                 if let Some(clipped) = win_clip.intersection(screen_damage) {
-                    let mut target = self.renderer.bind(&mut self.buffer)?;
-                    let mut frame = self.renderer.render(&mut target, phys_size, Transform::Normal)?;
                     frame.clear(Color32F::new(0.08, 0.08, 0.10, 1.0), &[clipped])?;
-                    let _ = frame.finish()?;
                 }
             }
 
             if state.enable_wm && window.has_ssd() {
+                let _ = frame.finish()?;
+                drop(target);
+
                 self.decoration_renderer.draw_decorations(
                     &mut self.buffer,
                     self.width,
                     self.height,
                     window,
                 );
+
+                target = self.renderer.bind(&mut self.buffer)?;
+                frame = self.renderer.render(&mut target, phys_size, Transform::Normal)?;
             }
 
-            if !layer.popup_layers.is_empty() {
-                let mut target = self.renderer.bind(&mut self.buffer)?;
-                let mut frame = self.renderer.render(&mut target, phys_size, Transform::Normal)?;
-                for (elems, popup_clip) in &layer.popup_layers {
-                    draw_render_elements(&mut frame, 1.0, elems, &[*popup_clip])
-                        .map_err(|e| TermwayError::Renderer(format!("{:?}", e)))?;
-                }
-                let _ = frame.finish()?;
+            for (elems, popup_clip) in &layer.popup_layers {
+                draw_render_elements(&mut frame, 1.0, elems, &[*popup_clip])
+                    .map_err(|e| TermwayError::Renderer(format!("{:?}", e)))?;
             }
         }
 
         // 4. Draw unmanaged X11 popup/override-redirect surfaces and fallback surfaces on top
-        if !x11_layers.is_empty() || !fallback_layers.is_empty() {
-            let mut target = self.renderer.bind(&mut self.buffer)?;
-            let mut frame = self.renderer.render(&mut target, phys_size, Transform::Normal)?;
-            for (elems, x11_clip) in &x11_layers {
-                draw_render_elements(&mut frame, 1.0, elems, &[*x11_clip])
-                    .map_err(|e| TermwayError::Renderer(format!("{:?}", e)))?;
-            }
-            for (elems, clip) in &fallback_layers {
-                draw_render_elements(&mut frame, 1.0, elems, &[*clip])
-                    .map_err(|e| TermwayError::Renderer(format!("{:?}", e)))?;
-            }
-            let _ = frame.finish()?;
+        for (elems, x11_clip) in &x11_layers {
+            draw_render_elements(&mut frame, 1.0, elems, &[*x11_clip])
+                .map_err(|e| TermwayError::Renderer(format!("{:?}", e)))?;
         }
+        for (elems, clip) in &fallback_layers {
+            draw_render_elements(&mut frame, 1.0, elems, &[*clip])
+                .map_err(|e| TermwayError::Renderer(format!("{:?}", e)))?;
+        }
+
+        let _ = frame.finish()?;
+        drop(target);
 
         // 5. Draw startup splash screen if active
         if state.show_splash {
