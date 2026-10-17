@@ -1,4 +1,4 @@
-# termway 要求仕様およびテスト仕様書 (v0.8.0)
+# termway 要求仕様およびテスト仕様書 (v0.9.0)
 
 本書は、`termway` の開発において策定された機能要件・非機能要件と、それらを検証するためのテスト仕様およびトレーサビリティ（対応関係）をまとめたドキュメントです。
 
@@ -148,7 +148,7 @@ flowchart LR
 
 ```bash
 $ cargo test --release
-   Compiling termway v0.8.0 (/path/to/termway)
+   Compiling termway v0.9.0 (/path/to/termway)
     Finished `release` profile [optimized] target(s)
      Running tests/integration_pipeline.rs (7 tests) ... ok
      Running tests/perf_pipeline.rs (1 test) ... ok

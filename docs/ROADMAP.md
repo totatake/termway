@@ -113,19 +113,27 @@ ARM64 Linux（AWS Graviton、Raspberry Pi 4/5、Apple Silicon 上の Linux VM �
   - GitHub Actions CI において QEMU user emulation による aarch64 単体テスト自動検証を追加。
   - GitHub Release において `x86_64-unknown-linux-gnu` と `aarch64-unknown-linux-gnu` のバイナリおよびチェックサムを横並びで自動生成・配布するマトリクスワークフローを構築。
 
-- **Kitty 部分矩形プレースメント転送 (`encode_frame_into`, `encode_subimage_into`)**:
+---
+
+## 7. Kitty 部分矩形プレースメント転送（v0.9.0 実装済み）
+
+### 背景と課題
+高解像度端末（1080p や 4K）において、テキストエディタのカーソル点滅や 1 文字入力といった画面ごく一部の微小更新時にも全画面のフルフレーム zlib 圧縮および Base64 転送を行っていたため、高 FPS 設定時の CPU 圧縮負荷や PTY 転送帯域が課題となっていました。
+
+### 実装された構造（v0.9.0）
+- **部分矩形プレースメント転送 (`encode_frame_into`, `encode_subimage_into`)**:
   - `DamageTracker` の汚損領域バウンディングボックスを文字セル境界へ外接スナップし、画面全体の 50% 以下の変化時は部分サブイメージのみを zlib 圧縮して `\x1b[{row};{col}H` へダイレクト配置転送。
   - カーソル点滅や文字入力時の圧縮負荷と転送サイズを最大 99.5% 削減（1080p で 900KB → 4.2KB）。
   - 60 フレームごとの定期リフレッシュおよび大面積更新時に `\x1b_Ga=d,d=a\x1b\` による全画像一括削除と全画面キャンバス再配置をアトミックに実行し、端末側 VRAM 肥大化を完全防止。
 
 ---
 
-## 7. Wayland Fractional Scale / HiDPI 制御（v0.8.0 実装済み）
+## 8. Wayland Fractional Scale / HiDPI 制御（v0.9.0 実装済み）
 
 ### 背景と課題
 4K ディスプレイや高 DPI（Retina）ターミナル環境において、等倍（1.0x）表示では GUI アプリケーションのボタン・アイコン・フォントが極小化し視認性が著しく低下していました。また、Wayland 規格における従来の整数倍スケーリング（`wl_output.scale`）のみでは、1.25x や 1.5x といった現代の一般的な HiDPI スケールファクターに正確に追従できず、ボケや座標ズレの原因となっていました。
 
-### 実装された構造（v0.8.0）
+### 実装された構造（v0.9.0）
 - **Wayland Fractional Scale & Viewporter プロトコル統合**:
   - `wp_fractional_scale_v1`（`FractionalScaleManagerState` / `FractionalScaleHandler`）を実装し、クライアントに正確な推奨小数スケール値（120分の1単位）を即時通知。
   - `wp_viewporter`（`ViewporterState`）を統合し、高解像度バッファをサーフェスの論理座標サイズへアトミックにマッピング。
@@ -139,7 +147,7 @@ ARM64 Linux（AWS Graviton、Raspberry Pi 4/5、Apple Silicon 上の Linux VM �
 
 ---
 
-## 8. 完了済みマイルストーン一覧
+## 9. 完了済みマイルストーン一覧
 
 | マイルストーン | 項目 | 優先度 | 達成効果 | ステータス |
 | :--- | :--- | :---: | :--- | :---: |
@@ -154,12 +162,12 @@ ARM64 Linux（AWS Graviton、Raspberry Pi 4/5、Apple Silicon 上の Linux VM �
 | **フェーズ 7**（性能プロファイリング＆ストリームエンコーダ最適化） | パイプライン段別ベンチマーク (`tests/perf_pipeline.rs`) とランタイムプロファイラ (`--profile`) の導入、Sixel 6px ダーティバンドキャッシュ (`SixelStreamEncoder`)、Kitty ゼロアロケーション zlib リセット & Base64 ストリーミング (`KittyStreamEncoder`) | 最優先 | Sixel カーソル・部分更新レイテンシ 92〜95% 削減 (4.3ms→0.34ms)、Kitty 動的ヒープ確保ゼロ化 | **実装済み (v0.7.0)** |
 | **フェーズ 8**（統一ポーリング＆フレームペーシング＆モジュール分割） | `stdin` + `listener` + `display.backend().poll_fd()` の単一 `poll` 統合によるアイドル時 CPU 0% 化、`--fps` 目標フレームレート制御、Pixman レンダラ パス統合、`src/compositor/mod.rs` のサブモジュール分割 (`env.rs`, `taskbar.rs`, `profile.rs`, `screenshot.rs`, `window_manager.rs`) | 高 | アイドル時 CPU 負荷解消、高速コミット時の過度な再描画抑制、コンポジタ可読性・保守性向上 | **実装済み (v0.7.0)** |
 | **フェーズ 9**（aarch64 ビルド & ARM NEON SIMD 対応） | ARM64 Linux 向け NEON ベクトル最適化（Damage / Sixel / BGRX 変換）、Ubuntu 22.04 LTS クロスビルド環境整備、CI QEMU テスト & Release マトリクス配布 | 高 | AWS Graviton / Apple Silicon / Raspberry Pi 等でのネイティブ高速動作、x86_64/aarch64 横並びリリース配布 | **実装済み (v0.8.0)** |
-| **フェーズ 10**（Kitty 部分矩形プレースメント転送） | セルスナップ外接矩形判定による Kitty 部分プレースメント転送 (`encode_frame_into`) とアトミック定期リフレッシュ | 高 | 微小更新時の zlib 圧縮負荷および帯域 99.5% 削減（1080p で 900KB→4.2KB）、高解像度端末での超低遅延応答 | **実装済み (v0.8.0)** |
-| **フェーズ 11**（Wayland Fractional Scale / HiDPI 制御） | `wp_fractional_scale_v1` / `wp_viewporter` プロトコル統合、`--scale <FACTOR>` オプション、出力スケールおよびサーフェス論理/物理座標マッピング | 高 | 4K/Retina高DPI環境でのUI・フォント鮮明表示、小数倍スケール（1.25x/1.5x等）による視認性向上 | **実装済み (v0.8.0)** |
+| **フェーズ 10**（Kitty 部分矩形プレースメント転送） | セルスナップ外接矩形判定による Kitty 部分プレースメント転送 (`encode_frame_into`) とアトミック定期リフレッシュ | 高 | 微小更新時の zlib 圧縮負荷および帯域 99.5% 削減（1080p で 900KB→4.2KB）、高解像度端末での超低遅延応答 | **実装済み (v0.9.0)** |
+| **フェーズ 11**（Wayland Fractional Scale / HiDPI 制御） | `wp_fractional_scale_v1` / `wp_viewporter` プロトコル統合、`--scale <FACTOR>` オプション、出力スケールおよびサーフェス論理/物理座標マッピング | 高 | 4K/Retina高DPI環境でのUI・フォント鮮明表示、小数倍スケール（1.25x/1.5x等）による視認性向上 | **実装済み (v0.9.0)** |
 
 ---
 
-## 9. 今後の展望 (Future Horizons)
+## 10. 今後の展望 (Future Horizons)
 
 | テーマ | 概要 | 期待される価値 |
 | :--- | :--- | :--- |
