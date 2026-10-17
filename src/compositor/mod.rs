@@ -173,8 +173,7 @@ impl TermwayCompositor {
         log_line(format!("[termway] Resolution: {}x{} (@{:.2}x)", width, height, config.scale));
 
         // 2. Initialize Compositor State
-        let mut state = TermwayState::with_scale(&dh, width, height, config.enable_wm, config.scale);
-        state.pixel_mouse = crate::terminal::supports_pixel_mouse();
+        let state = TermwayState::with_scale(&dh, width, height, config.enable_wm, config.scale);
         let refresh_mhz = (config.fps.clamp(1, 240) * 1000) as i32;
         let mode = smithay::output::Mode {
             size: (width as i32, height as i32).into(),
@@ -1082,31 +1081,12 @@ impl TermwayCompositor {
     }
 
     fn dispatch_mouse_event(&mut self, ev: &crate::protocol::MouseEvent) {
-        // Auto-detect pixel mouse mode: in cell mode, coordinates cannot exceed term dimensions.
-        if ev.col > self.term_cols || ev.row > self.term_rows {
-            self.state.pixel_mouse = true;
-        }
-
-        let avail_rows = self.term_rows.saturating_sub(1).max(1);
-        let cell_w = self.renderer.width() as f64 / self.term_cols.max(1) as f64;
-        let cell_h = self.renderer.height() as f64 / avail_rows as f64;
-
-        // Check taskbar click on the bottom row (supports both cell and pixel coordinates)
-        let (taskbar_col, is_bottom_row) = if self.state.pixel_mouse {
-            let px = ev.col.saturating_sub(1) as f64;
-            let py = ev.row.saturating_sub(1) as f64;
-            let col = (px / cell_w.max(1.0)).floor() as u16 + 1;
-            let is_bottom = py >= self.renderer.height() as f64 - cell_h;
-            (col, is_bottom)
-        } else {
-            (ev.col, ev.row == self.term_rows)
-        };
-
+        // Check taskbar click on the bottom row
         if ev.action == crate::protocol::MouseAction::Press
             && matches!(ev.button, crate::protocol::MouseButton::Left)
-            && is_bottom_row
+            && ev.row == self.term_rows
         {
-            if let Some(chip_id) = self.taskbar.find_chip_at_col(taskbar_col) {
+            if let Some(chip_id) = self.taskbar.find_chip_at_col(ev.col) {
                 if let Some(win) = self.state.wm.windows.iter().find(|w| w.id == chip_id) {
                     if win.is_minimized {
                         self.state.restore_window(chip_id);

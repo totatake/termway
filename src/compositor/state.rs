@@ -118,7 +118,6 @@ pub struct TermwayState {
     pub splash_info: String,
     pub splash_command: String,
     pub start_time: std::time::Instant,
-    pub pixel_mouse: bool,
     pub current_cursor_shape: String,
     pub current_terminal_title: String,
 }
@@ -226,7 +225,6 @@ impl TermwayState {
             },
             splash_command: String::from("gui-app"),
             start_time: std::time::Instant::now(),
-            pixel_mouse: false,
             current_cursor_shape: String::from("default"),
             current_terminal_title: String::from("termway"),
         };

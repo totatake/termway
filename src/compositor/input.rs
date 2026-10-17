@@ -526,23 +526,10 @@ pub fn dispatch_mouse_event(
     let serial = SERIAL_COUNTER.next_serial();
     let time = state.start_time.elapsed().as_millis() as u32;
 
-    if ev.col > term_cols || ev.row > avail_rows + 1 {
-        state.pixel_mouse = true;
-    }
-
-    let (px, py) = if state.pixel_mouse {
-        (
-            ev.col.saturating_sub(1) as f64,
-            ev.row.saturating_sub(1) as f64,
-        )
-    } else {
-        let cell_w = renderer_width as f64 / term_cols.max(1) as f64;
-        let cell_h = renderer_height as f64 / avail_rows.max(1) as f64;
-        (
-            (ev.col.saturating_sub(1)) as f64 * cell_w + (cell_w * 0.5),
-            (ev.row.saturating_sub(1)) as f64 * cell_h + (cell_h * 0.5),
-        )
-    };
+    let cell_w = renderer_width as f64 / term_cols.max(1) as f64;
+    let cell_h = renderer_height as f64 / avail_rows.max(1) as f64;
+    let px = (ev.col.saturating_sub(1)) as f64 * cell_w + (cell_w * 0.5);
+    let py = (ev.row.saturating_sub(1)) as f64 * cell_h + (cell_h * 0.5);
 
     let scale = state.scale.max(0.1);
     let loc_x = px / scale;

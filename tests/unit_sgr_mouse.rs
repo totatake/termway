@@ -78,9 +78,3 @@ fn test_sgr_mouse_pixel_coordinates() {
     assert_eq!(event.button, MouseButton::Left);
     assert_eq!(event.action, MouseAction::Press);
 }
-
-#[test]
-fn test_supports_pixel_mouse_query() {
-    // Should run without panic regardless of environment
-    let _ = termway::terminal::supports_pixel_mouse();
-}

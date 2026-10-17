@@ -390,7 +390,7 @@ fn test_compositor_mouse_wheel_dispatch() {
 }
 
 #[test]
-fn test_compositor_pixel_mouse_dispatch() {
+fn test_compositor_mouse_dispatch() {
     use termway::compositor::input::dispatch_mouse_event;
     use termway::protocol::{MouseAction, MouseButton, MouseEvent};
 
@@ -398,38 +398,25 @@ fn test_compositor_pixel_mouse_dispatch() {
     let dh = display.handle();
 
     let mut state = TermwayState::new(&dh, 800, 600, true);
-    state.pixel_mouse = true;
 
+    // With 80 cols and 24 rows:
+    // cell_w = 800 / 80 = 10.0
+    // cell_h = 600 / 24 = 25.0
+    // Col 41 -> (41 - 1) * 10.0 + 5.0 = 405.0 px
+    // Row 13 -> (13 - 1) * 25.0 + 12.5 = 312.5 px
     let move_ev = MouseEvent {
         button: MouseButton::None,
         action: MouseAction::Move,
-        col: 401, // 1-based pixel coord -> 400.0 px
-        row: 301, // 1-based pixel coord -> 300.0 px
+        col: 41,
+        row: 13,
         shift: false,
         meta: false,
         ctrl: false,
     };
     let mut child = None;
     dispatch_mouse_event(&mut state, 800, 600, 80, 24, &move_ev, &mut child);
-    assert_eq!(state.pointer.current_location().x, 400.0);
-    assert_eq!(state.pointer.current_location().y, 300.0);
-
-    // Auto-detection test: when pixel_mouse is initially false, but coordinates exceed cell dimensions
-    let mut state_cell = TermwayState::new(&dh, 800, 600, true);
-    assert!(!state_cell.pixel_mouse);
-    let high_coord_ev = MouseEvent {
-        button: MouseButton::None,
-        action: MouseAction::Move,
-        col: 120, // exceeds term_cols (80)
-        row: 50,  // exceeds avail_rows (23)
-        shift: false,
-        meta: false,
-        ctrl: false,
-    };
-    dispatch_mouse_event(&mut state_cell, 800, 600, 80, 24, &high_coord_ev, &mut child);
-    assert!(state_cell.pixel_mouse, "High coordinates should auto-activate pixel_mouse mode");
-    assert_eq!(state_cell.pointer.current_location().x, 119.0);
-    assert_eq!(state_cell.pointer.current_location().y, 49.0);
+    assert_eq!(state.pointer.current_location().x, 405.0);
+    assert_eq!(state.pointer.current_location().y, 312.5);
 }
 
 #[test]
@@ -443,7 +430,6 @@ fn test_compositor_cursor_shape_synchronization() {
     let dh = display.handle();
 
     let mut state = TermwayState::new(&dh, 800, 600, true);
-    state.pixel_mouse = true;
     assert_eq!(state.current_cursor_shape, "default");
 
     // Add a window at (100, 100), size (400, 300) with SSD
@@ -454,16 +440,17 @@ fn test_compositor_cursor_shape_synchronization() {
     let mut child = None;
 
     // Hover over titlebar (e.g. at x=200, y=90) -> should be "grab"
+    // Using 800x600 grid so col/row map directly to pixel positions (col - 1 + 0.5)
     let hover_titlebar = MouseEvent {
         button: MouseButton::None,
         action: MouseAction::Move,
-        col: 201, // px = 200
-        row: 91,  // py = 90
+        col: 201, // px = 200.5
+        row: 91,  // py = 90.5
         shift: false,
         meta: false,
         ctrl: false,
     };
-    dispatch_mouse_event(&mut state, 800, 600, 80, 24, &hover_titlebar, &mut child);
+    dispatch_mouse_event(&mut state, 800, 600, 800, 600, &hover_titlebar, &mut child);
     assert_eq!(state.current_cursor_shape, "grab");
 
     // Hover over resize handle (bottom-right: win is at 100,100, size 400x300, so bottom-right is ~500, 400)
@@ -477,7 +464,7 @@ fn test_compositor_cursor_shape_synchronization() {
         meta: false,
         ctrl: false,
     };
-    dispatch_mouse_event(&mut state, 800, 600, 80, 24, &hover_resize, &mut child);
+    dispatch_mouse_event(&mut state, 800, 600, 800, 600, &hover_resize, &mut child);
     assert_eq!(state.current_cursor_shape, "nwse-resize");
 
     // Hover over close button
@@ -491,7 +478,7 @@ fn test_compositor_cursor_shape_synchronization() {
         meta: false,
         ctrl: false,
     };
-    dispatch_mouse_event(&mut state, 800, 600, 80, 24, &hover_close, &mut child);
+    dispatch_mouse_event(&mut state, 800, 600, 800, 600, &hover_close, &mut child);
     assert_eq!(state.current_cursor_shape, "pointer");
 
     // Hover over background -> should be "default"
@@ -504,7 +491,7 @@ fn test_compositor_cursor_shape_synchronization() {
         meta: false,
         ctrl: false,
     };
-    dispatch_mouse_event(&mut state, 800, 600, 80, 24, &hover_bg, &mut child);
+    dispatch_mouse_event(&mut state, 800, 600, 800, 600, &hover_bg, &mut child);
     assert_eq!(state.current_cursor_shape, "default");
 }
 
