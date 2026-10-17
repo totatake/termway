@@ -433,7 +433,7 @@ stateDiagram-v2
     }
 
     state Floating {
-        [*] --> NormalIdle: WindowDragState::None
+        [*] --> NormalIdle: 通常待機 (ドラッグなし)
         NormalIdle --> Moving: タイトルバー左ドラッグ開始
         Moving --> NormalIdle: マウスボタン解放<br/>(画面境界クランプ適用)
         NormalIdle --> Resizing: 右下ハンドル左ドラッグ開始
@@ -512,8 +512,8 @@ stateDiagram-v2
     CloseGracePeriod --> CleanExit: 3秒経過してもウィンドウが0枚のまま
 
     ActiveSession --> CleanExit: ユーザーが Ctrl-Q を押下
-    CleanExit --> [*]: RawModeGuard::drop() で端末復元
-    ErrorExit --> [*]: RawModeGuard::drop() で端末復元
+    CleanExit --> [*]: RawModeGuard の drop による端末復元
+    ErrorExit --> [*]: RawModeGuard の drop による端末復元
 ```
 
 ---
