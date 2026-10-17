@@ -156,15 +156,18 @@ pub fn run_scenario(
         total_sixel_ms += s_dur.as_secs_f64() * 1_000.0;
         sixel_bytes = sixel_out.len();
 
-        // 3. Kitty Encoding stage (zero-allocation stateful stream)
+        // 3. Kitty Encoding stage (zero-allocation stateful stream with partial placement)
         let t_k0 = Instant::now();
-        kitty_stream.encode_fullscreen_frame_into(
+        kitty_stream.encode_frame_into(
             &frame,
             width,
             height,
             (width / 10) as u16,
             (height / 20) as u16,
-            1,
+            10,
+            20,
+            Some(&damage),
+            false,
             &mut kitty_out,
         );
         let k_dur = t_k0.elapsed();

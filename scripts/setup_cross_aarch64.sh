@@ -51,3 +51,4 @@ apt-get install -y --no-install-recommends \
     libwayland-dev:arm64
 
 echo "Multiarch cross-compilation setup completed successfully."
+

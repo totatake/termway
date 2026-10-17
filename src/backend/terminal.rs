@@ -12,6 +12,8 @@ struct RenderJob {
     height: u32,
     term_cols: u16,
     term_rows: u16,
+    cell_width_px: u16,
+    cell_height_px: u16,
     taskbar: Option<String>,
     needs_clear: bool,
     show_hud: bool,
@@ -110,13 +112,16 @@ impl TerminalBackend {
                         sixel_out.len()
                     } else {
                         let image_rows = job.term_rows.saturating_sub(1).max(1);
-                        kitty_stream.encode_fullscreen_frame_into(
+                        kitty_stream.encode_frame_into(
                             &job.pixels,
                             job.width,
                             job.height,
                             job.term_cols,
                             image_rows,
-                            1,
+                            job.cell_width_px,
+                            job.cell_height_px,
+                            if job.needs_clear { None } else { job.damage.as_deref() },
+                            job.needs_clear,
                             &mut kitty_out,
                         );
                         kitty_out.len()
@@ -314,6 +319,8 @@ impl TerminalBackend {
             job.height = height;
             job.term_cols = self.term_size.cols;
             job.term_rows = self.term_size.rows;
+            job.cell_width_px = self.term_size.cell_width_px;
+            job.cell_height_px = self.term_size.cell_height_px;
             job.taskbar = taskbar.map(String::from);
             job.show_hud = self.show_hud;
             if needs_clear {
@@ -340,6 +347,8 @@ impl TerminalBackend {
                 height,
                 term_cols: self.term_size.cols,
                 term_rows: self.term_size.rows,
+                cell_width_px: self.term_size.cell_width_px,
+                cell_height_px: self.term_size.cell_height_px,
                 taskbar: taskbar.map(String::from),
                 needs_clear,
                 show_hud: self.show_hud,

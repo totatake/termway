@@ -304,7 +304,7 @@ command = "mount -o remount,rw /tmp/.X11-unix"
 本プロジェクトは要求仕様からシステム受入テストまでの厳密なトレーサビリティを確保して開発されており、単体テスト・結合テスト・ベンチマークテスト・E2Eシステムテストが整備されています。
 
 ```bash
-# 全テスト (単体・結合・ベンチマーク・E2E: 計85テスト) の実行
+# 全テスト (単体・結合・ベンチマーク・E2E: 計88テスト) の実行
 cargo test --release
 ```
 
@@ -338,7 +338,7 @@ cargo test --release
 ## ドキュメント
 
 - **[システムアーキテクチャ詳細設計書 (`docs/ARCHITECTURE.md`)](docs/ARCHITECTURE.md)**: 静的構造（レイヤー構成・クラス図・責務分割）および動的構造（起動シーケンス・非同期レンダリングパイプライン・ウィンドウ状態遷移・ヒットテスト優先順位）。
-- **[要求仕様およびテスト仕様書 (`docs/SPECIFICATION.md`)](docs/SPECIFICATION.md)**: 機能要件・非機能要件と全 85 テストのトレーサビリティマトリクス。
+- **[要求仕様およびテスト仕様書 (`docs/SPECIFICATION.md`)](docs/SPECIFICATION.md)**: 機能要件・非機能要件と全 88 テストのトレーサビリティマトリクス。
 - **[Architecture Decision Records (`docs/adr/`)](docs/adr/README.md)**: 設計上の意思決定とトレードオフの記録（[ADR-0001: ハイブリッド D-Bus セッションルーティング](docs/adr/0001-hybrid-dbus-session-routing.md) 等）。
 - **[エンジニアリング・ロードマップ (`docs/ROADMAP.md`)](docs/ROADMAP.md)**: パフォーマンス刷新・ドメイン分割・エンジン統合の達成状況と今後の計画。
 

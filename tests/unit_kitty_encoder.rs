@@ -126,3 +126,175 @@ fn test_kitty_performance_1080x720() {
     eprintln!("\n[BENCHMARK] 1080x720 Kitty zlib encode avg took: {:?}, size: {} KB", elapsed, out.len() / 1024);
     assert!(out.len() > 1000);
 }
+
+#[test]
+fn test_kitty_partial_placement_structure() {
+    use base64::engine::general_purpose::STANDARD as BASE64;
+    use base64::Engine;
+    use termway::display::DamageRect;
+    use termway::protocol::KittyStreamEncoder;
+
+    let width = 160u32;
+    let height = 100u32;
+    let mut rgba = vec![10u8; (width * height * 4) as usize];
+    let mut encoder = KittyStreamEncoder::new();
+    let mut output = String::new();
+
+    // Frame 0: First frame without damage must establish full-screen canvas
+    encoder.encode_frame_into(
+        &rgba, width, height, 16, 10, 10, 10, None, false, &mut output,
+    );
+    assert!(output.starts_with("\x1b[H\x1b_Ga=T,q=2,i=1,C=1,f=32,o=z,z=-2147483648"));
+
+    // Modify a 20x10 area at (20, 30)
+    for y in 30..40 {
+        for x in 20..40 {
+            let idx = ((y * width + x) * 4) as usize;
+            rgba[idx] = 200;
+            rgba[idx + 1] = 50;
+            rgba[idx + 2] = 80;
+            rgba[idx + 3] = 255;
+        }
+    }
+
+    let damage = [DamageRect {
+        x: 20,
+        y: 30,
+        width: 20,
+        height: 10,
+    }];
+
+    // Frame 1: Small damage should emit a partial placement
+    encoder.encode_frame_into(
+        &rgba,
+        width,
+        height,
+        16,
+        10,
+        10,
+        10,
+        Some(&damage),
+        false,
+        &mut output,
+    );
+
+    // Cursor position for (x=20, y=30) with cell size 10x10 -> col = 20/10 + 1 = 3, row = 30/10 + 1 = 4
+    assert!(output.starts_with("\x1b[4;3H"), "Expected cursor at 4;3H, got: {}", &output[..20]);
+    assert!(output.contains("\x1b_Ga=T,q=2,C=1,f=32,o=z,z=-2147483648"));
+    assert!(output.contains("s=20,v=10,c=2,r=1"));
+    assert!(!output.contains("\x1b_Ga=d,d=a\x1b\\"), "Partial placement should not clear images");
+
+    // Extract payload and verify pixels
+    let g_idx = output.find("\x1b_G").expect("kitty header");
+    let semi_idx = output[g_idx..].find(';').expect("control terminator") + g_idx;
+    let end_idx = output.rfind("\x1b\\").expect("escape terminator");
+    let b64_payload = &output[semi_idx + 1..end_idx];
+    let compressed = BASE64.decode(b64_payload).expect("valid base64");
+    let decompressed = miniz_oxide::inflate::decompress_to_vec_zlib(&compressed).expect("valid zlib");
+
+    assert_eq!(decompressed.len(), (20 * 10 * 4) as usize);
+    assert_eq!(decompressed[0], 200);
+    assert_eq!(decompressed[1], 50);
+    assert_eq!(decompressed[2], 80);
+    assert_eq!(decompressed[3], 255);
+}
+
+#[test]
+fn test_kitty_partial_placement_fallback_on_large_damage() {
+    use termway::display::DamageRect;
+    use termway::protocol::KittyStreamEncoder;
+
+    let width = 100u32;
+    let height = 100u32;
+    let rgba = vec![128u8; (width * height * 4) as usize];
+    let mut encoder = KittyStreamEncoder::new();
+    let mut output = String::new();
+
+    // Warmup full frame
+    encoder.encode_frame_into(
+        &rgba, width, height, 10, 10, 10, 10, None, false, &mut output,
+    );
+    assert!(output.starts_with("\x1b[H"));
+
+    // Large damage (> 50% of the screen, e.g. 80x80 = 6400 out of 10000 pixels)
+    let large_damage = [DamageRect {
+        x: 10,
+        y: 10,
+        width: 80,
+        height: 80,
+    }];
+
+    encoder.encode_frame_into(
+        &rgba,
+        width,
+        height,
+        10,
+        10,
+        10,
+        10,
+        Some(&large_damage),
+        false,
+        &mut output,
+    );
+
+    // Large damage must fall back to full-screen frame
+    assert!(output.contains("\x1b[H\x1b_Ga=T,q=2,i=1,C=1,f=32,o=z,z=-2147483648,s=100,v=100,c=10,r=10"));
+}
+
+#[test]
+fn test_kitty_partial_placement_periodic_consolidation() {
+    use termway::display::DamageRect;
+    use termway::protocol::KittyStreamEncoder;
+
+    let width = 100u32;
+    let height = 100u32;
+    let rgba = vec![64u8; (width * height * 4) as usize];
+    let mut encoder = KittyStreamEncoder::new();
+    let mut output = String::new();
+
+    // Initial frame
+    encoder.encode_frame_into(
+        &rgba, width, height, 10, 10, 10, 10, None, false, &mut output,
+    );
+
+    let damage = [DamageRect {
+        x: 0,
+        y: 0,
+        width: 10,
+        height: 10,
+    }];
+
+    // Run 60 partial frames
+    for _ in 0..60 {
+        encoder.encode_frame_into(
+            &rgba,
+            width,
+            height,
+            10,
+            10,
+            10,
+            10,
+            Some(&damage),
+            false,
+            &mut output,
+        );
+        assert!(output.starts_with("\x1b[1;1H"), "Should be partial placement");
+        assert!(!output.contains("\x1b_Ga=d,d=a\x1b\\"));
+    }
+
+    // 61st frame must trigger consolidation: delete prior overlays and send full frame
+    encoder.encode_frame_into(
+        &rgba,
+        width,
+        height,
+        10,
+        10,
+        10,
+        10,
+        Some(&damage),
+        false,
+        &mut output,
+    );
+    assert!(output.starts_with("\x1b_Ga=d,d=a\x1b\\\x1b[H"), "61st frame should consolidate with deletion and home cursor");
+    assert!(output.contains("s=100,v=100,c=10,r=10"));
+}
