@@ -26,7 +26,10 @@ use smithay::{
             with_surface_tree_downward, CompositorClientState, CompositorState, SurfaceAttributes,
             TraversalAction,
         },
-        selection::data_device::DataDeviceState,
+        selection::{
+            data_device::DataDeviceState,
+            primary_selection::PrimarySelectionState,
+        },
         shell::xdg::{decoration::XdgDecorationState, ToplevelSurface, XdgShellState},
         shm::ShmState,
     },
@@ -78,9 +81,11 @@ pub struct TermwayState {
 
     pub output: Output,
     pub data_device_state: DataDeviceState,
+    pub primary_selection_state: PrimarySelectionState,
     pub focused_surface: Option<WlSurface>,
     pub text_inputs: Vec<TrackedTextInput>,
     pub clipboard_text: Vec<u8>,
+    pub primary_selection_text: Vec<u8>,
     pub base_keymap_string: String,
     pub unicode_key_slots: Vec<UnicodeKeySlot>,
     pub unicode_slot_cursor: usize,
@@ -166,6 +171,7 @@ impl TermwayState {
         output.set_preferred(Mode { size: (width as i32, height as i32).into(), refresh: 60000 });
 
         let data_device_state = DataDeviceState::new::<Self>(dh);
+        let primary_selection_state = PrimarySelectionState::new::<Self>(dh);
 
         let logical_width = ((width as f64 / scale).round() as u32).max(1);
         let logical_height = ((height as f64 / scale).round() as u32).max(1);
@@ -185,9 +191,11 @@ impl TermwayState {
             pointer,
             output,
             data_device_state,
+            primary_selection_state,
             focused_surface: None,
             text_inputs: Vec::new(),
             clipboard_text: Vec::new(),
+            primary_selection_text: Vec::new(),
             base_keymap_string: String::new(),
             unicode_key_slots: Vec::new(),
             unicode_slot_cursor: 0,

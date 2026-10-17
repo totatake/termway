@@ -378,10 +378,20 @@ impl XwmHandler for TermwayState {
         true
     }
 
-    fn send_selection(&mut self, _xwm: XwmId, _selection: SelectionTarget, _mime_type: String, fd: OwnedFd) {
+    fn send_selection(&mut self, _xwm: XwmId, selection: SelectionTarget, _mime_type: String, fd: OwnedFd) {
         use std::io::Write;
         let mut file = std::fs::File::from(fd);
-        let _ = file.write_all(&self.clipboard_text);
+        let data = match selection {
+            SelectionTarget::Primary => {
+                if !self.primary_selection_text.is_empty() {
+                    &self.primary_selection_text
+                } else {
+                    &self.clipboard_text
+                }
+            }
+            _ => &self.clipboard_text,
+        };
+        let _ = file.write_all(data);
     }
 }
 

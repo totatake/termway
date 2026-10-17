@@ -1032,7 +1032,19 @@ impl TermwayCompositor {
         log_line(format!("[termway] Bracketed paste received ({} bytes)", text.len()));
         let bytes = text.into_bytes();
         self.state.clipboard_text = bytes.clone();
+        self.state.primary_selection_text = bytes.clone();
         smithay::wayland::selection::data_device::set_data_device_selection(
+            &self.state.dh,
+            &self.state.seat,
+            vec![
+                "text/plain;charset=utf-8".to_string(),
+                "text/plain".to_string(),
+                "UTF8_STRING".to_string(),
+                "STRING".to_string(),
+            ],
+            bytes.clone(),
+        );
+        smithay::wayland::selection::primary_selection::set_primary_selection(
             &self.state.dh,
             &self.state.seat,
             vec![
@@ -1046,6 +1058,16 @@ impl TermwayCompositor {
         if let Some(ref mut xwm) = self.state.xwm {
             let _ = xwm.new_selection(
                 smithay::wayland::selection::SelectionTarget::Clipboard,
+                Some(vec![
+                    "text/plain;charset=utf-8".to_string(),
+                    "text/plain".to_string(),
+                    "UTF8_STRING".to_string(),
+                    "TEXT".to_string(),
+                    "STRING".to_string(),
+                ]),
+            );
+            let _ = xwm.new_selection(
+                smithay::wayland::selection::SelectionTarget::Primary,
                 Some(vec![
                     "text/plain;charset=utf-8".to_string(),
                     "text/plain".to_string(),

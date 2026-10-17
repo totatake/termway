@@ -163,9 +163,10 @@ impl SelectionHandler for TermwayState {
     type SelectionUserData = Vec<u8>;
 
     fn new_selection(&mut self, ty: SelectionTarget, source: Option<SelectionSource>, seat: Seat<Self>) {
-        if ty != SelectionTarget::Clipboard {
-            return;
-        }
+        let (is_primary, osc_target) = match ty {
+            SelectionTarget::Clipboard => (false, "c"),
+            SelectionTarget::Primary => (true, "p"),
+        };
         let Some(source) = source else {
             return;
         };
@@ -183,11 +184,22 @@ impl SelectionHandler for TermwayState {
                 let read_fd = unsafe { OwnedFd::from_raw_fd(fds[0]) };
                 let write_fd = unsafe { OwnedFd::from_raw_fd(fds[1]) };
 
-                if smithay::wayland::selection::data_device::request_data_device_client_selection(
-                    &seat,
-                    mime,
-                    write_fd,
-                ).is_ok() {
+                let req_ok = if is_primary {
+                    smithay::wayland::selection::primary_selection::request_primary_client_selection(
+                        &seat,
+                        mime,
+                        write_fd,
+                    ).is_ok()
+                } else {
+                    smithay::wayland::selection::data_device::request_data_device_client_selection(
+                        &seat,
+                        mime,
+                        write_fd,
+                    ).is_ok()
+                };
+
+                if req_ok {
+                    let osc_target = osc_target.to_string();
                     std::thread::spawn(move || {
                         use std::io::{Read, Write};
                         use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
@@ -197,8 +209,9 @@ impl SelectionHandler for TermwayState {
                             if let Ok(text) = std::str::from_utf8(&data) {
                                 if !text.is_empty() {
                                     let b64 = BASE64.encode(text);
-                                    eprintln!("[termway] Copied to host clipboard: {:?}", text);
-                                    print!("\x1b]52;c;{}\x07", b64);
+                                    let label = if osc_target == "p" { "primary selection" } else { "clipboard" };
+                                    eprintln!("[termway] Copied to host {}: {:?}", label, text);
+                                    print!("\x1b]52;{};{}\x07", osc_target, b64);
                                     let _ = std::io::stdout().flush();
                                 }
                             }
@@ -232,4 +245,10 @@ impl DataDeviceHandler for TermwayState {
 impl ClientDndGrabHandler for TermwayState {}
 impl ServerDndGrabHandler for TermwayState {
     fn send(&mut self, _mime_type: String, _fd: OwnedFd, _seat: Seat<Self>) {}
+}
+
+impl smithay::wayland::selection::primary_selection::PrimarySelectionHandler for TermwayState {
+    fn primary_selection_state(&self) -> &smithay::wayland::selection::primary_selection::PrimarySelectionState {
+        &self.primary_selection_state
+    }
 }
