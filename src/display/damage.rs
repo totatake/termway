@@ -116,6 +116,73 @@ impl DamageTracker {
         if h == 0 { 1 } else { h }
     }
 
+    /// ARM NEON SIMD accelerated tile hash for 64-bit lane accumulation
+    #[cfg(target_arch = "aarch64")]
+    unsafe fn hash_tile_neon(
+        rgba_data: &[u8],
+        stride: usize,
+        rect_x: usize,
+        rect_y: usize,
+        rect_w: usize,
+        rect_h: usize,
+    ) -> u64 {
+        use std::arch::aarch64::*;
+        let mut acc0 = vdupq_n_u64(0x517cc1b727220a95u64);
+        let mut acc1 = vdupq_n_u64(0x9e3779b97f4a7c15u64);
+        let row_bytes = rect_w * 4;
+        let base_ptr = rgba_data.as_ptr();
+
+        for y in 0..rect_h {
+            let row_start = (rect_y + y) * stride + rect_x * 4;
+            let mut ptr = base_ptr.add(row_start);
+            let mut rem = row_bytes;
+
+            while rem >= 64 {
+                let v0 = vld1q_u64(ptr as *const u64);
+                let v1 = vld1q_u64(ptr.add(16) as *const u64);
+                let v2 = vld1q_u64(ptr.add(32) as *const u64);
+                let v3 = vld1q_u64(ptr.add(48) as *const u64);
+
+                acc0 = veorq_u64(acc0, v0);
+                acc0 = vaddq_u64(vaddq_u64(vshlq_n_u64(acc0, 13), vshrq_n_u64(acc0, 51)), v1);
+
+                acc1 = veorq_u64(acc1, v2);
+                acc1 = vaddq_u64(vaddq_u64(vshlq_n_u64(acc1, 17), vshrq_n_u64(acc1, 47)), v3);
+
+                ptr = ptr.add(64);
+                rem -= 64;
+            }
+            while rem >= 32 {
+                let v0 = vld1q_u64(ptr as *const u64);
+                let v1 = vld1q_u64(ptr.add(16) as *const u64);
+                acc0 = veorq_u64(acc0, v0);
+                acc0 = vaddq_u64(vaddq_u64(vshlq_n_u64(acc0, 13), vshrq_n_u64(acc0, 51)), v1);
+                ptr = ptr.add(32);
+                rem -= 32;
+            }
+            while rem >= 16 {
+                let v0 = vld1q_u64(ptr as *const u64);
+                acc0 = veorq_u64(acc0, v0);
+                acc0 = vaddq_u64(vshlq_n_u64(acc0, 13), vshrq_n_u64(acc0, 51));
+                ptr = ptr.add(16);
+                rem -= 16;
+            }
+            if rem > 0 {
+                let tail_slice = std::slice::from_raw_parts(ptr, rem);
+                let tail_h = Self::hash_row_words(0xcbf29ce484222325u64, tail_slice);
+                acc1 = veorq_u64(acc1, vdupq_n_u64(tail_h));
+            }
+        }
+
+        let combined = veorq_u64(acc0, acc1);
+        let l0 = vgetq_lane_u64(combined, 0);
+        let l1 = vgetq_lane_u64(combined, 1);
+        let mut h = 0xcbf29ce484222325u64;
+        h = (h ^ l0).wrapping_mul(0x100000001b3u64);
+        h = (h ^ l1).wrapping_mul(0x100000001b3u64);
+        if h == 0 { 1 } else { h }
+    }
+
     /// Resize damage tracker to new resolution
     pub fn resize(&mut self, width: u32, height: u32) {
         if self.width == width && self.height == height {
@@ -125,7 +192,7 @@ impl DamageTracker {
     }
 
     /// Compare current frame buffer against previous frame and return modified bounding rectangles.
-    /// Uses AVX2 SIMD vector hashing when available on x86_64, falling back to 64-bit word folding.
+    /// Uses AVX2 SIMD vector hashing on x86_64, NEON vector hashing on aarch64, and falls back to 64-bit word folding.
     pub fn track_damage(&mut self, rgba_data: &[u8]) -> Vec<DamageRect> {
         let stride = (self.width * 4) as usize;
         let mut dirty_tiles = Vec::new();
@@ -169,7 +236,20 @@ impl DamageTracker {
                             if h == 0 { 1 } else { h }
                         }
                     }
-                    #[cfg(not(target_arch = "x86_64"))]
+                    #[cfg(target_arch = "aarch64")]
+                    {
+                        unsafe {
+                            Self::hash_tile_neon(
+                                rgba_data,
+                                stride,
+                                rect_x as usize,
+                                rect_y as usize,
+                                rect_w as usize,
+                                rect_h as usize,
+                            )
+                        }
+                    }
+                    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
                     {
                         let mut h = 0xcbf29ce484222325u64;
                         for y in 0..rect_h {
@@ -181,7 +261,7 @@ impl DamageTracker {
                         if h == 0 { 1 } else { h }
                     }
                 } else {
-                    1
+                    0
                 };
 
                 if current_hash != self.prev_tile_hashes[tile_idx] {

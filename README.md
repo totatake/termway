@@ -126,12 +126,12 @@ termway supports both high-speed inline graphics protocols (**Kitty** & **Sixel*
 | | **Alacritty** (with sixel patch) / **xterm** | Linux, macOS | `xterm -ti vt340` |
 
 ### Host / Server Environment
-- Linux (x86_64)
+- Linux (x86_64, aarch64 / ARM64)
 - Rust toolchain (1.70 or later)
 - System libraries:
 
 ```bash
-# Ubuntu / Debian
+# Ubuntu / Debian (Native x86_64 or aarch64)
 sudo apt-get install -y build-essential pkg-config libpixman-1-dev libwayland-dev xwayland dbus-daemon
 
 # Recommended for running privileged tools (e.g. gparted) with password prompts (choose one)
@@ -144,6 +144,8 @@ sudo apt-get install -y lxpolkit           # Lightweight authentication dialog
 
 ## Installation & Build
 
+### Native Build (x86_64 or aarch64)
+
 ```bash
 # Clone repository
 git clone https://github.com/totatake/termway.git
@@ -154,6 +156,24 @@ cargo build --release
 ```
 
 The compiled binary will be placed at `target/release/termway`.
+
+### Cross-Compiling for aarch64 (on Ubuntu x86_64)
+
+To build an ARM64 binary with NEON SIMD optimizations from an Ubuntu x86_64 host:
+
+```bash
+# Install aarch64 cross-toolchain and multiarch dependencies
+sudo ./scripts/setup_cross_aarch64.sh
+
+# Add Rust aarch64 target
+rustup target add aarch64-unknown-linux-gnu
+
+# Build release binary
+PKG_CONFIG_ALLOW_CROSS=1 PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig \
+  cargo build --release --target aarch64-unknown-linux-gnu
+```
+
+The compiled binary will be placed at `target/aarch64-unknown-linux-gnu/release/termway`.
 
 ---
 

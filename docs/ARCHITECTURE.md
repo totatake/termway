@@ -521,11 +521,13 @@ stateDiagram-v2
    - **最背面レイヤ配置 (`z=-2147483648`) と最下行保護 (`rows - 1`)**: 画像をテキストレイヤより背面に配置し、さらに描画行数を `term_rows - 1` に制限することで、最下行のタスクバーおよびステータスオーバーレイ文字列との重なりを防止。
 2. **Sixel Graphics Protocol (`src/protocol/sixel.rs`)**:
    - **6 行ダーティバンドキャッシュ (`SixelStreamEncoder`)**: 6 ピクセル高の水平バンドごとに FNV-1a ハッシュとエンコード済み Sixel バイト列をキャッシュし、前フレームと同一のバンドは減色・走査を完全スキップしてキャッシュから即時結合（カーソル移動等の部分更新を約 4.3ms → 0.34ms へ 92〜95% 高速化）。
-   - **AVX2 SIMD RGB332 減色 (`quantize_rgb332_avx2`)**: 8 ピクセル（32 バイト）単位で RGBA から 8-bit RGB332 カラーインデックスへ一括ベクトル変換。
-   - **AVX2 + `tzcnt` ビットマスク走査**: 6 ピクセル高のバンドごとに 32 列単位で `_mm256_cmpeq_epi8` + `_mm256_movemask_epi8` を実行し、存在する色だけを `trailing_zeros()` でジャンプ走査して RLE 出力（1080x720 フルフレーム初回を約 3.7ms でエンコード）。
-3. **タイル差分検出 (`src/display/damage.rs`)**:
-   - 画面を 32x32 ピクセルのタイルに分割し、`x86_64` AVX2 環境では `_mm256_mullo_epi32` と `_mm256_xor_si256` による 8 レーン並列ハッシュで前回フレームと比較（1080x720 画面の差分スキャン約 0.14〜0.20ms）。
-4. **Synchronized Output (`\x1b[?2026h` ... `\x1b[?2026l`)**:
+   - **AVX2 / ARM NEON SIMD RGB332 減色 (`quantize_rgb332_avx2`, `quantize_rgb332_neon`)**: x86_64 では AVX2（8 ピクセル/32 バイト単位）、aarch64 では ARM NEON（16 ピクセル/64 バイト単位）を用いて RGBA から 8-bit RGB332 カラーインデックスへ一括ベクトル変換。
+   - **AVX2 + `tzcnt` / ARM NEON ビットマスク走査**: 6 ピクセル高のバンドごとに、x86_64 では 32 列単位で `_mm256_cmpeq_epi8` + `_mm256_movemask_epi8` と `trailing_zeros()`、aarch64 では 16 列単位で `vceqq_u8` と 6 行重み付け加算による直接 Sixel ASCII 生成を実行し、1080x720 フルフレーム初回を約 3.7ms でエンコード。
+3. **フレームバッファ色空間変換 (`src/display/framebuffer.rs`)**:
+   - **AVX2 / ARM NEON BGRX → RGBA 変換 (`copy_bgrx_to_rgba_neon`)**: aarch64 では `vld4q_u8` および `vst4q_u8` の 4 要素構造体一括ロード/ストア命令を活用し、BGRX から RGBA へのチャンネル並べ替えと Alpha=255 付与を CPU レジスタ上で 16 ピクセル単位で瞬時に完結。
+4. **タイル差分検出 (`src/display/damage.rs`)**:
+   - 画面を 32x32 ピクセルのタイルに分割し、x86_64 では AVX2 (`_mm256_mullo_epi32` + `_mm256_xor_si256`)、aarch64 では ARM NEON (`uint64x2_t` レーン並列積和) による並列ハッシュで前回フレームと比較（1080x720 画面の差分スキャン約 0.14〜0.20ms）。
+5. **Synchronized Output (`\x1b[?2026h` ... `\x1b[?2026l`)**:
    - フレーム画像・タスクバー・HUD の出力全体を DEC Mode 2026（同期更新ブロック）で囲み、ティアリングや画面のチラつきを防止。
 
 ---

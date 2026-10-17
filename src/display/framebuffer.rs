@@ -48,6 +48,20 @@ impl Framebuffer {
             return;
         }
 
+        #[cfg(target_arch = "aarch64")]
+        {
+            unsafe {
+                Self::copy_bgrx_to_rgba_neon(
+                    src_data.as_ptr(),
+                    bytes_per_line,
+                    &mut self.pixels,
+                    w as usize,
+                    h as usize,
+                );
+            }
+            return;
+        }
+
         for y in 0..h {
             let row_offset = (y as usize) * bytes_per_line;
             let dst_row_start = (y * w * 4) as usize;
@@ -95,6 +109,45 @@ impl Framebuffer {
                 let rgba = _mm256_or_si256(_mm256_shuffle_epi8(v, shuf), alpha_mask);
                 _mm256_storeu_si256(dst_row.add(x * 4) as *mut __m256i, rgba);
                 x += 8;
+            }
+
+            let src_row_u32 = src_row as *const u32;
+            while x < w {
+                let pixel = *src_row_u32.add(x);
+                let dst_idx = x * 4;
+                *dst_row.add(dst_idx) = ((pixel >> 16) & 0xff) as u8;
+                *dst_row.add(dst_idx + 1) = ((pixel >> 8) & 0xff) as u8;
+                *dst_row.add(dst_idx + 2) = (pixel & 0xff) as u8;
+                *dst_row.add(dst_idx + 3) = 255u8;
+                x += 1;
+            }
+        }
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    unsafe fn copy_bgrx_to_rgba_neon(
+        src_data: *const u8,
+        bytes_per_line: usize,
+        dst_pixels: &mut [u8],
+        w: usize,
+        h: usize,
+    ) {
+        use std::arch::aarch64::*;
+
+        let alpha = vdupq_n_u8(255);
+        let dst_ptr = dst_pixels.as_mut_ptr();
+
+        for y in 0..h {
+            let src_row = src_data.add(y * bytes_per_line);
+            let dst_row = dst_ptr.add(y * w * 4);
+            let mut x = 0usize;
+
+            while x + 16 <= w {
+                let v = vld4q_u8(src_row.add(x * 4));
+                // v.0 is B, v.1 is G, v.2 is R, v.3 is X -> store as R, G, B, 255
+                let rgba = uint8x16x4_t(v.2, v.1, v.0, alpha);
+                vst4q_u8(dst_row.add(x * 4), rgba);
+                x += 16;
             }
 
             let src_row_u32 = src_row as *const u32;

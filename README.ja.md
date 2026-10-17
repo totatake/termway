@@ -126,12 +126,12 @@ termway は高速グラフィックスプロトコル（**Kitty** および **Si
 | | **Alacritty** (Sixelパッチ版) / **xterm** | Linux, macOS | `xterm -ti vt340` モード |
 
 ### サーバー / 実行環境
-- Linux (x86_64)
+- Linux (x86_64, aarch64 / ARM64)
 - Rust ツールチェーン (1.70 以上)
 - 必要なシステムライブラリ:
 
 ```bash
-# Ubuntu / Debian
+# Ubuntu / Debian (x86_64 / aarch64 ネイティブ環境)
 sudo apt-get install -y build-essential pkg-config libpixman-1-dev libwayland-dev xwayland dbus-daemon
 
 # gparted 等の管理者権限 GUI ツール（Polkit 認証ダイアログ）を使用する場合（いずれか1つ）
@@ -144,6 +144,8 @@ sudo apt-get install -y lxpolkit           # 軽量な認証ダイアログ
 
 ## インストールとビルド
 
+### ネイティブビルド (x86_64 または aarch64)
+
 ```bash
 # リポジトリのクローン
 git clone https://github.com/totatake/termway.git
@@ -154,6 +156,24 @@ cargo build --release
 ```
 
 バイナリは `target/release/termway` に生成されます。
+
+### aarch64 (ARM64) 向けクロスビルド (Ubuntu x86_64 環境)
+
+Ubuntu x86_64 ホスト上で ARM NEON SIMD 最適化を含む aarch64 バイナリをクロスコンパイルする場合:
+
+```bash
+# クロスコンパイルツールチェインと arm64 マルチアーキテクチャ依存関係のセットアップ
+sudo ./scripts/setup_cross_aarch64.sh
+
+# Rust の aarch64 ターゲットを追加
+rustup target add aarch64-unknown-linux-gnu
+
+# リリースビルド
+PKG_CONFIG_ALLOW_CROSS=1 PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig \
+  cargo build --release --target aarch64-unknown-linux-gnu
+```
+
+バイナリは `target/aarch64-unknown-linux-gnu/release/termway` に生成されます。
 
 ---
 

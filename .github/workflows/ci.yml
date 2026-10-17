@@ -10,8 +10,8 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  test:
-    name: Build and Test
+  test-x86_64:
+    name: Test x86_64 (Native)
     runs-on: ubuntu-22.04
 
     steps:
@@ -45,3 +45,50 @@ jobs:
 
       - name: Run tests
         run: cargo test --verbose
+
+  test-aarch64:
+    name: Test aarch64 (Cross & QEMU NEON)
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup multiarch aarch64 environment
+        run: sudo ./scripts/setup_cross_aarch64.sh
+
+      - name: Install QEMU user emulation
+        run: |
+          sudo apt-get install -y --no-install-recommends \
+            qemu-user-static
+
+      - name: Install Rust toolchain with aarch64 target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-gnu
+
+      - name: Cache Cargo dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: aarch64
+
+      - name: Build aarch64
+        env:
+          PKG_CONFIG_ALLOW_CROSS: "1"
+          PKG_CONFIG_PATH: "/usr/lib/aarch64-linux-gnu/pkgconfig"
+        run: cargo build --target aarch64-unknown-linux-gnu --verbose
+
+      - name: Run SIMD & unit tests with QEMU user emulation
+        env:
+          PKG_CONFIG_ALLOW_CROSS: "1"
+          PKG_CONFIG_PATH: "/usr/lib/aarch64-linux-gnu/pkgconfig"
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUNNER: "qemu-aarch64 -L /usr/aarch64-linux-gnu -E LD_LIBRARY_PATH=/usr/lib/aarch64-linux-gnu"
+        run: |
+          cargo test --target aarch64-unknown-linux-gnu \
+            --test unit_damage_tracker \
+            --test unit_compositor \
+            --test unit_sixel_encoder \
+            --test unit_keyboard \
+            --test unit_terminal \
+            --test unit_sgr_mouse \
+            --verbose

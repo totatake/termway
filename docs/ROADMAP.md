@@ -96,7 +96,26 @@ Pixman レンダリングと画像エンコード、標準出力フラッシュ�
 
 ---
 
-## 6. 完了済みマイルストーン一覧
+## 6. aarch64 ビルド & ARM NEON SIMD 対応（v0.8.0 実装済み）
+
+### 背景と課題
+ARM64 Linux（AWS Graviton、Raspberry Pi 4/5、Apple Silicon 上の Linux VM など）での利用ニーズが高まる中、これまでは x86_64 向けバイナリおよび AVX2 最適化のみが提供されており、AArch64 環境向けの公式ビルド成果物やハードウェアベクトルアクセラレーションが未対応でした。
+
+### 実装された構造（v0.8.0）
+- **ARM NEON SIMD ベクトル最適化 (`std::arch::aarch64`)**:
+  - **タイル差分ハッシュ計算 (`src/display/damage.rs`)**: `uint64x2_t` 64-bit レーン並列積和演算による NEON タイルハッシュ関数 `hash_tile_neon` を実装。
+  - **ピクセル色空間変換 (`src/display/framebuffer.rs`)**: 4 要素一括ロード/ストア命令 (`vld4q_u8` & `vst4q_u8`) を用いて、BGRX から RGBA へのチャンネル並べ替えと Alpha=255 付与を CPU レジスタ上で 16 ピクセル単位で瞬時に完結させる `copy_bgrx_to_rgba_neon` を実装。
+  - **Sixel RGB332 減色 & 6 行バンド走査 (`src/protocol/sixel.rs`)**: `quantize_rgb332_neon`（16 ピクセル一括減色）および `encode_band_color_neon`（`vceqq_u8` + 6 行重み加算による Sixel 6-bit ASCII ベクトル直接生成）を実装。
+- **Polkit Multiarch パス対応 (`src/session/mod.rs`)**:
+  - Debian/Ubuntu aarch64 の multiarch 配置パス（`/usr/lib/aarch64-linux-gnu/polkit-mate/...` 等）を `KNOWN_POLKIT_AGENTS` に追加。
+- **Ubuntu クロスビルド環境と CI/Release マトリクス (`.github/workflows/`, `scripts/setup_cross_aarch64.sh`)**:
+  - Ubuntu 22.04 LTS ホスト上で multiarch (`arm64`) と `gcc-aarch64-linux-gnu` を設定する自動化スクリプトを提供。
+  - GitHub Actions CI において QEMU user emulation による aarch64 単体テスト自動検証を追加。
+  - GitHub Release において `x86_64-unknown-linux-gnu` と `aarch64-unknown-linux-gnu` のバイナリおよびチェックサムを横並びで自動生成・配布するマトリクスワークフローを構築。
+
+---
+
+## 7. 完了済みマイルストーン一覧
 
 | マイルストーン | 項目 | 優先度 | 達成効果 | ステータス |
 | :--- | :--- | :---: | :--- | :---: |
@@ -110,13 +129,14 @@ Pixman レンダリングと画像エンコード、標準出力フラッシュ�
 | **フェーズ 6**（エラー型安全化） | 統一エラー列挙型 `TermwayError` (`src/error.rs`) の導入と `Box<dyn Error>` / `String` エラーの完全排除 | 中 | エラー伝播の型安全化、パターンマッチによるテスト容易性向上 | **実装済み (v0.6.0)** |
 | **フェーズ 7**（性能プロファイリング＆ストリームエンコーダ最適化） | パイプライン段別ベンチマーク (`tests/perf_pipeline.rs`) とランタイムプロファイラ (`--profile`) の導入、Sixel 6px ダーティバンドキャッシュ (`SixelStreamEncoder`)、Kitty ゼロアロケーション zlib リセット & Base64 ストリーミング (`KittyStreamEncoder`) | 最優先 | Sixel カーソル・部分更新レイテンシ 92〜95% 削減 (4.3ms→0.34ms)、Kitty 動的ヒープ確保ゼロ化 | **実装済み (v0.7.0)** |
 | **フェーズ 8**（統一ポーリング＆フレームペーシング＆モジュール分割） | `stdin` + `listener` + `display.backend().poll_fd()` の単一 `poll` 統合によるアイドル時 CPU 0% 化、`--fps` 目標フレームレート制御、Pixman レンダラ パス統合、`src/compositor/mod.rs` のサブモジュール分割 (`env.rs`, `taskbar.rs`, `profile.rs`, `screenshot.rs`, `window_manager.rs`) | 高 | アイドル時 CPU 負荷解消、高速コミット時の過度な再描画抑制、コンポジタ可読性・保守性向上 | **実装済み (v0.7.0)** |
+| **フェーズ 9**（aarch64 ビルド & ARM NEON SIMD 対応） | ARM64 Linux 向け NEON ベクトル最適化（Damage / Sixel / BGRX 変換）、Ubuntu 22.04 LTS クロスビルド環境整備、CI QEMU テスト & Release マトリクス配布 | 高 | AWS Graviton / Apple Silicon / Raspberry Pi 等でのネイティブ高速動作、x86_64/aarch64 横並びリリース配布 | **実装済み (v0.8.0)** |
 
 ---
 
-## 7. 今後の展望 (Future Horizons)
+## 8. 今後の展望 (Future Horizons)
 
 | テーマ | 概要 | 期待される価値 |
 | :--- | :--- | :--- |
-| **`aarch64` ビルド & ARM NEON SIMD 対応** | ARM64 Linux サーバー（AWS Graviton、Apple Silicon Linux VM、Raspberry Pi 等）向けのビルド検証および `std::arch::aarch64` (NEON) を用いた Damage / Sixel / BGRX 変換のベクトル高速化 | ARM64 クラウドインスタンスやエッジ環境でのネイティブ高速動作 |
 | **Kitty 部分矩形プレースメント転送** | `DamageTracker` の汚損バウンディングボックスが画面全体の一定割合以下の場合に、フルフレームではなく部分サブイメージ (`x=...,y=...,w=...,h=...`) のみを圧縮転送 | 高解像度（4K等）端末での微小更新時における zlib 圧縮コストのさらなる低減 |
 | **Wayland Fractional Scale / HiDPI 制御** | `wp_fractional_scale_v1` / `wp_viewporter` プロトコル対応および出力スケールオプション (`--scale`) の導入 | Retina / 高 DPI ターミナル環境でのフォント・UI 視認性向上 |
+

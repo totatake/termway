@@ -48,7 +48,13 @@ impl SixelEncoder {
                 }
             }
         }
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(target_arch = "aarch64")]
+        {
+            unsafe {
+                Self::quantize_rgb332_neon(rgba, &mut quantized[..total_pixels], &mut used_colors);
+            }
+        }
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         {
             for (i, pixel) in rgba.chunks_exact(4).take(total_pixels).enumerate() {
                 let idx = Self::quantize_pixel_rgb332(pixel[0], pixel[1], pixel[2]);
@@ -221,6 +227,17 @@ impl SixelEncoder {
                 if has_avx2 && end_col >= start_col + 32 {
                     unsafe {
                         Self::encode_band_color_avx2(
+                            out, r0, r1, r2, r3, r4, r5, c_u8, start_col, end_col,
+                        );
+                    }
+                    out.push(b'$');
+                    continue;
+                }
+
+                #[cfg(target_arch = "aarch64")]
+                if end_col >= start_col + 16 {
+                    unsafe {
+                        Self::encode_band_color_neon(
                             out, r0, r1, r2, r3, r4, r5, c_u8, start_col, end_col,
                         );
                     }
@@ -432,6 +449,10 @@ impl SixelEncoder {
         }
     }
 
+    /// Quantizes an RGBA pixel buffer into RGB332 indices using AVX2.
+    ///
+    /// # Safety
+    /// Caller must ensure AVX2 is supported by the host CPU and enabled.
     #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "avx2")]
     pub unsafe fn quantize_rgb332_avx2_slice(
@@ -660,6 +681,214 @@ impl SixelEncoder {
             Self::emit_rle(out, run_char, run_len);
         }
     }
+
+    #[cfg(target_arch = "aarch64")]
+    unsafe fn quantize_rgb332_neon(
+        rgba: &[u8],
+        quantized: &mut [u8],
+        used_colors: &mut [bool; 256],
+    ) {
+        use std::arch::aarch64::*;
+
+        let total_pixels = quantized.len().min(rgba.len() / 4);
+        let src_ptr = rgba.as_ptr();
+        let dst_ptr = quantized.as_mut_ptr();
+
+        let mask_e0 = vdupq_n_u8(0xE0);
+        let gray_thresh = vdupq_n_u8(13);
+
+        let mut i = 0usize;
+        let mut tmp = [0u8; 16];
+
+        while i + 16 <= total_pixels {
+            let v = vld4q_u8(src_ptr.add(i * 4));
+            let r8 = v.0;
+            let g8 = v.1;
+            let b8 = v.2;
+
+            let r_top = vandq_u8(r8, mask_e0);
+            let g_top = vandq_u8(g8, mask_e0);
+            let b_top = vshrq_n_u8(b8, 6);
+            let color_idx = vorrq_u8(vorrq_u8(r_top, vshrq_n_u8(g_top, 3)), b_top);
+
+            let max_c = vmaxq_u8(r8, vmaxq_u8(g8, b8));
+            let min_c = vminq_u8(r8, vminq_u8(g8, b8));
+            let diff = vsubq_u8(max_c, min_c);
+            let is_gray = vcltq_u8(diff, gray_thresh);
+
+            let gray_idx = vorrq_u8(
+                vorrq_u8(g_top, vshrq_n_u8(g_top, 3)),
+                vshrq_n_u8(g_top, 6),
+            );
+            let final_idx = vbslq_u8(is_gray, gray_idx, color_idx);
+            vst1q_u8(dst_ptr.add(i), final_idx);
+            vst1q_u8(tmp.as_mut_ptr(), final_idx);
+            for &idx in &tmp {
+                used_colors[idx as usize] = true;
+            }
+
+            i += 16;
+        }
+
+        while i < total_pixels {
+            let p = i * 4;
+            let idx = Self::quantize_pixel_rgb332(rgba[p], rgba[p + 1], rgba[p + 2]);
+            quantized[i] = idx;
+            used_colors[idx as usize] = true;
+            i += 1;
+        }
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    pub unsafe fn quantize_rgb332_neon_slice(
+        rgba: &[u8],
+        quantized: &mut [u8],
+    ) {
+        use std::arch::aarch64::*;
+
+        let total_pixels = quantized.len().min(rgba.len() / 4);
+        let src_ptr = rgba.as_ptr();
+        let dst_ptr = quantized.as_mut_ptr();
+
+        let mask_e0 = vdupq_n_u8(0xE0);
+        let gray_thresh = vdupq_n_u8(13);
+
+        let mut i = 0usize;
+        while i + 16 <= total_pixels {
+            let v = vld4q_u8(src_ptr.add(i * 4));
+            let r8 = v.0;
+            let g8 = v.1;
+            let b8 = v.2;
+
+            let r_top = vandq_u8(r8, mask_e0);
+            let g_top = vandq_u8(g8, mask_e0);
+            let b_top = vshrq_n_u8(b8, 6);
+            let color_idx = vorrq_u8(vorrq_u8(r_top, vshrq_n_u8(g_top, 3)), b_top);
+
+            let max_c = vmaxq_u8(r8, vmaxq_u8(g8, b8));
+            let min_c = vminq_u8(r8, vminq_u8(g8, b8));
+            let diff = vsubq_u8(max_c, min_c);
+            let is_gray = vcltq_u8(diff, gray_thresh);
+
+            let gray_idx = vorrq_u8(
+                vorrq_u8(g_top, vshrq_n_u8(g_top, 3)),
+                vshrq_n_u8(g_top, 6),
+            );
+            let final_idx = vbslq_u8(is_gray, gray_idx, color_idx);
+            vst1q_u8(dst_ptr.add(i), final_idx);
+
+            i += 16;
+        }
+
+        while i < total_pixels {
+            let p = i * 4;
+            let idx = Self::quantize_pixel_rgb332(rgba[p], rgba[p + 1], rgba[p + 2]);
+            quantized[i] = idx;
+            i += 1;
+        }
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    #[allow(clippy::too_many_arguments)]
+    unsafe fn encode_band_color_neon(
+        out: &mut Vec<u8>,
+        r0: &[u8],
+        r1: &[u8],
+        r2: &[u8],
+        r3: &[u8],
+        r4: &[u8],
+        r5: &[u8],
+        c_u8: u8,
+        start_col: usize,
+        end_col: usize,
+    ) {
+        use std::arch::aarch64::*;
+
+        let c_vec = vdupq_n_u8(c_u8);
+        let b0_weight = vdupq_n_u8(1);
+        let b1_weight = vdupq_n_u8(2);
+        let b2_weight = vdupq_n_u8(4);
+        let b3_weight = vdupq_n_u8(8);
+        let b4_weight = vdupq_n_u8(16);
+        let b5_weight = vdupq_n_u8(32);
+        let base_char = vdupq_n_u8(63);
+
+        let mut run_char = 0u8;
+        let mut run_len = 0usize;
+        let mut x = start_col;
+        let mut chars = [0u8; 16];
+
+        while x + 16 <= end_col {
+            let v0 = vld1q_u8(r0.as_ptr().add(x));
+            let v1 = vld1q_u8(r1.as_ptr().add(x));
+            let v2 = vld1q_u8(r2.as_ptr().add(x));
+            let v3 = vld1q_u8(r3.as_ptr().add(x));
+            let v4 = vld1q_u8(r4.as_ptr().add(x));
+            let v5 = vld1q_u8(r5.as_ptr().add(x));
+
+            let m0 = vandq_u8(vceqq_u8(v0, c_vec), b0_weight);
+            let m1 = vandq_u8(vceqq_u8(v1, c_vec), b1_weight);
+            let m2 = vandq_u8(vceqq_u8(v2, c_vec), b2_weight);
+            let m3 = vandq_u8(vceqq_u8(v3, c_vec), b3_weight);
+            let m4 = vandq_u8(vceqq_u8(v4, c_vec), b4_weight);
+            let m5 = vandq_u8(vceqq_u8(v5, c_vec), b5_weight);
+
+            let sixel_bits = vorrq_u8(
+                vorrq_u8(vorrq_u8(m0, m1), vorrq_u8(m2, m3)),
+                vorrq_u8(m4, m5),
+            );
+
+            // Fast path: all 16 columns are blank (character 63 / '?')
+            if vmaxvq_u8(sixel_bits) == 0 {
+                if run_char == 63 {
+                    run_len += 16;
+                } else {
+                    Self::emit_rle(out, run_char, run_len);
+                    run_char = 63;
+                    run_len = 16;
+                }
+                x += 16;
+                continue;
+            }
+
+            let sixel_chars = vaddq_u8(sixel_bits, base_char);
+            vst1q_u8(chars.as_mut_ptr(), sixel_chars);
+
+            for &ch in &chars {
+                if ch == run_char {
+                    run_len += 1;
+                } else {
+                    Self::emit_rle(out, run_char, run_len);
+                    run_char = ch;
+                    run_len = 1;
+                }
+            }
+
+            x += 16;
+        }
+
+        while x < end_col {
+            let mask = ((r0[x] == c_u8) as u8)
+                | (((r1[x] == c_u8) as u8) << 1)
+                | (((r2[x] == c_u8) as u8) << 2)
+                | (((r3[x] == c_u8) as u8) << 3)
+                | (((r4[x] == c_u8) as u8) << 4)
+                | (((r5[x] == c_u8) as u8) << 5);
+            let ch = 63 + mask;
+            if ch == run_char {
+                run_len += 1;
+            } else {
+                Self::emit_rle(out, run_char, run_len);
+                run_char = ch;
+                run_len = 1;
+            }
+            x += 1;
+        }
+
+        if run_char != 63 {
+            Self::emit_rle(out, run_char, run_len);
+        }
+    }
 }
 
 /// Stateful Sixel encoder that caches encoded 6-pixel bands
@@ -761,6 +990,14 @@ impl SixelStreamEncoder {
                     for (i, pixel) in rgba_slice.chunks_exact(4).enumerate() {
                         quant_slice[i] = SixelEncoder::quantize_pixel_rgb332(pixel[0], pixel[1], pixel[2]);
                     }
+                }
+                #[cfg(target_arch = "aarch64")]
+                unsafe {
+                    SixelEncoder::quantize_rgb332_neon_slice(rgba_slice, quant_slice);
+                }
+                #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+                for (i, pixel) in rgba_slice.chunks_exact(4).enumerate() {
+                    quant_slice[i] = SixelEncoder::quantize_pixel_rgb332(pixel[0], pixel[1], pixel[2]);
                 }
 
                 // Encode band into cache

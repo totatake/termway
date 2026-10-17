@@ -120,7 +120,7 @@ flowchart LR
 | **NFR-2** | 堅牢性・端末保護 | プログラムが異常終了しても、端末のRawモードやマウストラッキングが残留してシェルが壊れる事故を100%防止すること。 | `RawModeGuard::drop` の RAII パターンにより保証 |
 | **NFR-3** | 依存関係の最小化 | C `libx11` / `Xvfb` / `openbox` への依存を排除し、Smithay + XWayland の単一バイナリとして動作すること。 | v0.6.0 にてレガシー Xvfb エンジンおよび `x11` クレート依存を完全排除 |
 | **NFR-4** | モジュール構造・テスタビリティ | `WindowManager` やプロトコルハンドラ群がドメイン分割され、全テストが外部 Xvfb サーバー不要で高速に実行できること。 | 全 85 テストが約 0.35 秒で完走 |
-| **NFR-5** | SIMD ベクトル高速化 | `x86_64` 環境において AVX2 SIMD 命令を実行時検出し、タイル差分ハッシュ計算、Sixel RGB332 減色・6行バンド走査、BGRX→RGBA ピクセル変換をベクトル高速化すること。 | 1080x720 差分スキャン約 0.20ms、Sixel エンコード約 3.78ms を達成 |
+| **NFR-5** | SIMD ベクトル高速化 | `x86_64` (AVX2) および `aarch64` (ARM NEON) 環境において、タイル差分ハッシュ計算、Sixel RGB332 減色・6行バンド走査、BGRX→RGBA ピクセル変換をベクトル高速化すること。 | 1080x720 差分スキャン約 0.20ms、Sixel エンコード約 3.78ms を達成（x86_64 AVX2 および aarch64 ARM NEON 両対応） |
 
 ---
 
@@ -131,8 +131,8 @@ flowchart LR
 | `tests/unit_compositor.rs` | 28 | `TermwayState` / `WindowManager` ドメイン操作、SSD/CSD 装飾、最大化・80%中央復元・最小化、動的リサイズ (`SIGWINCH`)、OSC 52 クリップボード送信、マウスホイール、スプラッシュ描画・消去、JSON 状態ダンプ、UTF-8 日本語入力 |
 | `tests/unit_session.rs` | 7 | ハイブリッド D-Bus セッション起動、Snap コマンド判定・PATH シムルーティング、Polkit エージェント検出、コマンド存在性検証、`/tmp/.X11-unix` 書込検査 |
 | `tests/unit_kitty_encoder.rs` | 7 | Kitty フルスクリーン RFC 1950 zlib 圧縮 (`o=z`)・4096B チャンク分割・ラウンドトリップ解凍検証、1080x720 パフォーマンス検証 |
-| `tests/unit_sixel_encoder.rs` | 7 | Sixel AVX2 SIMD 減色・6行バンド走査・単色バンド高速パス・RLE 圧縮・非8倍数幅エッジケース、6行バンド差分キャッシュ (`SixelStreamEncoder`)、1080x720 パフォーマンス検証 |
-| `tests/unit_damage_tracker.rs` | 6 | 32x32 タイル FNV-1a ハッシュ比較、AVX2 SIMD 端数タイル一致検証、リセット・リサイズ検証 |
+| `tests/unit_sixel_encoder.rs` | 7 | Sixel AVX2 / ARM NEON SIMD 減色・6行バンド走査・単色バンド高速パス・RLE 圧縮・非8倍数幅エッジケース、6行バンド差分キャッシュ (`SixelStreamEncoder`)、1080x720 パフォーマンス検証 |
+| `tests/unit_damage_tracker.rs` | 6 | 32x32 タイル FNV-1a ハッシュ比較、AVX2 / ARM NEON SIMD 端数タイル一致検証、リセット・リサイズ検証 |
 | `tests/unit_sgr_mouse.rs` | 6 | SGR 1006 クリック・ドラッグ・リリース・ホイール・修飾キー・不正シーケンス耐性検証 |
 | `tests/integration_pipeline.rs` | 7 | Framebuffer → DamageTracker → Kitty エンコード結合検証、マウス座標変換、プロトコル自動検出、`--version` / `-V` 検証 |
 | `tests/unit_keyboard.rs` | 5 | UTF-8 文字、矢印キー、Ctrl 制御文字、Shift/Ctrl 修飾キー付きカーソル・選択キー、日本語 UTF-8 複数バイト解析検証 |
