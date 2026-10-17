@@ -41,6 +41,45 @@ pub fn query_graphics_protocol() -> GraphicsProtocol {
         return GraphicsProtocol::Sixel;
     }
 
+    query_graphics_protocol_via_da()
+}
+
+/// Returns whether the host terminal emulator is known to support SGR-Pixels mouse mode (DECSET 1016).
+/// Supported by Kitty, WezTerm, Foot, Ghostty, and xterm (#359+).
+pub fn supports_pixel_mouse() -> bool {
+    if let Ok(term) = env::var("TERM") {
+        let term_lower = term.to_lowercase();
+        if term_lower.contains("kitty")
+            || term_lower.contains("wezterm")
+            || term_lower.contains("foot")
+            || term_lower.contains("ghostty")
+            || term_lower.contains("xterm")
+        {
+            return true;
+        }
+    }
+    if let Ok(tp) = env::var("TERM_PROGRAM") {
+        let tp = tp.to_lowercase();
+        if tp.contains("wezterm")
+            || tp.contains("ghostty")
+            || tp.contains("kitty")
+            || tp.contains("foot")
+        {
+            return true;
+        }
+    }
+    if env::var("KITTY_WINDOW_ID").is_ok()
+        || env::var("KITTY_PID").is_ok()
+        || env::var("WEZTERM_PANE").is_ok()
+        || env::var("FOOT_SERVER_SOCKET").is_ok()
+        || env::var("GHOSTTY_RESOURCES_DIR").is_ok()
+    {
+        return true;
+    }
+    false
+}
+
+fn query_graphics_protocol_via_da() -> GraphicsProtocol {
     // 2. Terminal querying via escape sequence
     let stdin_fd = io::stdin().as_raw_fd();
     if unsafe { libc::isatty(stdin_fd) } != 1 {

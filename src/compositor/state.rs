@@ -111,6 +111,7 @@ pub struct TermwayState {
     pub splash_info: String,
     pub splash_command: String,
     pub start_time: std::time::Instant,
+    pub pixel_mouse: bool,
 }
 
 impl TermwayState {
@@ -213,6 +214,7 @@ impl TermwayState {
             },
             splash_command: String::from("gui-app"),
             start_time: std::time::Instant::now(),
+            pixel_mouse: false,
         };
         state.init_unicode_keymap_cache();
         state

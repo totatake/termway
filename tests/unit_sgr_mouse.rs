@@ -67,3 +67,20 @@ fn test_sgr_mouse_invalid_inputs() {
     assert!(SgrMouseParser::parse("\x1b[<0;0M").is_none()); // only 2 numbers
     assert!(SgrMouseParser::parse("\x1b[<a;b;cM").is_none()); // non-numeric
 }
+
+#[test]
+fn test_sgr_mouse_pixel_coordinates() {
+    let input = "\x1b[<0;1920;1080M";
+    let (event, len) = SgrMouseParser::parse(input).expect("Failed to parse high pixel coordinates");
+    assert_eq!(len, input.len());
+    assert_eq!(event.col, 1920);
+    assert_eq!(event.row, 1080);
+    assert_eq!(event.button, MouseButton::Left);
+    assert_eq!(event.action, MouseAction::Press);
+}
+
+#[test]
+fn test_supports_pixel_mouse_query() {
+    // Should run without panic regardless of environment
+    let _ = termway::terminal::supports_pixel_mouse();
+}
