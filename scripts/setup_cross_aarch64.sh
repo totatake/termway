@@ -71,7 +71,8 @@ apt-get install -y --no-install-recommends \
     libc6-dev-arm64-cross \
     pkg-config \
     libpixman-1-dev:arm64 \
-    libwayland-dev:arm64
+    libwayland-dev:arm64 \
+    libxkbcommon-dev:arm64
 
 echo "Multiarch cross-compilation setup completed successfully."
 
