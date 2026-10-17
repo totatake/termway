@@ -58,12 +58,13 @@ impl RawModeGuard {
         // \x1b[?1003h: Any-event mouse tracking (motion even without button pressed)
         // \x1b[?1006h: SGR extended mode
         // \x1b[?1016h: SGR pixel mode (1px precision on xterm/kitty/wezterm/foot/ghostty)
+        // \x1b]22;default\x07: Set mouse cursor shape to default pointer
         // \x1b[?2004h: Enable bracketed paste mode
         // \x1b[?7l: Disable auto-wrap to prevent scrolling on bottom-right text/images
         // \x1b[2J\x1b[H\x1b[16t\x1b[14t: Clear screen, home, and query cell/window size
         write!(
             stdout,
-            "\x1b[?1049h\x1b[?25l\x1b[?1000h\x1b[?1003h\x1b[?1006h\x1b[?1016h\x1b[?2004h\x1b[?7l\x1b[2J\x1b[H\x1b[16t\x1b[14t"
+            "\x1b[?1049h\x1b[?25l\x1b[?1000h\x1b[?1003h\x1b[?1006h\x1b[?1016h\x1b]22;default\x07\x1b[?2004h\x1b[?7l\x1b[2J\x1b[H\x1b[16t\x1b[14t"
         )?;
         stdout.flush()
     }
@@ -76,10 +77,10 @@ impl RawModeGuard {
         self.active = false;
 
         let mut stdout = io::stdout();
-        // Disable bracketed paste, disable SGR pixel & cell mouse tracking, enable auto-wrap, show cursor, leave alternate screen
+        // Reset mouse cursor shape (OSC 22), disable bracketed paste, disable SGR pixel & cell mouse tracking, enable auto-wrap, show cursor, leave alternate screen
         let _ = write!(
             stdout,
-            "\x1b[?2004l\x1b[?1016l\x1b[?1006l\x1b[?1003l\x1b[?1000l\x1b[?7h\x1b[?25h\x1b[?1049l"
+            "\x1b]22;\x07\x1b[?2004l\x1b[?1016l\x1b[?1006l\x1b[?1003l\x1b[?1000l\x1b[?7h\x1b[?25h\x1b[?1049l"
         );
         let _ = stdout.flush();
 

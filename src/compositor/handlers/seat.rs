@@ -63,7 +63,24 @@ impl SeatHandler for TermwayState {
             }
         }
     }
-    fn cursor_image(&mut self, _seat: &Seat<Self>, _image: smithay::input::pointer::CursorImageStatus) {}
+
+    fn cursor_image(&mut self, _seat: &Seat<Self>, image: smithay::input::pointer::CursorImageStatus) {
+        if !matches!(self.wm.drag_state, crate::compositor::window::WindowDragState::None) {
+            return;
+        }
+        match image {
+            smithay::input::pointer::CursorImageStatus::Hidden => {
+                self.update_cursor_shape("none");
+            }
+            smithay::input::pointer::CursorImageStatus::Named(icon) => {
+                let name = icon.name();
+                self.update_cursor_shape(name);
+            }
+            smithay::input::pointer::CursorImageStatus::Surface(_) => {
+                // Client provides custom surface; default cursor is fallback
+            }
+        }
+    }
 }
 
 // 6. zwp_text_input_v3 (Wayland native IME / UTF-8 text input)

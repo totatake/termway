@@ -9,6 +9,8 @@
 //!
 //! Protocol handler trait implementations live in `compositor::handlers`.
 
+use std::io::Write;
+
 use smithay::{
     desktop::PopupManager,
     input::{keyboard::KeyboardHandle, pointer::PointerHandle, Seat, SeatState},
@@ -112,6 +114,7 @@ pub struct TermwayState {
     pub splash_command: String,
     pub start_time: std::time::Instant,
     pub pixel_mouse: bool,
+    pub current_cursor_shape: String,
 }
 
 impl TermwayState {
@@ -215,9 +218,21 @@ impl TermwayState {
             splash_command: String::from("gui-app"),
             start_time: std::time::Instant::now(),
             pixel_mouse: false,
+            current_cursor_shape: String::from("default"),
         };
         state.init_unicode_keymap_cache();
         state
+    }
+
+    /// Dynamically synchronizes host terminal mouse cursor shape via OSC 22 (`\x1b]22;<name>\x07`).
+    /// Deduplicates emissions to avoid unnecessary terminal I/O when cursor shape is unchanged.
+    pub fn update_cursor_shape(&mut self, shape: &str) {
+        if self.current_cursor_shape != shape {
+            self.current_cursor_shape = shape.to_string();
+            let mut stdout = std::io::stdout();
+            let _ = write!(stdout, "\x1b]22;{}\x07", shape);
+            let _ = stdout.flush();
+        }
     }
 
     /// Initializes the base XKB keymap string and discovers spare XKB keycodes (140..=247)

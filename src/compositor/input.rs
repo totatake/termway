@@ -553,6 +553,7 @@ pub fn dispatch_mouse_event(
             // 1. Process active window dragging (Moving or Resizing)
             match state.wm.drag_state {
                 WindowDragState::Moving { start_cursor, start_window_pos } => {
+                    state.update_cursor_shape("grabbing");
                     let dx = (loc_x - start_cursor.0).round() as i32;
                     let dy = (loc_y - start_cursor.1).round() as i32;
                     if dx.abs() > 3 || dy.abs() > 3 {
@@ -572,6 +573,7 @@ pub fn dispatch_mouse_event(
                     return;
                 }
                 WindowDragState::Resizing { start_cursor, start_window_geo } => {
+                    state.update_cursor_shape("nwse-resize");
                     let dw = (loc_x - start_cursor.0).round() as i32;
                     let dh = (loc_y - start_cursor.1).round() as i32;
                     if let Some(top_win) = state.wm.windows.last_mut() {
@@ -585,7 +587,36 @@ pub fn dispatch_mouse_event(
                     }
                     return;
                 }
-                WindowDragState::None => {}
+                WindowDragState::None => {
+                    let mut cursor_shape = "default";
+                    for win in state.wm.windows.iter().rev() {
+                        if win.is_minimized {
+                            continue;
+                        }
+                        if win.has_ssd {
+                            if win.close_button_hit_geometry().contains(loc_i32)
+                                || win.maximize_button_hit_geometry().contains(loc_i32)
+                                || win.minimize_button_hit_geometry().contains(loc_i32)
+                            {
+                                cursor_shape = "pointer";
+                                break;
+                            }
+                            if !win.is_maximized && win.resize_handle_hit_geometry().contains(loc_i32) {
+                                cursor_shape = "nwse-resize";
+                                break;
+                            }
+                            if win.titlebar_geometry().contains(loc_i32) {
+                                cursor_shape = "grab";
+                                break;
+                            }
+                        }
+                        if win.content_geometry().contains(loc_i32) {
+                            cursor_shape = "default";
+                            break;
+                        }
+                    }
+                    state.update_cursor_shape(cursor_shape);
+                }
             }
 
             // 2. Normal pointer motion: check popups, managed windows, and fallback
@@ -781,6 +812,7 @@ pub fn dispatch_mouse_event(
                             start_cursor: (loc_x, loc_y),
                             start_window_pos: (win_loc.x, win_loc.y),
                         };
+                        state.update_cursor_shape("grabbing");
                     }
                     state.dirty = true;
                     return;
@@ -791,6 +823,7 @@ pub fn dispatch_mouse_event(
                         start_cursor: (loc_x, loc_y),
                         start_window_geo: win_geo,
                     };
+                    state.update_cursor_shape("nwse-resize");
                     state.dirty = true;
                     return;
                 }
@@ -849,6 +882,7 @@ pub fn dispatch_mouse_event(
             state.wm.drag_state = WindowDragState::None;
 
             if was_dragging {
+                state.update_cursor_shape("default");
                 state.dirty = true;
                 return;
             }

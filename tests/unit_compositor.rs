@@ -390,6 +390,82 @@ fn test_compositor_pixel_mouse_dispatch() {
 }
 
 #[test]
+fn test_compositor_cursor_shape_synchronization() {
+    use smithay::utils::{Point, Size};
+    use termway::compositor::input::dispatch_mouse_event;
+    use termway::compositor::window::ManagedWindow;
+    use termway::protocol::{MouseAction, MouseButton, MouseEvent};
+
+    let display = Display::<TermwayState>::new().expect("Failed to create Wayland Display");
+    let dh = display.handle();
+
+    let mut state = TermwayState::new(&dh, 800, 600, true);
+    state.pixel_mouse = true;
+    assert_eq!(state.current_cursor_shape, "default");
+
+    // Add a window at (100, 100), size (400, 300) with SSD
+    let mut win = ManagedWindow::new_dummy(1, "Test Win".into(), Point::from((100, 100)), Size::from((400, 300)));
+    win.has_ssd = true;
+    state.wm.windows.push(win);
+
+    let mut child = None;
+
+    // Hover over titlebar (e.g. at x=200, y=90) -> should be "grab"
+    let hover_titlebar = MouseEvent {
+        button: MouseButton::None,
+        action: MouseAction::Move,
+        col: 201, // px = 200
+        row: 91,  // py = 90
+        shift: false,
+        meta: false,
+        ctrl: false,
+    };
+    dispatch_mouse_event(&mut state, 800, 600, 80, 24, &hover_titlebar, &mut child);
+    assert_eq!(state.current_cursor_shape, "grab");
+
+    // Hover over resize handle (bottom-right: win is at 100,100, size 400x300, so bottom-right is ~500, 400)
+    let resize_rect = state.wm.windows[0].resize_handle_hit_geometry();
+    let hover_resize = MouseEvent {
+        button: MouseButton::None,
+        action: MouseAction::Move,
+        col: (resize_rect.loc.x + 5 + 1) as u16,
+        row: (resize_rect.loc.y + 5 + 1) as u16,
+        shift: false,
+        meta: false,
+        ctrl: false,
+    };
+    dispatch_mouse_event(&mut state, 800, 600, 80, 24, &hover_resize, &mut child);
+    assert_eq!(state.current_cursor_shape, "nwse-resize");
+
+    // Hover over close button
+    let close_rect = state.wm.windows[0].close_button_hit_geometry();
+    let hover_close = MouseEvent {
+        button: MouseButton::None,
+        action: MouseAction::Move,
+        col: (close_rect.loc.x + 2 + 1) as u16,
+        row: (close_rect.loc.y + 2 + 1) as u16,
+        shift: false,
+        meta: false,
+        ctrl: false,
+    };
+    dispatch_mouse_event(&mut state, 800, 600, 80, 24, &hover_close, &mut child);
+    assert_eq!(state.current_cursor_shape, "pointer");
+
+    // Hover over background -> should be "default"
+    let hover_bg = MouseEvent {
+        button: MouseButton::None,
+        action: MouseAction::Move,
+        col: 21,
+        row: 21,
+        shift: false,
+        meta: false,
+        ctrl: false,
+    };
+    dispatch_mouse_event(&mut state, 800, 600, 80, 24, &hover_bg, &mut child);
+    assert_eq!(state.current_cursor_shape, "default");
+}
+
+#[test]
 fn test_window_maximize_and_unmaximize() {
     use smithay::utils::{Point, Size};
     use termway::compositor::window::{ManagedWindow, BORDER_WIDTH, TITLEBAR_HEIGHT};
