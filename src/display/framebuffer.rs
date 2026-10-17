@@ -62,6 +62,7 @@ impl Framebuffer {
             return;
         }
 
+        #[cfg(not(target_arch = "aarch64"))]
         for y in 0..h {
             let row_offset = (y as usize) * bytes_per_line;
             let dst_row_start = (y * w * 4) as usize;

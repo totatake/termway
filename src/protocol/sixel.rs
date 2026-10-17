@@ -94,6 +94,8 @@ impl SixelEncoder {
         let mut band_colors = Vec::with_capacity(32);
         #[cfg(target_arch = "x86_64")]
         let has_avx2 = std::is_x86_feature_detected!("avx2");
+        #[cfg(not(target_arch = "x86_64"))]
+        let has_avx2 = false;
 
         // 3. Process 6-pixel high bands
         for band_y in (0..height).step_by(6) {
@@ -158,7 +160,7 @@ impl SixelEncoder {
         has_next_band: bool,
         out: &mut Vec<u8>,
         band_colors: &mut Vec<u8>,
-        has_avx2: bool,
+        _has_avx2: bool,
     ) {
         let num_rows = (max_y - start_y) as u8;
         band_colors.clear();
@@ -224,7 +226,7 @@ impl SixelEncoder {
                 }
 
                 #[cfg(target_arch = "x86_64")]
-                if has_avx2 && end_col >= start_col + 32 {
+                if _has_avx2 && end_col >= start_col + 32 {
                     unsafe {
                         Self::encode_band_color_avx2(
                             out, r0, r1, r2, r3, r4, r5, c_u8, start_col, end_col,
