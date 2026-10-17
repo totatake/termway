@@ -60,7 +60,11 @@ jobs:
       - name: Install QEMU user emulation
         run: |
           sudo apt-get install -y --no-install-recommends \
+            qemu-user \
             qemu-user-static
+          if ! command -v qemu-aarch64 &>/dev/null && command -v qemu-aarch64-static &>/dev/null; then
+            sudo ln -sf "$(command -v qemu-aarch64-static)" /usr/local/bin/qemu-aarch64
+          fi
 
       - name: Install Rust toolchain with aarch64 target
         uses: dtolnay/rust-toolchain@stable
@@ -82,7 +86,7 @@ jobs:
         env:
           PKG_CONFIG_ALLOW_CROSS: "1"
           PKG_CONFIG_PATH: "/usr/lib/aarch64-linux-gnu/pkgconfig"
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUNNER: "qemu-aarch64 -L /usr/aarch64-linux-gnu -E LD_LIBRARY_PATH=/usr/lib/aarch64-linux-gnu"
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUNNER: "qemu-aarch64 -L /usr/aarch64-linux-gnu -E LD_LIBRARY_PATH=/usr/lib/aarch64-linux-gnu:/lib/aarch64-linux-gnu:/usr/aarch64-linux-gnu/lib"
         run: |
           cargo test --target aarch64-unknown-linux-gnu \
             --test unit_damage_tracker \
