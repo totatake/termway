@@ -1,6 +1,6 @@
 [package]
 name = "termway"
-version = "0.9.0"
+version = "0.10.0"
 edition = "2021"
 authors = ["termway developers"]
 description = "In-terminal Wayland and X11 GUI bridge powered by Smithay"

@@ -13,9 +13,11 @@
 - **In-Terminal GUI Execution**:
   - High-definition inline rendering using **Kitty Graphics Protocol** and **Sixel Graphics Protocol**. Works with terminals on Linux, macOS (iTerm2, Ghostty, Kitty), and Windows Terminal!
   - Run full graphical tools over a single standard SSH connection (single PTY), even in bastion hosts, air-gapped environments, or cloud VMs where port forwarding (`AllowTcpForwarding no`) is blocked.
-- **Full Mouse & Keyboard Interaction (Hover & Resize Support)**:
+- **Full Mouse & Keyboard Interaction (Hover, Resize & Cursor Shape Support)**:
   - Supports **xterm SGR 1006 mouse protocol (Any-event 1003h)**: Detects left/middle/right clicks, dragging, scrolling, and cursor hover motion.
   - Automatically queries **SGR 14t (Report text area size in pixels)** on startup to calculate exact font cell dimensions, achieving 1:1 pixel-perfect cursor tracking and aspect ratio with zero coordinate drift.
+  - **OSC 22 Mouse Cursor Shape Synchronization**: Dynamically synchronizes terminal mouse cursor shapes (`\x1b]22;<name>\x07`) to reflect window borders, resize handles (`nwse-resize`), titlebar drag (`grab`), and buttons (`pointer`).
+  - **Kitty Keyboard Protocol**: Supports progressive keyboard enhancement (`\x1b[>1u`), providing unambiguous modifier combinations and special escape sequences without breaking standard terminals.
   - Native Wayland pointer and keyboard events dispatched via Smithay `Seat` to Wayland and XWayland clients.
   - Non-blocking keyboard input forwarding for arrow keys, Ctrl shortcuts (e.g. `Ctrl-U`, `Ctrl-W`), Enter, Tab, and Backspace.
 - **Event-Driven Tile Damage Tracking**:
@@ -29,8 +31,11 @@
   - Full support for window **Maximization** (via `[□]` button or titlebar double-click) and **Minimization** (via `[-]` button into the bottom row taskbar).
   - Integrated bottom taskbar with interactive clickable chips (`[1: AppName]` / `[1: AppName _]`) allowing instant un-minimizing, raising, and toggling of active windows.
   - Screen boundary clamping mechanism prevents windows and Sixel graphics from being clipped at the right or bottom terminal edges.
-- **Bidirectional Host Clipboard Synchronization (`Ctrl-C` / `Ctrl-V`)**:
+- **Bidirectional Host Clipboard Synchronization & Primary Selection (`Ctrl-C` / `Ctrl-V` / Middle Click)**:
   - Full support for OSC 52 and Bracketed Paste protocols. Seamless bidirectional copy-and-paste between in-terminal GUI apps and the host OS (Windows, macOS, Linux), including full multibyte / UTF-8 text support.
+  - Full support for **Wayland Primary Selection** (`zwp_primary_selection_v1` / `gtk_primary_selection`): copy on text highlight and paste via middle mouse click.
+- **Terminal Window & Tab Title Synchronization (OSC 2)**:
+  - Automatically synchronizes the active GUI window title to the host terminal's window and tab title bar (`\x1b]2;termway: <Title>\x07`), and cleanly restores the previous title upon exit.
 - **One-Key Screenshot (`F12`) & Clean Exit (`Ctrl-Q`)**:
   - Instant PNG capture via `F12`. Safe terminal state restoration and clean teardown via `Ctrl-Q`.
 
@@ -257,6 +262,7 @@ export TERMWAY_CELL_SIZE=10x22
 | `F12` | One-Key Screenshot | Instantly saves the current GUI frame as a high-resolution PNG image (configurable via `TERMWAY_SCREENSHOT_DIR`, defaults to current directory) |
 | `Ctrl-C` / Mouse Selection | Copy to Clipboard | Synchronizes the selected text to the host OS clipboard (Windows / macOS / Linux) via OSC 52 |
 | `Ctrl-V` / Terminal Paste | Paste from Clipboard | Pastes text from the host clipboard directly into the application via Bracketed Paste with full UTF-8 / multibyte support |
+| Middle Mouse Click | Paste Primary Selection | Pastes highlighted text via Wayland Primary Selection protocol (`zwp_primary_selection_v1`) |
 
 ### 6. Command Line Options
 
@@ -300,7 +306,7 @@ command = "mount -o remount,rw /tmp/.X11-unix"
 
 ## Running Tests
 
-`termway` comes with a comprehensive test suite (unit, integration, benchmark, and end-to-end tests: 92 tests total):
+`termway` comes with a comprehensive test suite (unit, integration, benchmark, and end-to-end tests: 98 tests total):
 
 ```bash
 cargo test --release

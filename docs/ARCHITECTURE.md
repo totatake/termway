@@ -1,4 +1,4 @@
-# termway システムアーキテクチャ詳細設計書 (v0.9.0)
+# termway システムアーキテクチャ詳細設計書 (v0.10.0)
 
 本書は、`termway` の**静的構造（モジュール構成・クラス/構造体関係・責務分割）**および**動的構造（起動シーケンス・非同期レンダリングパイプライン・ウィンドウ状態遷移・入力ディスパッチ）**について解説する技術設計ドキュメントです。
 
@@ -8,7 +8,7 @@
 
 ### 1.1 レイヤー構成とディレクトリツリー
 
-`termway` は単一バイナリの Smithay ベース自立型 Wayland コンポジタとして設計されており、以下の 5 つの疎結合なコアレイヤーで構成されています（v0.6.0 にてレガシー Xvfb エンジンを廃止し Smithay + XWayland アーキテクチャへ一本化、v0.7.0 にてコンポジタのモジュール分割とストリーム最適化、v0.8.0 にて aarch64/ARM NEON 最適化、v0.9.0 にて Kitty 部分プレースメント転送および Wayland Fractional Scale/HiDPI 制御を実装）。
+`termway` は単一バイナリの Smithay ベース自立型 Wayland コンポジタとして設計されており、以下の 5 つの疎結合なコアレイヤーで構成されています（v0.6.0 にてレガシー Xvfb エンジンを廃止し Smithay + XWayland アーキテクチャへ一本化、v0.7.0 にてコンポジタのモジュール分割とストリーム最適化、v0.8.0 にて aarch64/ARM NEON 最適化、v0.9.0 にて Kitty 部分プレースメント転送および Wayland Fractional Scale/HiDPI 制御、v0.10.0 にて OSC 22 マウスカーソル同期、Kitty Keyboard Protocol (CSI u)、Wayland Primary Selection、OSC 2 端末タブタイトル動的同期を実装）。
 
 ```text
 src/
@@ -336,7 +336,7 @@ sequenceDiagram
     Comp->>XWL: XWayland::spawn() (/tmp/termway_wrap 経由)
 
     Main->>Comp: compositor.run()
-    Comp->>Term: RawModeGuard::enter()<br/>(Raw mode, Alternate Screen \x1b[?1049h, Mouse \x1b[?1003h\x1b[?1006h)
+    Comp->>Term: RawModeGuard::enter()<br/>(Raw mode, Alternate Screen \x1b[?1049h, Mouse \x1b[?1003h\x1b[?1006h, OSC 22 Cursor, CSI u, OSC 2 Title)
     XWL-->>Comp: XWaylandEvent::Ready (:DISPLAY)
     Comp->>XWL: X11Wm::start_wm() & X11 shape 接続
 
