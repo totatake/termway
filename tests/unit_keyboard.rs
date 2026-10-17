@@ -162,3 +162,78 @@ fn test_keyboard_japanese_utf8_and_partial_sequences() {
     assert_eq!(ev.code, KeyCode::Char('あ'));
 }
 
+#[test]
+fn test_kitty_keyboard_protocol() {
+    use termway::compositor::input::map_keycode_to_evdev;
+
+    // Ctrl+Tab (\x1b[9;5u)
+    let (ev, len) = KeyboardParser::parse(b"\x1b[9;5u").expect("parse Ctrl+Tab");
+    assert_eq!(len, 6);
+    assert_eq!(ev.code, KeyCode::CtrlTab);
+    assert!(ev.is_press);
+    let (sc, shift, ctrl) = map_keycode_to_evdev(ev.code).expect("map Ctrl+Tab");
+    assert_eq!(sc, 15);
+    assert!(!shift);
+    assert!(ctrl);
+
+    // Ctrl+Shift+Tab (\x1b[9;6u)
+    let (ev, len) = KeyboardParser::parse(b"\x1b[9;6u").expect("parse Ctrl+Shift+Tab");
+    assert_eq!(len, 6);
+    assert_eq!(ev.code, KeyCode::CtrlShiftTab);
+    let (sc, shift, ctrl) = map_keycode_to_evdev(ev.code).expect("map Ctrl+Shift+Tab");
+    assert_eq!(sc, 15);
+    assert!(shift);
+    assert!(ctrl);
+
+    // Shift+Enter (\x1b[13;2u)
+    let (ev, len) = KeyboardParser::parse(b"\x1b[13;2u").expect("parse Shift+Enter");
+    assert_eq!(len, 7);
+    assert_eq!(ev.code, KeyCode::ShiftEnter);
+    let (sc, shift, ctrl) = map_keycode_to_evdev(ev.code).expect("map Shift+Enter");
+    assert_eq!(sc, 28);
+    assert!(shift);
+    assert!(!ctrl);
+
+    // Ctrl+Enter (\x1b[13;5u)
+    let (ev, len) = KeyboardParser::parse(b"\x1b[13;5u").expect("parse Ctrl+Enter");
+    assert_eq!(len, 7);
+    assert_eq!(ev.code, KeyCode::CtrlEnter);
+    let (sc, shift, ctrl) = map_keycode_to_evdev(ev.code).expect("map Ctrl+Enter");
+    assert_eq!(sc, 28);
+    assert!(!shift);
+    assert!(ctrl);
+
+    // Ctrl+Shift+P (\x1b[112;6u)
+    let (ev, len) = KeyboardParser::parse(b"\x1b[112;6u").expect("parse Ctrl+Shift+P");
+    assert_eq!(len, 8);
+    assert_eq!(ev.code, KeyCode::CtrlShift('p'));
+    let (sc, shift, ctrl) = map_keycode_to_evdev(ev.code).expect("map Ctrl+Shift+P");
+    assert_eq!(sc, 25); // KEY_P
+    assert!(shift);
+    assert!(ctrl);
+
+    // Ctrl+; (\x1b[59;5u)
+    let (ev, len) = KeyboardParser::parse(b"\x1b[59;5u").expect("parse Ctrl+;");
+    assert_eq!(len, 7);
+    assert_eq!(ev.code, KeyCode::Ctrl(';'));
+    let (sc, shift, ctrl) = map_keycode_to_evdev(ev.code).expect("map Ctrl+;");
+    assert_eq!(sc, 39); // KEY_SEMICOLON
+    assert!(!shift);
+    assert!(ctrl);
+
+    // Ctrl+/ (\x1b[47;5u)
+    let (ev, len) = KeyboardParser::parse(b"\x1b[47;5u").expect("parse Ctrl+/");
+    assert_eq!(len, 7);
+    assert_eq!(ev.code, KeyCode::Ctrl('/'));
+    let (sc, shift, ctrl) = map_keycode_to_evdev(ev.code).expect("map Ctrl+/");
+    assert_eq!(sc, 53); // KEY_SLASH
+    assert!(!shift);
+    assert!(ctrl);
+
+    // Release event with event_type = 3 (\x1b[112;6:3u)
+    let (ev, len) = KeyboardParser::parse(b"\x1b[112;6:3u").expect("parse release");
+    assert_eq!(len, 10);
+    assert_eq!(ev.code, KeyCode::CtrlShift('p'));
+    assert!(!ev.is_press);
+}
+

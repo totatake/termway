@@ -80,16 +80,21 @@ pub fn map_keycode_to_evdev(code: KeyCode) -> Option<(u32, bool, bool)> {
         KeyCode::Delete => (111, false, false),
         KeyCode::F11 => (87, false, false),
         KeyCode::F12 => (88, false, false),
-        KeyCode::Ctrl(c) => match c.to_ascii_lowercase() {
-            'a' => (30, false, true), 'b' => (48, false, true), 'c' => (46, false, true), 'd' => (32, false, true),
-            'e' => (18, false, true), 'f' => (33, false, true), 'g' => (34, false, true), 'h' => (35, false, true),
-            'i' => (23, false, true), 'j' => (36, false, true), 'k' => (37, false, true), 'l' => (38, false, true),
-            'm' => (50, false, true), 'n' => (49, false, true), 'o' => (24, false, true), 'p' => (25, false, true),
-            'q' => (16, false, true), 'r' => (19, false, true), 's' => (31, false, true), 't' => (20, false, true),
-            'u' => (22, false, true), 'v' => (47, false, true), 'w' => (17, false, true), 'x' => (45, false, true),
-            'y' => (21, false, true), 'z' => (44, false, true),
-            _ => return None,
-        },
+        KeyCode::Ctrl(c) => {
+            let (sc, _, _) = map_keycode_to_evdev(KeyCode::Char(c.to_ascii_lowercase()))?;
+            (sc, false, true)
+        }
+        KeyCode::CtrlShift(c) => {
+            let (sc, _, _) = map_keycode_to_evdev(KeyCode::Char(c.to_ascii_lowercase()))?;
+            (sc, true, true)
+        }
+        KeyCode::CtrlTab => (15, false, true),
+        KeyCode::CtrlShiftTab => (15, true, true),
+        KeyCode::ShiftEnter => (28, true, false),
+        KeyCode::CtrlEnter => (28, false, true),
+        KeyCode::CtrlShiftEnter => (28, true, true),
+        KeyCode::ShiftBackspace => (14, true, false),
+        KeyCode::CtrlBackspace => (14, false, true),
         KeyCode::ShiftUp => (103, true, false),
         KeyCode::ShiftDown => (108, true, false),
         KeyCode::ShiftLeft => (105, true, false),

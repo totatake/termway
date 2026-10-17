@@ -47,6 +47,16 @@ pub enum KeyCode {
     CtrlShiftHome,
     CtrlShiftEnd,
 
+    // Kitty Keyboard Protocol extended modifier keys
+    CtrlShift(char),
+    CtrlTab,
+    CtrlShiftTab,
+    CtrlEnter,
+    ShiftEnter,
+    CtrlShiftEnter,
+    CtrlBackspace,
+    ShiftBackspace,
+
     // Internal ignored/consumed key (for unrecognized escape sequences)
     Ignore,
 }
@@ -161,6 +171,73 @@ impl KeyboardParser {
                                 ["24"] | ["24", _] => KeyCode::F12,
                                 _ => KeyCode::Ignore,
                             }
+                        }
+                        b'u' => {
+                            // Kitty Keyboard Protocol: CSI <codepoint> [; <modifiers> [: <event_type>]] u
+                            let mut parts = params.split(';');
+                            let codepoint: u32 = parts.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+                            let mod_str = parts.next().unwrap_or("1");
+                            let mut mod_parts = mod_str.split(':');
+                            let mod_val: u32 = mod_parts.next().and_then(|s| s.parse().ok()).unwrap_or(1);
+                            let event_type: u32 = mod_parts.next().and_then(|s| s.parse().ok()).unwrap_or(1);
+
+                            let is_press = event_type != 3;
+                            let shift = if mod_val > 1 { ((mod_val - 1) & 1) != 0 } else { false };
+                            let ctrl = if mod_val > 1 { ((mod_val - 1) & 4) != 0 } else { false };
+
+                            let code = match codepoint {
+                                9 => {
+                                    if ctrl && shift {
+                                        KeyCode::CtrlShiftTab
+                                    } else if ctrl {
+                                        KeyCode::CtrlTab
+                                    } else if shift {
+                                        KeyCode::ShiftTab
+                                    } else {
+                                        KeyCode::Tab
+                                    }
+                                }
+                                13 => {
+                                    if ctrl && shift {
+                                        KeyCode::CtrlShiftEnter
+                                    } else if ctrl {
+                                        KeyCode::CtrlEnter
+                                    } else if shift {
+                                        KeyCode::ShiftEnter
+                                    } else {
+                                        KeyCode::Enter
+                                    }
+                                }
+                                27 => KeyCode::Escape,
+                                127 => {
+                                    if ctrl {
+                                        KeyCode::CtrlBackspace
+                                    } else if shift {
+                                        KeyCode::ShiftBackspace
+                                    } else {
+                                        KeyCode::Backspace
+                                    }
+                                }
+                                57386 => KeyCode::F11,
+                                57387 => KeyCode::F12,
+                                _ => {
+                                    if let Some(ch) = char::from_u32(codepoint) {
+                                        if ctrl && shift {
+                                            KeyCode::CtrlShift(ch.to_ascii_lowercase())
+                                        } else if ctrl {
+                                            KeyCode::Ctrl(ch.to_ascii_lowercase())
+                                        } else if shift && ch.is_ascii_alphabetic() {
+                                            KeyCode::Char(ch.to_ascii_uppercase())
+                                        } else {
+                                            KeyCode::Char(ch)
+                                        }
+                                    } else {
+                                        KeyCode::Ignore
+                                    }
+                                }
+                            };
+
+                            return Some((KeyEvent { code, is_press }, total_len));
                         }
                         _ => KeyCode::Ignore,
                     };
