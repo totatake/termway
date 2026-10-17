@@ -71,6 +71,22 @@ impl TermwayRenderer {
         let mut managed_layers: Vec<ManagedWindowRenderLayer> = Vec::with_capacity(state.wm.windows.len());
         let mut any_surface_elems = false;
 
+        let scale = state.scale;
+        let to_phys = |p: Point<i32, smithay::utils::Logical>| -> Point<i32, Physical> {
+            if (scale - 1.0).abs() < 1e-5 {
+                Point::from((p.x, p.y))
+            } else {
+                Point::from(((p.x as f64 * scale).round() as i32, (p.y as f64 * scale).round() as i32))
+            }
+        };
+        let to_phys_size = |s: Size<i32, smithay::utils::Logical>| -> Size<i32, Physical> {
+            if (scale - 1.0).abs() < 1e-5 {
+                Size::from((s.w, s.h))
+            } else {
+                Size::from(((s.w as f64 * scale).round() as i32, (s.h as f64 * scale).round() as i32))
+            }
+        };
+
         for (window_index, window) in state.wm.windows.iter().enumerate() {
             if window.is_minimized {
                 continue;
@@ -79,8 +95,8 @@ impl TermwayRenderer {
             let mut surface_layer = None;
             if let Some(surface) = state.surface_for_managed_window(window) {
                 let win_clip: Rectangle<i32, Physical> = Rectangle::new(
-                    Point::from((window.loc.x, window.loc.y)),
-                    Size::from((window.size.w, window.size.h)),
+                    to_phys(window.loc),
+                    to_phys_size(window.size),
                 );
                 // Shaped X11 windows: only draw inside the X Shape bounding region.
                 // SSD windows: constrain client drawing inside the server-rendered window frame.
@@ -90,8 +106,8 @@ impl TermwayRenderer {
                         .iter()
                         .filter_map(|r| {
                             Rectangle::<i32, Physical>::new(
-                                Point::from((window.loc.x + r.loc.x, window.loc.y + r.loc.y)),
-                                Size::from((r.size.w, r.size.h)),
+                                to_phys(Point::from((window.loc.x + r.loc.x, window.loc.y + r.loc.y))),
+                                to_phys_size(r.size),
                             )
                             .intersection(win_clip)
                         })
@@ -108,8 +124,8 @@ impl TermwayRenderer {
                     let elems: Vec<WaylandSurfaceRenderElement<PixmanRenderer>> = render_elements_from_surface_tree(
                         &mut self.renderer,
                         &surface,
-                        (window.loc.x, window.loc.y),
-                        1.0,
+                        to_phys(window.loc),
+                        scale,
                         1.0,
                         smithay::backend::renderer::element::Kind::Unspecified,
                     );
@@ -126,15 +142,16 @@ impl TermwayRenderer {
                     let popup_x = window.loc.x + popup_offset.x - popup.geometry().loc.x;
                     let popup_y = window.loc.y + popup_offset.y - popup.geometry().loc.y;
                     let bbox = smithay::desktop::utils::bbox_from_surface_tree(popup.wl_surface(), (0, 0));
+                    let popup_phys_loc = to_phys(Point::from((popup_x, popup_y)));
                     let popup_clip: Rectangle<i32, Physical> = Rectangle::new(
-                        Point::from((popup_x, popup_y)),
-                        Size::from((bbox.size.w, bbox.size.h)),
+                        popup_phys_loc,
+                        to_phys_size(bbox.size),
                     );
                     let elems: Vec<WaylandSurfaceRenderElement<PixmanRenderer>> = render_elements_from_surface_tree(
                         &mut self.renderer,
                         popup.wl_surface(),
-                        (popup_x, popup_y),
-                        1.0,
+                        popup_phys_loc,
+                        scale,
                         1.0,
                         smithay::backend::renderer::element::Kind::Unspecified,
                     );
@@ -160,16 +177,17 @@ impl TermwayRenderer {
                     let bbox = smithay::desktop::utils::bbox_from_surface_tree(&surface, (0, 0));
                     let w = if geo.size.w > 0 { geo.size.w } else { bbox.size.w };
                     let h = if geo.size.h > 0 { geo.size.h } else { bbox.size.h };
+                    let phys_loc = to_phys(Point::from((geo.loc.x, geo.loc.y)));
                     let x11_clip: Rectangle<i32, Physical> = Rectangle::new(
-                        Point::from((geo.loc.x, geo.loc.y)),
-                        Size::from((w, h)),
+                        phys_loc,
+                        to_phys_size(Size::from((w, h))),
                     );
 
                     let elems: Vec<WaylandSurfaceRenderElement<PixmanRenderer>> = render_elements_from_surface_tree(
                         &mut self.renderer,
                         &surface,
-                        (geo.loc.x, geo.loc.y),
-                        1.0,
+                        phys_loc,
+                        scale,
                         1.0,
                         smithay::backend::renderer::element::Kind::Unspecified,
                     );
@@ -199,7 +217,7 @@ impl TermwayRenderer {
                     &mut self.renderer,
                     surface,
                     (0, 0),
-                    1.0,
+                    scale,
                     1.0,
                     smithay::backend::renderer::element::Kind::Unspecified,
                 );
@@ -221,12 +239,12 @@ impl TermwayRenderer {
             let window = &state.wm.windows[layer.window_index];
 
             if let Some((ref elems, ref win_clips)) = layer.surface_layer {
-                draw_render_elements(&mut frame, 1.0, elems, win_clips)
+                draw_render_elements(&mut frame, scale, elems, win_clips)
                     .map_err(|e| TermwayError::Renderer(format!("{:?}", e)))?;
             } else if window.x11_shape.is_none() {
                 let win_clip: Rectangle<i32, Physical> = Rectangle::new(
-                    Point::from((window.loc.x, window.loc.y)),
-                    Size::from((window.size.w, window.size.h)),
+                    to_phys(window.loc),
+                    to_phys_size(window.size),
                 );
                 if let Some(clipped) = win_clip.intersection(screen_damage) {
                     frame.clear(Color32F::new(0.08, 0.08, 0.10, 1.0), &[clipped])?;
@@ -242,6 +260,7 @@ impl TermwayRenderer {
                     self.width,
                     self.height,
                     window,
+                    scale,
                 );
 
                 target = self.renderer.bind(&mut self.buffer)?;
@@ -249,18 +268,18 @@ impl TermwayRenderer {
             }
 
             for (elems, popup_clip) in &layer.popup_layers {
-                draw_render_elements(&mut frame, 1.0, elems, &[*popup_clip])
+                draw_render_elements(&mut frame, scale, elems, &[*popup_clip])
                     .map_err(|e| TermwayError::Renderer(format!("{:?}", e)))?;
             }
         }
 
         // 4. Draw unmanaged X11 popup/override-redirect surfaces and fallback surfaces on top
         for (elems, x11_clip) in &x11_layers {
-            draw_render_elements(&mut frame, 1.0, elems, &[*x11_clip])
+            draw_render_elements(&mut frame, scale, elems, &[*x11_clip])
                 .map_err(|e| TermwayError::Renderer(format!("{:?}", e)))?;
         }
         for (elems, clip) in &fallback_layers {
-            draw_render_elements(&mut frame, 1.0, elems, &[*clip])
+            draw_render_elements(&mut frame, scale, elems, &[*clip])
                 .map_err(|e| TermwayError::Renderer(format!("{:?}", e)))?;
         }
 

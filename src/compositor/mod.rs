@@ -46,6 +46,7 @@ pub struct EngineConfig {
     pub height: Option<u32>,
     pub cell_size: Option<(u16, u16)>,
     pub fps: u32,
+    pub scale: f64,
     pub enable_wm: bool,
     pub use_sixel: bool,
     pub hud: bool,
@@ -61,6 +62,7 @@ impl Default for EngineConfig {
             height: None,
             cell_size: None,
             fps: 30,
+            scale: 1.0,
             enable_wm: true,
             use_sixel: false,
             hud: false,
@@ -168,10 +170,10 @@ impl TermwayCompositor {
 
         log_line("[termway] Headless Wayland Compositor (Smithay)");
         log_line(format!("[termway] Socket: WAYLAND_DISPLAY={}", socket_name));
-        log_line(format!("[termway] Resolution: {}x{}", width, height));
+        log_line(format!("[termway] Resolution: {}x{} (@{:.2}x)", width, height, config.scale));
 
         // 2. Initialize Compositor State
-        let state = TermwayState::new(&dh, width, height, config.enable_wm);
+        let state = TermwayState::with_scale(&dh, width, height, config.enable_wm, config.scale);
         let refresh_mhz = (config.fps.clamp(1, 240) * 1000) as i32;
         let mode = smithay::output::Mode {
             size: (width as i32, height as i32).into(),
@@ -837,26 +839,31 @@ impl TermwayCompositor {
             new_size.height_px = (raw_h.max(240)) as u16;
         }
 
+        let phys_w = new_size.width_px as u32;
+        let phys_h = new_size.height_px as u32;
+
         if self.term_cols == new_size.cols
             && self.term_rows == new_size.rows
-            && self.state.width == new_size.width_px as u32
-            && self.state.height == new_size.height_px as u32
+            && self.state.physical_width == phys_w
+            && self.state.physical_height == phys_h
         {
             return;
         }
 
         self.term_cols = new_size.cols;
         self.term_rows = new_size.rows;
-        self.state.width = new_size.width_px as u32;
-        self.state.height = new_size.height_px as u32;
+        self.state.physical_width = phys_w;
+        self.state.physical_height = phys_h;
+        self.state.width = ((phys_w as f64 / self.state.scale).round() as u32).max(1);
+        self.state.height = ((phys_h as f64 / self.state.scale).round() as u32).max(1);
 
-        let _ = self.renderer.resize(self.state.width, self.state.height);
-        self.damage_tracker.resize(self.state.width, self.state.height);
+        let _ = self.renderer.resize(phys_w, phys_h);
+        self.damage_tracker.resize(phys_w, phys_h);
         self.backend.resize(new_size);
 
         let refresh_mhz = (1_000_000_000u64 / self.target_frame_duration.as_nanos().max(1) as u64 * 1000) as i32;
         let new_mode = smithay::output::Mode {
-            size: (self.state.width as i32, self.state.height as i32).into(),
+            size: (phys_w as i32, phys_h as i32).into(),
             refresh: refresh_mhz,
         };
         self.state.output.change_current_state(Some(new_mode), None, None, None);

@@ -525,8 +525,11 @@ pub fn dispatch_mouse_event(
     let cell_h = renderer_height as f64 / avail_rows.max(1) as f64;
     let px = (ev.col.saturating_sub(1)) as f64 * cell_w + (cell_w * 0.5);
     let py = (ev.row.saturating_sub(1)) as f64 * cell_h + (cell_h * 0.5);
-    let loc: Point<f64, Logical> = Point::from((px, py));
-    let loc_i32 = Point::<i32, Logical>::from((px as i32, py as i32));
+    let scale = state.scale.max(0.1);
+    let loc_x = px / scale;
+    let loc_y = py / scale;
+    let loc: Point<f64, Logical> = Point::from((loc_x, loc_y));
+    let loc_i32 = Point::<i32, Logical>::from((loc_x as i32, loc_y as i32));
 
     let pointer = state.pointer.clone();
     let keyboard = state.keyboard.clone();
@@ -536,16 +539,16 @@ pub fn dispatch_mouse_event(
             // 1. Process active window dragging (Moving or Resizing)
             match state.wm.drag_state {
                 WindowDragState::Moving { start_cursor, start_window_pos } => {
-                    let dx = (px - start_cursor.0).round() as i32;
-                    let dy = (py - start_cursor.1).round() as i32;
+                    let dx = (loc_x - start_cursor.0).round() as i32;
+                    let dy = (loc_y - start_cursor.1).round() as i32;
                     if dx.abs() > 3 || dy.abs() > 3 {
                         state.wm.last_titlebar_click = None;
                     }
                     if let Some(top_win) = state.wm.windows.last_mut() {
                         let min_x = if top_win.has_ssd { BORDER_WIDTH } else { 0 };
-                        let max_x = (renderer_width as i32 - top_win.size.w - min_x).max(min_x);
+                        let max_x = (state.width as i32 - top_win.size.w - min_x).max(min_x);
                         let min_y = if top_win.has_ssd { TITLEBAR_HEIGHT + BORDER_WIDTH } else { 0 };
-                        let max_y = (renderer_height as i32 - top_win.size.h - min_x).max(min_y);
+                        let max_y = (state.height as i32 - top_win.size.h - min_x).max(min_y);
 
                         let new_x = (start_window_pos.0 + dx).clamp(min_x, max_x);
                         let new_y = (start_window_pos.1 + dy).clamp(min_y, max_y);
@@ -555,11 +558,11 @@ pub fn dispatch_mouse_event(
                     return;
                 }
                 WindowDragState::Resizing { start_cursor, start_window_geo } => {
-                    let dw = (px - start_cursor.0).round() as i32;
-                    let dh = (py - start_cursor.1).round() as i32;
+                    let dw = (loc_x - start_cursor.0).round() as i32;
+                    let dh = (loc_y - start_cursor.1).round() as i32;
                     if let Some(top_win) = state.wm.windows.last_mut() {
-                        let max_w = (renderer_width as i32 - top_win.loc.x - BORDER_WIDTH).max(100);
-                        let max_h = (renderer_height as i32 - top_win.loc.y - BORDER_WIDTH).max(60);
+                        let max_w = (state.width as i32 - top_win.loc.x - BORDER_WIDTH).max(100);
+                        let max_h = (state.height as i32 - top_win.loc.y - BORDER_WIDTH).max(60);
 
                         let new_w = (start_window_geo.size.w + dw).clamp(100, max_w);
                         let new_h = (start_window_geo.size.h + dh).clamp(60, max_h);
@@ -719,8 +722,10 @@ pub fn dispatch_mouse_event(
                 }
 
                 if clicked_maximize {
-                    if let Some(win) = state.wm.windows.iter_mut().find(|w| w.id == id) {
-                        win.toggle_maximize(renderer_width, renderer_height);
+                    let w = state.width;
+                    let h = state.height;
+                    if let Some(win) = state.wm.windows.iter_mut().find(|w_elem| w_elem.id == id) {
+                        win.toggle_maximize(w, h);
                     }
                     state.raise_window(id);
                     state.needs_clear = true;
@@ -741,8 +746,10 @@ pub fn dispatch_mouse_event(
                     let now = std::time::Instant::now();
                     if let Some((last_time, last_id)) = state.wm.last_titlebar_click {
                         if last_id == id && now.duration_since(last_time).as_millis() < 400 {
-                            if let Some(win) = state.wm.windows.iter_mut().find(|w| w.id == id) {
-                                win.toggle_maximize(renderer_width, renderer_height);
+                            let w = state.width;
+                            let h = state.height;
+                            if let Some(win) = state.wm.windows.iter_mut().find(|w_elem| w_elem.id == id) {
+                                win.toggle_maximize(w, h);
                             }
                             state.wm.last_titlebar_click = None;
                             state.wm.drag_state = WindowDragState::None;
@@ -757,7 +764,7 @@ pub fn dispatch_mouse_event(
                     let is_max = state.wm.windows.iter().find(|w| w.id == id).map(|w| w.is_maximized).unwrap_or(false);
                     if !is_max {
                         state.wm.drag_state = WindowDragState::Moving {
-                            start_cursor: (px, py),
+                            start_cursor: (loc_x, loc_y),
                             start_window_pos: (win_loc.x, win_loc.y),
                         };
                     }
@@ -767,7 +774,7 @@ pub fn dispatch_mouse_event(
 
                 if clicked_resize && is_left {
                     state.wm.drag_state = WindowDragState::Resizing {
-                        start_cursor: (px, py),
+                        start_cursor: (loc_x, loc_y),
                         start_window_geo: win_geo,
                     };
                     state.dirty = true;

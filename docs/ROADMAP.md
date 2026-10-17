@@ -120,7 +120,26 @@ ARM64 Linux（AWS Graviton、Raspberry Pi 4/5、Apple Silicon 上の Linux VM �
 
 ---
 
-## 7. 完了済みマイルストーン一覧
+## 7. Wayland Fractional Scale / HiDPI 制御（v0.8.0 実装済み）
+
+### 背景と課題
+4K ディスプレイや高 DPI（Retina）ターミナル環境において、等倍（1.0x）表示では GUI アプリケーションのボタン・アイコン・フォントが極小化し視認性が著しく低下していました。また、Wayland 規格における従来の整数倍スケーリング（`wl_output.scale`）のみでは、1.25x や 1.5x といった現代の一般的な HiDPI スケールファクターに正確に追従できず、ボケや座標ズレの原因となっていました。
+
+### 実装された構造（v0.8.0）
+- **Wayland Fractional Scale & Viewporter プロトコル統合**:
+  - `wp_fractional_scale_v1`（`FractionalScaleManagerState` / `FractionalScaleHandler`）を実装し、クライアントに正確な推奨小数スケール値（120分の1単位）を即時通知。
+  - `wp_viewporter`（`ViewporterState`）を統合し、高解像度バッファをサーフェスの論理座標サイズへアトミックにマッピング。
+  - サーフェス生成・コミット時に `output.enter(surface)` と `set_preferred_scale(scale)` を行い、Wayland クライアントがネイティブな高精細描画を行えるよう制御。
+- **論理座標系と物理描画座標系の分離**:
+  - ウィンドウマネージャ（`WindowManager`）、ウィンドウジオメトリ、ドラッグ/リサイズ境界、最大化計算、ポインタ入力座標（SGR マウス変換）をすべて一貫して **論理座標系（Logical Coordinates）** で管理。
+  - ターミナルへ出力する Pixman レンダラ（`TermwayRenderer`）および Sixel/Kitty 出力バッファは **物理ピクセル解像度（Physical Coordinates）** で保持し、`render_elements_from_surface_tree` および `draw_render_elements` に `scale` を渡してピクセルパーフェクトに合成。
+  - Openbox/Fluxbox 風 SSD 装飾（タイトルバー、枠線、ボタン、アイコン、フォント位置）もスケール係数に追従して自動拡大描画。
+- **CLI オプション `--scale <FACTOR>` の導入**:
+  - `--scale 1.25`、`--scale 1.5`、`--scale 2.0` など（有効範囲 0.25〜4.0）を柔軟に指定可能（デフォルト: `1.0`）。
+
+---
+
+## 8. 完了済みマイルストーン一覧
 
 | マイルストーン | 項目 | 優先度 | 達成効果 | ステータス |
 | :--- | :--- | :---: | :--- | :---: |
@@ -136,12 +155,13 @@ ARM64 Linux（AWS Graviton、Raspberry Pi 4/5、Apple Silicon 上の Linux VM �
 | **フェーズ 8**（統一ポーリング＆フレームペーシング＆モジュール分割） | `stdin` + `listener` + `display.backend().poll_fd()` の単一 `poll` 統合によるアイドル時 CPU 0% 化、`--fps` 目標フレームレート制御、Pixman レンダラ パス統合、`src/compositor/mod.rs` のサブモジュール分割 (`env.rs`, `taskbar.rs`, `profile.rs`, `screenshot.rs`, `window_manager.rs`) | 高 | アイドル時 CPU 負荷解消、高速コミット時の過度な再描画抑制、コンポジタ可読性・保守性向上 | **実装済み (v0.7.0)** |
 | **フェーズ 9**（aarch64 ビルド & ARM NEON SIMD 対応） | ARM64 Linux 向け NEON ベクトル最適化（Damage / Sixel / BGRX 変換）、Ubuntu 22.04 LTS クロスビルド環境整備、CI QEMU テスト & Release マトリクス配布 | 高 | AWS Graviton / Apple Silicon / Raspberry Pi 等でのネイティブ高速動作、x86_64/aarch64 横並びリリース配布 | **実装済み (v0.8.0)** |
 | **フェーズ 10**（Kitty 部分矩形プレースメント転送） | セルスナップ外接矩形判定による Kitty 部分プレースメント転送 (`encode_frame_into`) とアトミック定期リフレッシュ | 高 | 微小更新時の zlib 圧縮負荷および帯域 99.5% 削減（1080p で 900KB→4.2KB）、高解像度端末での超低遅延応答 | **実装済み (v0.8.0)** |
+| **フェーズ 11**（Wayland Fractional Scale / HiDPI 制御） | `wp_fractional_scale_v1` / `wp_viewporter` プロトコル統合、`--scale <FACTOR>` オプション、出力スケールおよびサーフェス論理/物理座標マッピング | 高 | 4K/Retina高DPI環境でのUI・フォント鮮明表示、小数倍スケール（1.25x/1.5x等）による視認性向上 | **実装済み (v0.8.0)** |
 
 ---
 
-## 8. 今後の展望 (Future Horizons)
+## 9. 今後の展望 (Future Horizons)
 
 | テーマ | 概要 | 期待される価値 |
 | :--- | :--- | :--- |
-| **Wayland Fractional Scale / HiDPI 制御** | `wp_fractional_scale_v1` / `wp_viewporter` プロトコル対応および出力スケールオプション (`--scale`) の導入 | Retina / 高 DPI ターミナル環境でのフォント・UI 視認性向上 |
+| **Direct Scanout / DRM バックエンド探索** | ヘッドレス/仮想端末に加え、DRM/KMS 直接描画バックエンドの実験的検討 | 端末を介さないベアメタル/コンソール環境での直接GUI動作 |
 

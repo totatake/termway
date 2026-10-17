@@ -33,6 +33,13 @@ impl CompositorHandler for TermwayState {
     fn commit(&mut self, surface: &WlSurface) {
         smithay::backend::renderer::utils::on_commit_buffer_handler::<Self>(surface);
         self.popups.commit(surface);
+        self.output.enter(surface);
+        let scale = self.scale;
+        smithay::wayland::compositor::with_states(surface, |states| {
+            smithay::wayland::fractional_scale::with_fractional_scale(states, |fs| {
+                fs.set_preferred_scale(scale);
+            });
+        });
         self.dirty = true;
         
         // 破棄済みサーフェスをフォーカス・描画候補から除く
@@ -185,3 +192,15 @@ impl ShmHandler for TermwayState {
 
 // 6. OutputHandler
 impl OutputHandler for TermwayState {}
+
+// 7. FractionalScaleHandler
+impl smithay::wayland::fractional_scale::FractionalScaleHandler for TermwayState {
+    fn new_fractional_scale(&mut self, surface: WlSurface) {
+        let scale = self.scale;
+        smithay::wayland::compositor::with_states(&surface, |states| {
+            smithay::wayland::fractional_scale::with_fractional_scale(states, |fs| {
+                fs.set_preferred_scale(scale);
+            });
+        });
+    }
+}

@@ -269,6 +269,7 @@ export TERMWAY_CELL_SIZE=10x22
 | `--width` | `<PIXELS>` | Virtual display resolution width | Auto-calculated from terminal |
 | `--height` | `<PIXELS>` | Virtual display resolution height | Auto-calculated from terminal |
 | `--fps` | `<FPS>` | Target frame rate limit | `30` |
+| `--scale` | `<FACTOR>` | Wayland output scale factor for HiDPI / fractional scaling (e.g. `1.25`, `1.5`, `2.0`) | `1.0` |
 | `--hud` | - | Show real-time performance HUD overlay (FPS, encode time, bandwidth, damage tiles) | Disabled |
 | `--profile` | - | Print stage-by-stage performance profiling report on exit (also enabled via `TERMWAY_PROFILE=1`) | Disabled |
 | `--no-splash` | - | Disable the animated startup splash screen while waiting for the first window | Disabled |
@@ -299,7 +300,7 @@ command = "mount -o remount,rw /tmp/.X11-unix"
 
 ## Running Tests
 
-`termway` comes with a comprehensive test suite (unit, integration, benchmark, and end-to-end tests: 88 tests total):
+`termway` comes with a comprehensive test suite (unit, integration, benchmark, and end-to-end tests: 92 tests total):
 
 ```bash
 cargo test --release

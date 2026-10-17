@@ -119,7 +119,7 @@ fn test_window_geometry_and_decorations() {
     ).unwrap();
 
     let deco = DecorationRenderer::new();
-    deco.draw_decorations(&mut image, 300, 300, &dummy_window);
+    deco.draw_decorations(&mut image, 300, 300, &dummy_window, 1.0);
 }
 
 #[test]
@@ -163,7 +163,7 @@ fn test_csd_window_no_double_decorations() {
         true,
     ).unwrap();
     let deco = DecorationRenderer::new();
-    deco.draw_decorations(&mut image, 300, 300, &csd_window);
+    deco.draw_decorations(&mut image, 300, 300, &csd_window, 1.0);
 }
 
 #[test]
@@ -951,4 +951,77 @@ fn test_utf8_japanese_input_xkb_keymap_and_text_input_v3() {
             actual_utf8
         );
     }
+}
+
+#[test]
+fn test_fractional_scale_state_and_output_scale() {
+    let display = smithay::reexports::wayland_server::Display::<TermwayState>::new()
+        .expect("Failed to create Wayland Display");
+    let dh = display.handle();
+
+    // 1920x1080 physical display at 1.5x fractional scale
+    let state = TermwayState::with_scale(&dh, 1920, 1080, true, 1.5);
+    assert!((state.scale - 1.5).abs() < 1e-5);
+    assert_eq!(state.physical_width, 1920);
+    assert_eq!(state.physical_height, 1080);
+    // Logical dimensions: 1920 / 1.5 = 1280, 1080 / 1.5 = 720
+    assert_eq!(state.width, 1280);
+    assert_eq!(state.height, 720);
+    assert!((state.output.current_scale().fractional_scale() - 1.5).abs() < 1e-5);
+    assert!(state.splash_info.contains("@1.50x"));
+}
+
+#[test]
+fn test_integer_scale_state_and_output_scale() {
+    let display = smithay::reexports::wayland_server::Display::<TermwayState>::new()
+        .expect("Failed to create Wayland Display");
+    let dh = display.handle();
+
+    // 1600x1200 physical display at 2.0x integer scale
+    let state = TermwayState::with_scale(&dh, 1600, 1200, true, 2.0);
+    assert!((state.scale - 2.0).abs() < 1e-5);
+    assert_eq!(state.physical_width, 1600);
+    assert_eq!(state.physical_height, 1200);
+    assert_eq!(state.width, 800);
+    assert_eq!(state.height, 600);
+    assert_eq!(state.output.current_scale().integer_scale(), 2);
+    assert!(state.splash_info.contains("@2.00x"));
+}
+
+#[test]
+fn test_engine_config_scale_and_cli() {
+    use termway::engine::EngineConfig;
+
+    let cfg = EngineConfig::default();
+    assert_eq!(cfg.scale, 1.0);
+
+    let mut custom_cfg = EngineConfig::default();
+    custom_cfg.scale = 1.25;
+    assert_eq!(custom_cfg.scale, 1.25);
+}
+
+#[test]
+fn test_renderer_with_fractional_scale() {
+    use termway::compositor::window::ManagedWindow;
+
+    let display = smithay::reexports::wayland_server::Display::<TermwayState>::new()
+        .expect("Failed to create Wayland Display");
+    let dh = display.handle();
+
+    let mut state = TermwayState::with_scale(&dh, 600, 400, true, 1.5);
+    state.show_splash = false;
+    let mut renderer = TermwayRenderer::new(600, 400).expect("Renderer should initialize");
+
+    let win_id = state.wm.alloc_id();
+    let mut win = ManagedWindow::new_dummy(
+        win_id,
+        "Scaled Window".into(),
+        (50, 50).into(),
+        (200, 150).into(),
+    );
+    win.active = true;
+    state.wm.windows.push(win);
+
+    let pixels = renderer.render(&state).expect("Render with scale should succeed");
+    assert_eq!(pixels.len(), 600 * 400 * 4);
 }

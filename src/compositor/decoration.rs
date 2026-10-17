@@ -57,6 +57,7 @@ impl DecorationRenderer {
         target_w: u32,
         target_h: u32,
         window: &ManagedWindow,
+        scale: f64,
     ) {
         if !window.has_ssd() {
             return;
@@ -68,7 +69,7 @@ impl DecorationRenderer {
             std::slice::from_raw_parts_mut(ptr, (target_h as usize) * stride)
         };
 
-        let mut canvas = DecorationCanvas::new(data, stride, target_w as i32, target_h as i32);
+        let mut canvas = DecorationCanvas::new(data, stride, target_w as i32, target_h as i32, scale);
 
         let frame = window.frame_geometry();
         let titlebar = window.titlebar_geometry();
@@ -194,8 +195,8 @@ impl DecorationRenderer {
         };
         let max_chars = ((titlebar.size.w - (BUTTON_SIZE + 4) * 3 - 20).max(0) / 8) as usize;
         canvas.inner.render_text(
-            titlebar.loc.x + 8,
-            titlebar.loc.y + (TITLEBAR_HEIGHT - 8) / 2,
+            canvas.s(titlebar.loc.x + 8),
+            canvas.s(titlebar.loc.y + (TITLEBAR_HEIGHT - 8) / 2),
             &window.title,
             text_color,
             max_chars,
@@ -223,7 +224,7 @@ impl DecorationRenderer {
             std::slice::from_raw_parts_mut(data_ptr as *mut u8, (screen_h as usize) * stride)
         };
 
-        let mut canvas = DecorationCanvas::new(slice, stride, screen_w as i32, screen_h as i32);
+        let mut canvas = DecorationCanvas::new(slice, stride, screen_w as i32, screen_h as i32, 1.0);
 
         // 1. Choose optimal large scale for the hero "TERMWAY" logo (5x on standard/large screens, 4x or 3x on compact)
         let logo_scale = if screen_w >= 560 && screen_h >= 280 {
@@ -416,12 +417,23 @@ impl DecorationRenderer {
 /// Helper canvas for drawing window decoration shapes.
 struct DecorationCanvas<'a> {
     inner: BitmapCanvas<'a>,
+    scale: f64,
 }
 
 impl<'a> DecorationCanvas<'a> {
-    fn new(data: &'a mut [u8], stride: usize, width: i32, height: i32) -> Self {
+    fn new(data: &'a mut [u8], stride: usize, width: i32, height: i32, scale: f64) -> Self {
         Self {
             inner: BitmapCanvas::new(data, stride, width, height),
+            scale: if scale <= 0.0 { 1.0 } else { scale },
+        }
+    }
+
+    #[inline]
+    fn s(&self, val: i32) -> i32 {
+        if (self.scale - 1.0).abs() < 1e-5 {
+            val
+        } else {
+            (val as f64 * self.scale).round() as i32
         }
     }
 
@@ -438,6 +450,7 @@ impl<'a> DecorationCanvas<'a> {
     }
 
     fn fill_rect(&mut self, rx: i32, ry: i32, rw: i32, rh: i32, color: [u8; 4]) {
+        let (rx, ry, rw, rh) = (self.s(rx), self.s(ry), self.s(rw), self.s(rh));
         let x0 = rx.max(0);
         let y0 = ry.max(0);
         let x1 = (rx + rw).min(self.inner.width);
@@ -453,6 +466,7 @@ impl<'a> DecorationCanvas<'a> {
     }
 
     fn draw_rect_outline(&mut self, rx: i32, ry: i32, rw: i32, rh: i32, color: [u8; 4]) {
+        let (rx, ry, rw, rh) = (self.s(rx), self.s(ry), self.s(rw), self.s(rh));
         let w = self.inner.width;
         let h = self.inner.height;
         // Top and bottom horizontal lines
@@ -480,6 +494,7 @@ impl<'a> DecorationCanvas<'a> {
     }
 
     fn draw_cross(&mut self, x: i32, y: i32, size: i32, color: [u8; 4]) {
+        let (x, y, size) = (self.s(x), self.s(y), self.s(size));
         let w = self.inner.width;
         let h = self.inner.height;
         for i in 0..size {
@@ -497,11 +512,13 @@ impl<'a> DecorationCanvas<'a> {
     }
 
     fn draw_resize_grip(&mut self, x: i32, y: i32, size: i32, color: [u8; 4]) {
+        let (x, y, size) = (self.s(x), self.s(y), self.s(size));
         let w = self.inner.width;
         let h = self.inner.height;
         for d in [3, 6, 9] {
-            for i in 0..d {
-                let px = x + size - d + i;
+            let scaled_d = self.s(d);
+            for i in 0..scaled_d {
+                let px = x + size - scaled_d + i;
                 let py = y + size - 1 - i;
                 if px >= 0 && px < w && py >= 0 && py < h {
                     self.set_pixel(px, py, color);

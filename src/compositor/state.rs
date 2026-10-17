@@ -96,9 +96,14 @@ pub struct TermwayState {
     pub x11_shape_conn: Option<x11rb::rust_connection::RustConnection>,
     pub xwayland_ready: bool,
     pub xwayland_error: Option<String>,
+    pub fractional_scale_manager_state: smithay::wayland::fractional_scale::FractionalScaleManagerState,
+    pub viewporter_state: smithay::wayland::viewporter::ViewporterState,
     pub dirty: bool,
     pub needs_clear: bool,
     pub running: bool,
+    pub scale: f64,
+    pub physical_width: u32,
+    pub physical_height: u32,
     pub width: u32,
     pub height: u32,
     pub enable_wm: bool,
@@ -110,11 +115,18 @@ pub struct TermwayState {
 
 impl TermwayState {
     pub fn new(dh: &DisplayHandle, width: u32, height: u32, enable_wm: bool) -> Self {
+        Self::with_scale(dh, width, height, enable_wm, 1.0)
+    }
+
+    pub fn with_scale(dh: &DisplayHandle, width: u32, height: u32, enable_wm: bool, scale: f64) -> Self {
+        let scale = if scale <= 0.0 { 1.0 } else { scale };
         let compositor_state = CompositorState::new::<Self>(dh);
         let xdg_shell_state = XdgShellState::new::<Self>(dh);
         let xdg_decoration_state = XdgDecorationState::new::<Self>(dh);
         let shm_state = ShmState::new::<Self>(dh, vec![]);
         let xwayland_shell_state = smithay::wayland::xwayland_shell::XWaylandShellState::new::<Self>(dh);
+        let fractional_scale_manager_state = smithay::wayland::fractional_scale::FractionalScaleManagerState::new::<Self>(dh);
+        let viewporter_state = smithay::wayland::viewporter::ViewporterState::new::<Self>(dh);
         let mut seat_state = SeatState::new();
         let mut seat = seat_state.new_wl_seat(dh, "termway");
 
@@ -123,6 +135,12 @@ impl TermwayState {
 
         // Advertise zwp_text_input_manager_v3 for native Wayland IME / UTF-8 text input
         dh.create_global::<Self, ZwpTextInputManagerV3, _>(1, ());
+
+        let output_scale = if (scale.fract()).abs() < 1e-5 {
+            Scale::Integer(scale as i32)
+        } else {
+            Scale::Fractional(scale)
+        };
 
         // Initialize output and advertise it to Wayland clients
         let output = Output::new(
@@ -138,12 +156,15 @@ impl TermwayState {
         output.change_current_state(
             Some(Mode { size: (width as i32, height as i32).into(), refresh: 60000 }),
             Some(Transform::Normal),
-            Some(Scale::Integer(1)),
+            Some(output_scale),
             Some((0, 0).into()),
         );
         output.set_preferred(Mode { size: (width as i32, height as i32).into(), refresh: 60000 });
 
         let data_device_state = DataDeviceState::new::<Self>(dh);
+
+        let logical_width = ((width as f64 / scale).round() as u32).max(1);
+        let logical_height = ((height as f64 / scale).round() as u32).max(1);
 
         let mut state = Self {
             dh: dh.clone(),
@@ -152,6 +173,8 @@ impl TermwayState {
             xdg_decoration_state,
             shm_state,
             popups: PopupManager::default(),
+            fractional_scale_manager_state,
+            viewporter_state,
             seat_state,
             seat,
             keyboard,
@@ -176,11 +199,18 @@ impl TermwayState {
             dirty: true,
             needs_clear: false,
             running: true,
-            width,
-            height,
+            scale,
+            physical_width: width,
+            physical_height: height,
+            width: logical_width,
+            height: logical_height,
             enable_wm,
             show_splash: true,
-            splash_info: format!("Wayland + XWayland | {}x{}", width, height),
+            splash_info: if (scale - 1.0).abs() < 1e-5 {
+                format!("Wayland + XWayland | {}x{}", width, height)
+            } else {
+                format!("Wayland + XWayland | {}x{} (@{:.2}x)", width, height, scale)
+            },
             splash_command: String::from("gui-app"),
             start_time: std::time::Instant::now(),
         };

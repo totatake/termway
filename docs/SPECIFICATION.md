@@ -111,6 +111,7 @@ flowchart LR
 | **FR-29** | パフォーマンスプロファイリング (`--profile`) | `--profile` オプションまたは環境変数 `TERMWAY_PROFILE=1` 指定時に、レンダリング・エンコード・I/Oステージごとの詳細レイテンシテレメトリ（avg/max/p95）を定期出力すること。また専用ベンチマークスイートによる継続的リグレッション検知を保証すること。 | `tests/perf_pipeline.rs`<br/>`tests/unit_compositor.rs` | **PASS** |
 | **FR-30** | Sixel ダーティバンドキャッシュ & Kitty ストリーミング・部分矩形プレースメント | Sixel エンコーダにおいて 6 行バンド単位の FNV-1a ハッシュキャッシュによる完全同一バンドスキップを行い、Kitty エンコーダにおいては `KittyStreamEncoder` によるゼロアロケーションバッファ再利用ストリーミングおよびセルスナップ部分矩形プレースメント転送（50%以下の汚損領域の部分配置転送と60フレーム定期統合リフレッシュ）を実現すること。 | `tests/unit_sixel_encoder.rs`<br/>`tests/unit_kitty_encoder.rs` | **PASS** |
 | **FR-31** | 統一 FD ポーリング & `--fps` フレームペーシング | `calloop` イベントループにおいて stdin, Wayland display, XWayland, clipboard, signal の全記述子を単一 epoll で統一監視し、`--fps`（デフォルト 30fps）による適応型フレームペーシング制御を行うこと。 | `tests/unit_compositor.rs`<br/>`tests/integration_pipeline.rs` | **PASS** |
+| **FR-34** | Wayland Fractional Scale (`wp_fractional_scale_v1`) & Viewporter (`wp_viewporter`) & HiDPI制御 (`--scale`) | `--scale <FACTOR>`（0.25〜4.0）による動的スケール指定、`wp_fractional_scale_v1`（120分の1単位）および `wp_viewporter` 拡張プロトコルのアドバタイズ、サーフェスコミット時の `preferred_scale` 通知、論理/物理座標系の分離（ウィンドウ管理・装飾・マウス入力・Pixman合成）を保証すること。 | `tests/unit_compositor.rs` | **PASS** |
 
 ### 2.2 非機能要件 (Non-Functional Requirements)
 
@@ -119,7 +120,7 @@ flowchart LR
 | **NFR-1** | レスポンス・低遅延 | 非同期エンコードワーカースレッド分離と最新フレーム間引きにより、高解像度でも入力遅延ゼロを実現すること。 | `TerminalBackend` 非同期ワーカー＆フレーム間引きにより達成 |
 | **NFR-2** | 堅牢性・端末保護 | プログラムが異常終了しても、端末のRawモードやマウストラッキングが残留してシェルが壊れる事故を100%防止すること。 | `RawModeGuard::drop` の RAII パターンにより保証 |
 | **NFR-3** | 依存関係の最小化 | C `libx11` / `Xvfb` / `openbox` への依存を排除し、Smithay + XWayland の単一バイナリとして動作すること。 | v0.6.0 にてレガシー Xvfb エンジンおよび `x11` クレート依存を完全排除 |
-| **NFR-4** | モジュール構造・テスタビリティ | `WindowManager` やプロトコルハンドラ群がドメイン分割され、全テストが外部 Xvfb サーバー不要で高速に実行できること。 | 全 88 テストが約 0.35 秒で完走 |
+| **NFR-4** | モジュール構造・テスタビリティ | `WindowManager` やプロトコルハンドラ群がドメイン分割され、全テストが外部 Xvfb サーバー不要で高速に実行できること。 | 全 92 テストが約 0.35 秒で完走 |
 | **NFR-5** | SIMD ベクトル高速化 | `x86_64` (AVX2) および `aarch64` (ARM NEON) 環境において、タイル差分ハッシュ計算、Sixel RGB332 減色・6行バンド走査、BGRX→RGBA ピクセル変換をベクトル高速化すること。 | 1080x720 差分スキャン約 0.20ms、Sixel エンコード約 3.78ms を達成（x86_64 AVX2 および aarch64 ARM NEON 両対応） |
 
 ---
@@ -128,7 +129,7 @@ flowchart LR
 
 | テストターゲット | テスト数 | 検証内容 |
 | :--- | :---: | :--- |
-| `tests/unit_compositor.rs` | 28 | `TermwayState` / `WindowManager` ドメイン操作、SSD/CSD 装飾、最大化・80%中央復元・最小化、動的リサイズ (`SIGWINCH`)、OSC 52 クリップボード送信、マウスホイール、スプラッシュ描画・消去、JSON 状態ダンプ、UTF-8 日本語入力 |
+| `tests/unit_compositor.rs` | 32 | `TermwayState` / `WindowManager` ドメイン操作、SSD/CSD 装飾、最大化・80%中央復元・最小化、動的リサイズ (`SIGWINCH`)、OSC 52 クリップボード送信、マウスホイール、スプラッシュ描画・消去、JSON 状態ダンプ、UTF-8 日本語入力、Fractional Scale / Viewporter / HiDPI スケールレンダリング検証 |
 | `tests/unit_session.rs` | 7 | ハイブリッド D-Bus セッション起動、Snap コマンド判定・PATH シムルーティング、Polkit エージェント検出、コマンド存在性検証、`/tmp/.X11-unix` 書込検査 |
 | `tests/unit_kitty_encoder.rs` | 10 | Kitty フルスクリーン RFC 1950 zlib 圧縮 (`o=z`)・4096B チャンク分割・ラウンドトリップ解凍検証、部分矩形プレースメント転送構造・デコード検証、大面積更新時フルフレームフォールバック、60フレーム定期統合リフレッシュ、1080x720 パフォーマンス検証 |
 | `tests/unit_sixel_encoder.rs` | 7 | Sixel AVX2 / ARM NEON SIMD 減色・6行バンド走査・単色バンド高速パス・RLE 圧縮・非8倍数幅エッジケース、6行バンド差分キャッシュ (`SixelStreamEncoder`)、1080x720 パフォーマンス検証 |
@@ -152,7 +153,7 @@ $ cargo test --release
      Running tests/integration_pipeline.rs (7 tests) ... ok
      Running tests/perf_pipeline.rs (1 test) ... ok
      Running tests/system_e2e_gui.rs (2 tests) ... ok
-     Running tests/unit_compositor.rs (28 tests) ... ok
+     Running tests/unit_compositor.rs (32 tests) ... ok
      Running tests/unit_damage_tracker.rs (6 tests) ... ok
      Running tests/unit_keyboard.rs (5 tests) ... ok
      Running tests/unit_kitty_encoder.rs (10 tests) ... ok
@@ -162,6 +163,7 @@ $ cargo test --release
      Running tests/unit_sixel_encoder.rs (7 tests) ... ok
      Running tests/unit_terminal.rs (5 tests) ... ok
 
-test result: ok. 88 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.35s
+test result: ok. 92 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.35s
 ```
-全 88 テストが 100% 成功し、すべての要件定義項目が検証されました。
+全 92 テストが 100% 成功し、すべての要件定義項目が検証されました。
+

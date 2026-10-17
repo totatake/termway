@@ -27,8 +27,8 @@ src/
 │   ├── window_manager.rs           # WindowManager: Z-order・フォーカス・ドラッグ・最小化/最大化・リサイズ再配置
 │   ├── window.rs                   # ManagedWindow / WindowSurface / WindowDragState: ウィンドウジオメトリ・ヒットテスト
 │   ├── handlers/                   # Smithay プロトコルハンドラ群（ドメイン別分割）
-│   │   ├── mod.rs                  # delegate_*! マクロ集約
-│   │   ├── compositor.rs           # CompositorHandler / BufferHandler / ShmHandler / OutputHandler
+│   │   ├── mod.rs                  # delegate_*! マクロ集約 (compositor, xdg_shell, seat, fractional_scale, viewporter)
+│   │   ├── compositor.rs           # CompositorHandler / BufferHandler / ShmHandler / OutputHandler / FractionalScaleHandler
 │   │   ├── xdg_shell.rs            # XdgShellHandler / XdgDecorationHandler (Toplevel・Popup・Configure制御)
 │   │   └── seat.rs                 # SeatHandler / SelectionHandler / DataDeviceHandler (OSC 52 & クリップボード統合)
 │   ├── xwayland.rs                 # XwmHandler / XWaylandShellHandler: X11 ウィンドウ管理 & Override-Redirect 制御
@@ -177,6 +177,8 @@ classDiagram
         +CompositorState compositor_state
         +XdgShellState xdg_shell_state
         +XdgDecorationState xdg_decoration_state
+        +FractionalScaleManagerState fractional_scale_manager_state
+        +ViewporterState viewporter_state
         +ShmState shm_state
         +SeatState~Self~ seat_state
         +DataDeviceState data_device_state
@@ -186,12 +188,16 @@ classDiagram
         +Seat~Self~ seat
         +KeyboardHandle~Self~ keyboard
         +PointerHandle~Self~ pointer
+        +f64 scale
+        +u32 physical_width
+        +u32 physical_height
         +u32 width
         +u32 height
         +bool dirty
         +bool needs_clear
         +bool running
         +new(dh: &DisplayHandle, width: u32, height: u32, enable_wm: bool) Self
+        +with_scale(dh: &DisplayHandle, phys_w: u32, phys_h: u32, enable_wm: bool, scale: f64) Self
         +raise_window(window_id: usize)
         +minimize_window(window_id: usize)
         +unminimize_window(window_id: usize)
@@ -550,3 +556,19 @@ stateDiagram-v2
   - 一方、Ubuntu の Snap 版 `firefox` や `xdg-open` など、ホストの `systemd --user` による cgroup スコープ生成（`snap-confine`）を要求するアプリには、起動コマンド判定および `PATH` ラッパーシムによってホストの Ambient バスを自動ルーティング（詳細は [ADR-0001](adr/0001-hybrid-dbus-session-routing.md) を参照）。
 - **Secret Service ブリッジ (`src/session/secret_bridge.rs`)**:
   - 隔離 D-Bus セッション内で動く VS Code や Chromium 等がホストの GNOME Keyring / KWallet にアクセスできるよう、隔離バス上の `org.freedesktop.secrets` メソッド呼び出し・シグナルをホストの Ambient バスへ双方向中継。
+
+---
+
+### 3.4 Wayland Fractional Scale / Viewporter & HiDPI 制御 (`src/compositor/`)
+
+1. **論理座標系と物理座標系の完全分離**:
+   - コンポジタ内部のウィンドウマネージャ（`WindowManager`、`ManagedWindow.loc`、`ManagedWindow.size`）、リサイズ/ドラッグ境界、および SGR マウスイベント座標（`src/compositor/input.rs`）はすべて **論理座標空間 (Logical Coordinates)** で一元管理（`loc_x = px / scale`, `loc_y = py / scale`）。
+   - 一方、Pixman オフスクリーン描画バッファ、ダメージ差分トラッカー、および Sixel/Kitty プロトコルエンコーダは **物理ピクセル空間 (Physical Coordinates)** で動作。
+2. **Wayland Fractional Scale (`wp_fractional_scale_v1`)**:
+   - `FractionalScaleManagerState` および `FractionalScaleHandler` を実装し、クライアントからのリクエストに対して `preferred_scale(120分の1単位)` を即時通知。クライアントは 1.25x / 1.5x / 2.0x などの任意スケールに正確にラスタライズされた高精細バッファを直接提出可能。
+3. **Wayland Viewporter (`wp_viewporter`)**:
+   - `ViewporterState` および `delegate_viewporter!` により、クライアントが論理寸法と異なるアスペクト比やスケールでサブサーフェスを提出した場合でも、Smithay のバッファコミットハンドラ（`on_commit_buffer_handler`）と連携して自動クロップ＆スケーリングを保証。
+4. **整数/小数スケール適応描画**:
+   - `TermwayRenderer` はサーフェスツリー描画時に `render_elements_from_surface_tree` に物理座標位置（`to_phys(window.loc)`）と `Scale<f64>` を指定。小数スケール対応クライアントの高精細バッファは等倍クリア描画され、非対応レガシーアプリはピクセル補正により正しい画面サイズでレンダリング。
+   - タイトルバー・枠線・フォントレンダラ（`DecorationRenderer`）も指定スケール倍率（`scale`）を乗算して自動スケーリング。
+

@@ -10,8 +10,8 @@ mod seat;
 mod xdg_shell;
 
 use smithay::{
-    delegate_compositor, delegate_data_device, delegate_output, delegate_seat, delegate_shm,
-    delegate_xdg_decoration, delegate_xdg_shell,
+    delegate_compositor, delegate_data_device, delegate_fractional_scale, delegate_output,
+    delegate_seat, delegate_shm, delegate_viewporter, delegate_xdg_decoration, delegate_xdg_shell,
 };
 
 use super::state::TermwayState;
@@ -23,3 +23,5 @@ delegate_seat!(TermwayState);
 delegate_output!(TermwayState);
 delegate_data_device!(TermwayState);
 delegate_xdg_decoration!(TermwayState);
+delegate_fractional_scale!(TermwayState);
+delegate_viewporter!(TermwayState);

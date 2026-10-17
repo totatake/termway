@@ -15,6 +15,7 @@ OPTIONS:
     --height <PIXELS>         Virtual display height (default: auto from terminal)
     --cell-size <WxH>         Font cell pixel size (e.g. 10x20, default: auto/env/10x20)
     --fps <FPS>               Target frame rate (default: 30)
+    --scale <FACTOR>          Wayland output scale factor (e.g. 1.0, 1.25, 1.5, 2.0; default: 1.0)
     --sixel                   Force Sixel graphics protocol
     --kitty                   Force Kitty graphics protocol
     --hud                     Enable real-time performance HUD indicator
@@ -26,7 +27,7 @@ OPTIONS:
 
 EXAMPLES:
     termway --demo
-    termway -- gvim
+    termway --scale 1.5 -- gvim
     termway --kitty -- gvim
     termway --cell-size 10x22 -- gvim
     termway -- xclock
@@ -94,6 +95,19 @@ fn main() -> Result<()> {
                 std::process::exit(1);
             }
             config.fps = args[i].parse()?;
+        } else if arg == "--scale" {
+            i += 1;
+            if i >= args.len() {
+                eprintln!("Error: --scale requires a numeric float argument (e.g. 1.25, 1.5, 2.0)");
+                std::process::exit(1);
+            }
+            match args[i].parse::<f64>() {
+                Ok(s) if s >= 0.25 && s <= 4.0 => config.scale = s,
+                _ => {
+                    eprintln!("Error: --scale must be a float between 0.25 and 4.0 (e.g. 1.25, 1.5, 2.0)");
+                    std::process::exit(1);
+                }
+            }
         } else if arg == "--wayland" {
             // Native Smithay Wayland Compositor is the default and sole engine
         } else if arg == "--sixel" {
