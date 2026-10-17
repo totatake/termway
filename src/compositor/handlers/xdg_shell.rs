@@ -78,6 +78,7 @@ impl XdgShellHandler for TermwayState {
         win.is_maximized = is_maximized;
         win.saved_geometry = saved_geometry;
         self.wm.windows.push(win);
+        self.update_active_window_title();
 
         self.dismiss_splash();
         self.set_keyboard_focus(Some(wl));

@@ -120,6 +120,7 @@ pub struct TermwayState {
     pub start_time: std::time::Instant,
     pub pixel_mouse: bool,
     pub current_cursor_shape: String,
+    pub current_terminal_title: String,
 }
 
 impl TermwayState {
@@ -227,6 +228,7 @@ impl TermwayState {
             start_time: std::time::Instant::now(),
             pixel_mouse: false,
             current_cursor_shape: String::from("default"),
+            current_terminal_title: String::from("termway"),
         };
         state.init_unicode_keymap_cache();
         state
@@ -239,6 +241,32 @@ impl TermwayState {
             self.current_cursor_shape = shape.to_string();
             let mut stdout = std::io::stdout();
             let _ = write!(stdout, "\x1b]22;{}\x07", shape);
+            let _ = stdout.flush();
+        }
+    }
+
+    /// Dynamically synchronizes active window title to the host terminal tab/titlebar via OSC 2 (`\x1b]2;<title>\x07`).
+    /// Deduplicates emissions so that escape sequences are only sent when the title actually changes.
+    pub fn update_active_window_title(&mut self) {
+        let title = self
+            .wm
+            .windows
+            .iter()
+            .rev()
+            .find(|w| !w.is_minimized)
+            .map(|w| w.title.trim())
+            .unwrap_or("");
+
+        let new_title = if title.is_empty() {
+            "termway".to_string()
+        } else {
+            format!("termway: {}", title)
+        };
+
+        if self.current_terminal_title != new_title {
+            self.current_terminal_title = new_title;
+            let mut stdout = std::io::stdout();
+            let _ = write!(stdout, "\x1b]2;{}\x07", self.current_terminal_title);
             let _ = stdout.flush();
         }
     }
@@ -312,6 +340,7 @@ impl TermwayState {
             self.raise_window(top_id);
         } else {
             self.set_keyboard_focus(None);
+            self.update_active_window_title();
         }
         self.needs_clear = true;
         self.dirty = true;
@@ -333,6 +362,7 @@ impl TermwayState {
         if let Some(surface) = wl_surface {
             self.set_keyboard_focus(Some(surface));
         }
+        self.update_active_window_title();
         self.dirty = true;
     }
 
@@ -343,6 +373,7 @@ impl TermwayState {
         if let Some(s) = top_surface {
             self.set_keyboard_focus(Some(s));
         }
+        self.update_active_window_title();
     }
 
 

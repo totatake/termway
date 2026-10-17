@@ -68,6 +68,9 @@ impl CompositorHandler for TermwayState {
                     w.x11_shape = shape;
                 }
                 w.update_title();
+            }
+            self.update_active_window_title();
+            if let Some(w) = self.wm.get_mut(win_id) {
                 if self.enable_wm {
                     let bbox = smithay::desktop::utils::bbox_from_surface_tree(surface, (0, 0));
                     if bbox.size.w > 0 && bbox.size.h > 0 {

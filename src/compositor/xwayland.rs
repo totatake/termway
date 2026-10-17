@@ -114,6 +114,7 @@ impl XwmHandler for TermwayState {
                     let _ = window.set_maximized(true);
                 }
                 self.wm.windows.push(win);
+                self.update_active_window_title();
 
                 if self.show_splash {
                     self.show_splash = false;
@@ -295,6 +296,7 @@ impl XwmHandler for TermwayState {
                 }
             }
         }
+        self.update_active_window_title();
         self.dirty = true;
     }
 

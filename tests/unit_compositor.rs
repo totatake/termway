@@ -1187,3 +1187,42 @@ fn test_renderer_with_fractional_scale() {
     let pixels = renderer.render(&state).expect("Render with scale should succeed");
     assert_eq!(pixels.len(), 600 * 400 * 4);
 }
+
+#[test]
+fn test_compositor_window_title_synchronization() {
+    use smithay::utils::{Point, Size};
+    use termway::compositor::window::ManagedWindow;
+
+    let display = smithay::reexports::wayland_server::Display::<TermwayState>::new()
+        .expect("Failed to create Wayland Display");
+    let dh = display.handle();
+
+    let mut state = TermwayState::new(&dh, 800, 600, true);
+    assert_eq!(state.current_terminal_title, "termway");
+
+    // Add first window ("Text Editor")
+    let win1_id = state.wm.alloc_id();
+    let win1 = ManagedWindow::new_dummy(win1_id, "Text Editor".into(), Point::from((50, 50)), Size::from((400, 300)));
+    state.wm.windows.push(win1);
+    state.update_active_window_title();
+    assert_eq!(state.current_terminal_title, "termway: Text Editor");
+
+    // Add second window ("Web Browser")
+    let win2_id = state.wm.alloc_id();
+    let win2 = ManagedWindow::new_dummy(win2_id, "Web Browser".into(), Point::from((80, 80)), Size::from((500, 400)));
+    state.wm.windows.push(win2);
+    state.update_active_window_title();
+    assert_eq!(state.current_terminal_title, "termway: Web Browser");
+
+    // Minimize second window -> fallback to first window
+    state.minimize_window(win2_id);
+    assert_eq!(state.current_terminal_title, "termway: Text Editor");
+
+    // Minimize first window -> all windows minimized -> reset to "termway"
+    state.minimize_window(win1_id);
+    assert_eq!(state.current_terminal_title, "termway");
+
+    // Restore second window -> returns to "termway: Web Browser"
+    state.restore_window(win2_id);
+    assert_eq!(state.current_terminal_title, "termway: Web Browser");
+}
