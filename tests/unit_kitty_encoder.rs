@@ -298,3 +298,73 @@ fn test_kitty_partial_placement_periodic_consolidation() {
     assert!(output.starts_with("\x1b_Ga=d,d=a\x1b\\\x1b[H"), "61st frame should consolidate with deletion and home cursor");
     assert!(output.contains("s=100,v=100,c=10,r=10"));
 }
+
+#[test]
+fn test_kitty_uncompressible_and_varying_sizes() {
+    use termway::display::DamageRect;
+    use termway::protocol::KittyStreamEncoder;
+
+    let mut encoder = KittyStreamEncoder::new();
+    let mut output = String::new();
+
+    let mut rng: u64 = 0x123456789abcdef0;
+    let mut next_u8 = || {
+        rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1);
+        (rng >> 33) as u8
+    };
+
+    for &(w, h) in &[(1, 1), (10, 10), (13, 17), (100, 100), (320, 240), (800, 600)] {
+        let mut rgba = vec![0u8; (w * h * 4) as usize];
+        for b in &mut rgba {
+            *b = next_u8();
+        }
+        encoder.encode_frame_into(
+            &rgba, w, h, 80, 24, 10, 20, None, false, &mut output,
+        );
+        assert!(!output.is_empty());
+
+        let damage = [DamageRect {
+            x: 1,
+            y: 1,
+            width: (w / 3).max(1),
+            height: (h / 3).max(1),
+        }];
+        encoder.encode_frame_into(
+            &rgba, w, h, 80, 24, 10, 20, Some(&damage), false, &mut output,
+        );
+        assert!(!output.is_empty());
+    }
+}
+
+#[test]
+fn test_kitty_gui_pattern_compression_efficiency() {
+    use termway::protocol::KittyStreamEncoder;
+
+    let mut encoder = KittyStreamEncoder::new();
+    let mut output = String::new();
+
+    let w = 800;
+    let h = 600;
+    let mut rgba = vec![0x28u8; (w * h * 4) as usize];
+    for y in 0..h {
+        for x in 0..w {
+            let idx = ((y * w + x) * 4) as usize;
+            rgba[idx + 1] = 0x2c;
+            rgba[idx + 2] = 0x34;
+            rgba[idx + 3] = 0xff;
+            if x >= 100 && x <= 700 && y >= 100 && y <= 500 {
+                rgba[idx] = 0x1e;
+                rgba[idx + 1] = 0x1e;
+                rgba[idx + 2] = 0x1e;
+            }
+        }
+    }
+
+    encoder.encode_frame_into(
+        &rgba, w, h, 80, 24, 10, 20, None, false, &mut output,
+    );
+    // 800x600 uncompressed is 1.92MB. Level 2 dynamic Huffman compression should compress this to under 25KB.
+    assert!(output.len() < 25_000, "Encoded output length {} exceeded 25,000 bytes", output.len());
+    assert!(output.contains("s=800,v=600,c=80,r=24"));
+}
+

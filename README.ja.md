@@ -156,11 +156,18 @@ sudo apt-get install -y lxpolkit           # 軽量な認証ダイアログ
 git clone https://github.com/totatake/termway.git
 cd termway
 
-# ビルド
+# リリースビルド (SIMD 高速化 zlib-ng エンジンがデフォルト有効)
 cargo build --release
 ```
 
 バイナリは `target/release/termway` に生成されます。
+
+> **ビルド機能（Features）**:
+> - `zlib-ng`（デフォルト有効）: Level 2 最適化（動的ハフマン木＋AVX-512 / AVX2 / ARM NEON ベクトル探索）を適用した SIMD 高速化 zlib エンジン（`flate2`/`zlib-rs`）を使用します。miniz_oxide を上回る高圧縮率（転送サイズ約 10% 削減）と 2,300MB/s 超の高速スループットを両立し、全端末（Noctty, Ghostty, WezTerm, Kitty, Foot, Windows Terminal）で安定動作します。
+> - 依存クレート数を最小限に抑えた純粋な `miniz_oxide` 実装でビルドする場合は、`--no-default-features` を指定します:
+>   ```bash
+>   cargo build --release --no-default-features
+>   ```
 
 ### aarch64 (ARM64) 向けクロスビルド (Ubuntu x86_64 環境)
 

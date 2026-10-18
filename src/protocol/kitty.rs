@@ -5,6 +5,10 @@ use base64::Engine;
 pub struct KittyEncoder;
 
 use std::fmt::Write;
+#[cfg(feature = "zlib-ng")]
+use flate2::{Compress, Compression, FlushCompress, Status};
+
+#[cfg(not(feature = "zlib-ng"))]
 use miniz_oxide::deflate::core::{
     compress, create_comp_flags_from_zip_params, CompressionStrategy, CompressorOxide, TDEFLFlush,
     TDEFLStatus,
@@ -14,6 +18,9 @@ use crate::display::DamageRect;
 
 /// High-performance stateful Kitty protocol encoder reusing zlib compression state and buffers.
 pub struct KittyStreamEncoder {
+    #[cfg(feature = "zlib-ng")]
+    compressor: Compress,
+    #[cfg(not(feature = "zlib-ng"))]
     compressor: CompressorOxide,
     compressed_buf: Vec<u8>,
     sub_image_buf: Vec<u8>,
@@ -23,9 +30,15 @@ pub struct KittyStreamEncoder {
 
 impl Default for KittyStreamEncoder {
     fn default() -> Self {
-        let flags = create_comp_flags_from_zip_params(1, 1, CompressionStrategy::Default as i32);
+        #[cfg(feature = "zlib-ng")]
+        let compressor = Compress::new(Compression::new(2), true);
+        #[cfg(not(feature = "zlib-ng"))]
+        let compressor = {
+            let flags = create_comp_flags_from_zip_params(1, 1, CompressionStrategy::Default as i32);
+            CompressorOxide::new(flags)
+        };
         Self {
-            compressor: CompressorOxide::new(flags),
+            compressor,
             compressed_buf: Vec::with_capacity(256 * 1024),
             sub_image_buf: Vec::with_capacity(64 * 1024),
             partial_frames_count: 0,
@@ -37,6 +50,86 @@ impl Default for KittyStreamEncoder {
 impl KittyStreamEncoder {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Compresses input bytes into `compressed_buf` with RFC 1950 zlib wrapping.
+    #[inline]
+    fn compress_raw(
+        #[cfg(feature = "zlib-ng")] compressor: &mut Compress,
+        #[cfg(not(feature = "zlib-ng"))] compressor: &mut CompressorOxide,
+        compressed_buf: &mut Vec<u8>,
+        input: &[u8],
+    ) {
+        compressor.reset();
+        compressed_buf.clear();
+        let min_cap = (input.len() / 2).max(1024);
+        if compressed_buf.capacity() < min_cap {
+            compressed_buf.reserve(min_cap - compressed_buf.capacity());
+        }
+        compressed_buf.resize(compressed_buf.capacity(), 0);
+
+        #[cfg(feature = "zlib-ng")]
+        {
+            let mut out_pos = 0;
+            let mut in_pos = 0;
+            loop {
+                let before_in = compressor.total_in();
+                let before_out = compressor.total_out();
+                let status = compressor
+                    .compress(
+                        &input[in_pos..],
+                        &mut compressed_buf[out_pos..],
+                        FlushCompress::Finish,
+                    );
+                let bytes_in = (compressor.total_in() - before_in) as usize;
+                let bytes_out = (compressor.total_out() - before_out) as usize;
+                in_pos += bytes_in;
+                out_pos += bytes_out;
+
+                match status {
+                    Ok(Status::StreamEnd) => {
+                        compressed_buf.truncate(out_pos);
+                        break;
+                    }
+                    Ok(Status::Ok) | Ok(Status::BufError) => {
+                        if compressed_buf.len().saturating_sub(out_pos) < 8192 {
+                            let new_len = (compressed_buf.len() * 2).max(16384);
+                            compressed_buf.resize(new_len, 0);
+                        }
+                    }
+                    Err(e) => panic!("zlib-ng compress failed: {:?}", e),
+                }
+            }
+        }
+
+        #[cfg(not(feature = "zlib-ng"))]
+        {
+            let mut out_pos = 0;
+            let mut in_slice = input;
+            loop {
+                let (status, bytes_in, bytes_out) = compress(
+                    compressor,
+                    in_slice,
+                    &mut compressed_buf[out_pos..],
+                    TDEFLFlush::Finish,
+                );
+                out_pos += bytes_out;
+
+                match status {
+                    TDEFLStatus::Done => {
+                        compressed_buf.truncate(out_pos);
+                        break;
+                    }
+                    TDEFLStatus::Okay if bytes_in <= in_slice.len() => {
+                        in_slice = &in_slice[bytes_in..];
+                        if compressed_buf.len().saturating_sub(out_pos) < 4096 {
+                            compressed_buf.resize(compressed_buf.len() * 2, 0);
+                        }
+                    }
+                    _ => panic!("miniz_oxide compress failed"),
+                }
+            }
+        }
     }
 
     /// Reset stream state, forcing full-frame transmission on next frame.
@@ -196,39 +289,12 @@ impl KittyStreamEncoder {
         }
 
         // 1. Zero-allocation RFC 1950 zlib compression (level 1)
-        self.compressor.reset();
-        self.compressed_buf.clear();
-        let min_cap = (self.sub_image_buf.len() / 2).max(1024);
-        if self.compressed_buf.capacity() < min_cap {
-            self.compressed_buf.reserve(min_cap - self.compressed_buf.capacity());
-        }
-        self.compressed_buf.resize(self.compressed_buf.capacity(), 0);
-
-        let mut out_pos = 0;
-        let mut input = &self.sub_image_buf[..];
-        loop {
-            let (status, bytes_in, bytes_out) = compress(
-                &mut self.compressor,
-                input,
-                &mut self.compressed_buf[out_pos..],
-                TDEFLFlush::Finish,
-            );
-            out_pos += bytes_out;
-
-            match status {
-                TDEFLStatus::Done => {
-                    self.compressed_buf.truncate(out_pos);
-                    break;
-                }
-                TDEFLStatus::Okay if bytes_in <= input.len() => {
-                    input = &input[bytes_in..];
-                    if self.compressed_buf.len().saturating_sub(out_pos) < 4096 {
-                        self.compressed_buf.resize(self.compressed_buf.len() * 2, 0);
-                    }
-                }
-                _ => panic!("miniz_oxide compress failed"),
-            }
-        }
+        Self::compress_raw(
+            &mut self.compressor,
+            &mut self.compressed_buf,
+            &self.sub_image_buf,
+        );
+        let out_pos = self.compressed_buf.len();
 
         // 2. Direct streaming Base64 encoding into Kitty chunk packets
         output.clear();
@@ -302,39 +368,8 @@ impl KittyStreamEncoder {
         output: &mut String,
     ) {
         // 1. Zero-allocation RFC 1950 zlib compression (level 1)
-        self.compressor.reset();
-        self.compressed_buf.clear();
-        let min_cap = (rgba.len() / 2).max(1024);
-        if self.compressed_buf.capacity() < min_cap {
-            self.compressed_buf.reserve(min_cap - self.compressed_buf.capacity());
-        }
-        self.compressed_buf.resize(self.compressed_buf.capacity(), 0);
-
-        let mut out_pos = 0;
-        let mut input = rgba;
-        loop {
-            let (status, bytes_in, bytes_out) = compress(
-                &mut self.compressor,
-                input,
-                &mut self.compressed_buf[out_pos..],
-                TDEFLFlush::Finish,
-            );
-            out_pos += bytes_out;
-
-            match status {
-                TDEFLStatus::Done => {
-                    self.compressed_buf.truncate(out_pos);
-                    break;
-                }
-                TDEFLStatus::Okay if bytes_in <= input.len() => {
-                    input = &input[bytes_in..];
-                    if self.compressed_buf.len().saturating_sub(out_pos) < 4096 {
-                        self.compressed_buf.resize(self.compressed_buf.len() * 2, 0);
-                    }
-                }
-                _ => panic!("miniz_oxide compress failed"),
-            }
-        }
+        Self::compress_raw(&mut self.compressor, &mut self.compressed_buf, rgba);
+        let out_pos = self.compressed_buf.len();
 
         // 2. Direct streaming Base64 encoding into Kitty chunk packets (no intermediate string)
         output.clear();

@@ -156,11 +156,18 @@ sudo apt-get install -y lxpolkit           # Lightweight authentication dialog
 git clone https://github.com/totatake/termway.git
 cd termway
 
-# Build release binary
+# Build release binary (SIMD-accelerated zlib-ng engine enabled by default)
 cargo build --release
 ```
 
 The compiled binary will be placed at `target/release/termway`.
+
+> **Build Features**:
+> - `zlib-ng` (enabled by default): Uses the SIMD-accelerated zlib engine (`flate2`/`zlib-rs`) tuned at Level 2 (dynamic Huffman + AVX-512/AVX2/NEON vectorization). Outperforms standard miniz_oxide in both compression ratio and throughput (2,300+ MB/s) with full compatibility across terminal emulators (Noctty, Ghostty, WezTerm, Kitty, Foot, Windows Terminal).
+> - To build with minimal dependencies using pure Rust `miniz_oxide`, build with `--no-default-features`:
+>   ```bash
+>   cargo build --release --no-default-features
+>   ```
 
 ### Cross-Compiling for aarch64 (on Ubuntu x86_64)
 

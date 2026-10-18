@@ -18,6 +18,11 @@ smithay = { version = "0.7", default-features = false, features = ["desktop", "r
 tempfile = "3.27"
 x11rb = { version = "0.13", features = ["shape"] }
 miniz_oxide = "0.8"
+flate2 = { version = "1.0", default-features = false, features = ["zlib-rs"], optional = true }
+
+[features]
+default = ["zlib-ng"]
+zlib-ng = ["dep:flate2"]
 
 [[bin]]
 name = "termway"
