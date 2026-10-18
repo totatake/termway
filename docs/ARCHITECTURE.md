@@ -1,4 +1,4 @@
-# termway システムアーキテクチャ詳細設計書 (v0.10.0)
+# termway システムアーキテクチャ詳細設計書 (v0.11.0)
 
 本書は、`termway` の**静的構造（モジュール構成・クラス/構造体関係・責務分割）**および**動的構造（起動シーケンス・非同期レンダリングパイプライン・ウィンドウ状態遷移・入力ディスパッチ）**について解説する技術設計ドキュメントです。
 
@@ -8,7 +8,7 @@
 
 ### 1.1 レイヤー構成とディレクトリツリー
 
-`termway` は単一バイナリの Smithay ベース自立型 Wayland コンポジタとして設計されており、以下の 5 つの疎結合なコアレイヤーで構成されています（v0.6.0 にてレガシー Xvfb エンジンを廃止し Smithay + XWayland アーキテクチャへ一本化、v0.7.0 にてコンポジタのモジュール分割とストリーム最適化、v0.8.0 にて aarch64/ARM NEON 最適化、v0.9.0 にて Kitty 部分プレースメント転送および Wayland Fractional Scale/HiDPI 制御、v0.10.0 にて OSC 22 マウスカーソル同期、Kitty Keyboard Protocol (CSI u)、Wayland Primary Selection、OSC 2 端末タブタイトル動的同期を実装）。
+`termway` は単一バイナリの Smithay ベース自立型 Wayland コンポジタとして設計されており、以下の 5 つの疎結合なコアレイヤーで構成されています（v0.6.0 にてレガシー Xvfb エンジンを廃止し Smithay + XWayland アーキテクチャへ一本化、v0.7.0 にてコンポジタのモジュール分割とストリーム最適化、v0.8.0 にて aarch64/ARM NEON 最適化、v0.9.0 にて Kitty 部分プレースメント転送および Wayland Fractional Scale/HiDPI 制御、v0.10.0 にて OSC 22 マウスカーソル同期、Kitty Keyboard Protocol (CSI u)、Wayland Primary Selection、OSC 2 端末タブタイトル動的同期、v0.11.0 にて 16-bit RGB565 色量子化 SIMD 前処理、端末保護固定画像 ID 方式、動的描画ゴーストを排除する全画面標準更新を実装）。
 
 ```text
 src/
