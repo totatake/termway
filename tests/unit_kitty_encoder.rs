@@ -92,10 +92,11 @@ fn test_encode_fullscreen_frame_large_chunked_roundtrip() {
         recombined_b64.push_str(payload);
         pos = abs_start + term_rel + 2;
     }
-
     let compressed = BASE64.decode(&recombined_b64).expect("valid base64");
     let decompressed = miniz_oxide::inflate::decompress_to_vec_zlib(&compressed).expect("valid zlib");
-    assert_eq!(decompressed, rgba);
+    let mut expected_rgba = rgba.clone();
+    termway::protocol::KittyStreamEncoder::quantize_rgb565(&rgba, &mut expected_rgba);
+    assert_eq!(decompressed, expected_rgba);
 }
 
 #[test]
@@ -193,9 +194,9 @@ fn test_kitty_partial_placement_structure() {
     let decompressed = miniz_oxide::inflate::decompress_to_vec_zlib(&compressed).expect("valid zlib");
 
     assert_eq!(decompressed.len(), (20 * 10 * 4) as usize);
-    assert_eq!(decompressed[0], 200);
-    assert_eq!(decompressed[1], 50);
-    assert_eq!(decompressed[2], 80);
+    assert_eq!(decompressed[0], 200 & 0xF8);
+    assert_eq!(decompressed[1], 50 & 0xFC);
+    assert_eq!(decompressed[2], 80 & 0xF8);
     assert_eq!(decompressed[3], 255);
 }
 
@@ -366,5 +367,74 @@ fn test_kitty_gui_pattern_compression_efficiency() {
     // 800x600 uncompressed is 1.92MB. Level 2 dynamic Huffman compression should compress this to under 25KB.
     assert!(output.len() < 25_000, "Encoded output length {} exceeded 25,000 bytes", output.len());
     assert!(output.contains("s=800,v=600,c=80,r=24"));
+}
+
+#[test]
+fn test_quantization_compression_comparison() {
+    use flate2::{Compress, Compression, FlushCompress};
+
+    // Simulate 1080x720 video frame with gradients and low-amplitude noise
+    let w = 1080;
+    let h = 720;
+    let mut raw = vec![0u8; w * h * 4];
+    let mut seed = 123456789u32;
+    let mut lcg = || {
+        seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+        (seed >> 24) as u8
+    };
+
+    for y in 0..h {
+        for x in 0..w {
+            let idx = (y * w + x) * 4;
+            // Video gradient base + sensor noise (+-3)
+            let noise = (lcg() % 7) as i16 - 3;
+            let r = ((x * 255 / w) as i16 + noise).clamp(0, 255) as u8;
+            let g = ((y * 255 / h) as i16 + noise).clamp(0, 255) as u8;
+            let b = (((x + y) * 128 / (w + h)) as i16 + noise).clamp(0, 255) as u8;
+            raw[idx] = r;
+            raw[idx + 1] = g;
+            raw[idx + 2] = b;
+            raw[idx + 3] = 255;
+        }
+    }
+
+    // Unmasked compression
+    let mut comp1 = Compress::new(Compression::new(2), true);
+    let mut out1 = vec![0u8; raw.len()];
+    comp1.compress(&raw, &mut out1, FlushCompress::Finish).unwrap();
+    let size_raw = comp1.total_out() as usize;
+
+    // Masked RGB565: R & 0xF8, G & 0xFC, B & 0xF8, A & 0xFF
+    let mut masked_565 = raw.clone();
+    for p in masked_565.chunks_exact_mut(4) {
+        p[0] &= 0xF8;
+        p[1] &= 0xFC;
+        p[2] &= 0xF8;
+    }
+    let mut comp2 = Compress::new(Compression::new(2), true);
+    let mut out2 = vec![0u8; raw.len()];
+    comp2.compress(&masked_565, &mut out2, FlushCompress::Finish).unwrap();
+    let size_565 = comp2.total_out() as usize;
+
+    // Masked RGB555: R & 0xF8, G & 0xF8, B & 0xF8, A & 0xFF
+    let mut masked_555 = raw.clone();
+    for p in masked_555.chunks_exact_mut(4) {
+        p[0] &= 0xF8;
+        p[1] &= 0xF8;
+        p[2] &= 0xF8;
+    }
+    let mut comp3 = Compress::new(Compression::new(2), true);
+    let mut out3 = vec![0u8; raw.len()];
+    comp3.compress(&masked_555, &mut out3, FlushCompress::Finish).unwrap();
+    let size_555 = comp3.total_out() as usize;
+
+    eprintln!(
+        "\n[QUANTIZATION BENCHMARK] 1080x720 video frame:\n  Raw RGBA32:   {} KB\n  RGB565 Mask:  {} KB ({:+.1}%)\n  RGB555 Mask:  {} KB ({:+.1}%)",
+        size_raw / 1024,
+        size_565 / 1024,
+        ((size_565 as f64 - size_raw as f64) / size_raw as f64) * 100.0,
+        size_555 / 1024,
+        ((size_555 as f64 - size_raw as f64) / size_raw as f64) * 100.0,
+    );
 }
 
