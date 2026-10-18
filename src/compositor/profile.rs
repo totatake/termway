@@ -32,6 +32,7 @@ impl CompositorMetrics {
         let b_metrics = backend.metrics();
         let jobs_submitted = b_metrics.jobs_submitted.load(Ordering::Relaxed);
         let jobs_rendered = b_metrics.jobs_rendered.load(Ordering::Relaxed);
+        let partial_frames = b_metrics.partial_frames.load(Ordering::Relaxed);
         let frames_dropped = b_metrics.frames_dropped.load(Ordering::Relaxed);
         let total_encode_us = b_metrics.total_encode_us.load(Ordering::Relaxed);
         let max_encode_us = b_metrics.max_encode_us.load(Ordering::Relaxed);
@@ -70,8 +71,8 @@ impl CompositorMetrics {
         eprintln!("Session Duration:      {:.2}s", elapsed_secs);
         eprintln!("Compositor Frames:     {} rendered, {} skipped (unchanged clean frames)",
             self.render_frames, self.clean_skips);
-        eprintln!("Backend Async Jobs:    {} submitted, {} rendered, {} dropped",
-            jobs_submitted, jobs_rendered, frames_dropped);
+        eprintln!("Backend Async Jobs:    {} submitted, {} rendered ({} partial), {} dropped",
+            jobs_submitted, jobs_rendered, partial_frames, frames_dropped);
         eprintln!("Latency Breakdown:");
         eprintln!("  1. Pixman Render:    avg = {:>6.2} ms,  max = {:>6.2} ms", avg_render_ms, self.render_max_us as f64 / 1000.0);
         eprintln!("  2. Damage Tracker:   avg = {:>6.1} μs,  max = {:>6.1} μs", avg_damage_us, self.damage_max_us as f64);
@@ -83,12 +84,13 @@ impl CompositorMetrics {
 
         if let Ok(path) = std::env::var("TERMWAY_PROFILE_FILE") {
             let report = format!(
-                r#"{{"duration_sec":{:.3},"render_frames":{},"clean_skips":{},"jobs_submitted":{},"jobs_rendered":{},"frames_dropped":{},"avg_render_ms":{:.3},"max_render_ms":{:.3},"avg_damage_us":{:.3},"max_damage_us":{:.3},"avg_encode_ms":{:.3},"max_encode_ms":{:.3},"avg_write_ms":{:.3},"max_write_ms":{:.3},"total_bytes":{},"kb_per_sec":{:.2}}}"#,
+                r#"{{"duration_sec":{:.3},"render_frames":{},"clean_skips":{},"jobs_submitted":{},"jobs_rendered":{},"partial_frames":{},"frames_dropped":{},"avg_render_ms":{:.3},"max_render_ms":{:.3},"avg_damage_us":{:.3},"max_damage_us":{:.3},"avg_encode_ms":{:.3},"max_encode_ms":{:.3},"avg_write_ms":{:.3},"max_write_ms":{:.3},"total_bytes":{},"kb_per_sec":{:.2}}}"#,
                 elapsed_secs,
                 self.render_frames,
                 self.clean_skips,
                 jobs_submitted,
                 jobs_rendered,
+                partial_frames,
                 frames_dropped,
                 avg_render_ms,
                 self.render_max_us as f64 / 1000.0,

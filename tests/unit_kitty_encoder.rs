@@ -53,7 +53,7 @@ fn test_encode_fullscreen_frame() {
     let encoded = KittyEncoder::encode_fullscreen_frame(&rgba, 32, 32, 80, 24, 1);
 
     // Must prepend cursor home sequence to align to top-left of terminal and specify o=z for compression
-    assert!(encoded.starts_with("\x1b[H\x1b_Ga=T,q=2,i=1,C=1,f=32,o=z,z=-2147483648,s=32,v=32,c=80,r=24"));
+    assert!(encoded.starts_with("\x1b[H\x1b_Ga=T,q=2,i=1,p=1,C=1,f=32,o=z,z=-2147483648,s=32,v=32,c=80,r=24"));
     assert!(encoded.ends_with("\x1b\\"));
 
     // Extract payload between ';' and '\x1b\'
@@ -78,7 +78,7 @@ fn test_encode_fullscreen_frame_large_chunked_roundtrip() {
     }
 
     let encoded = KittyEncoder::encode_fullscreen_frame(&rgba, 256, 256, 120, 40, 42);
-    assert!(encoded.starts_with("\x1b[H\x1b_Ga=T,q=2,i=42,C=1,f=32,o=z,z=-2147483648,s=256,v=256,c=120,r=40"));
+    assert!(encoded.starts_with("\x1b[H\x1b_Ga=T,q=2,i=42,p=1,C=1,f=32,o=z,z=-2147483648,s=256,v=256,c=120,r=40"));
     assert!(encoded.ends_with("\x1b\\"));
 
     // Verify chunking occurred and recombine base64 payload
@@ -139,13 +139,14 @@ fn test_kitty_partial_placement_structure() {
     let height = 100u32;
     let mut rgba = vec![10u8; (width * height * 4) as usize];
     let mut encoder = KittyStreamEncoder::new();
+    encoder.set_enable_partial(true);
     let mut output = String::new();
 
     // Frame 0: First frame without damage must establish full-screen canvas
     encoder.encode_frame_into(
         &rgba, width, height, 16, 10, 10, 10, None, false, &mut output,
     );
-    assert!(output.starts_with("\x1b[H\x1b_Ga=T,q=2,i=1,C=1,f=32,o=z,z=-2147483648"));
+    assert!(output.starts_with("\x1b[H\x1b_Ga=T,q=2,i=1,p=1,C=1,f=32,o=z,z=-2147483648"));
 
     // Modify a 20x10 area at (20, 30)
     for y in 30..40 {
@@ -165,8 +166,8 @@ fn test_kitty_partial_placement_structure() {
         height: 10,
     }];
 
-    // Frame 1: Small damage should emit a partial placement
-    encoder.encode_frame_into(
+    // Frame 1: First appearance of damage registers stationary candidate and safely emits full frame
+    let is_partial_1 = encoder.encode_frame_into(
         &rgba,
         width,
         height,
@@ -178,12 +179,30 @@ fn test_kitty_partial_placement_structure() {
         false,
         &mut output,
     );
+    assert!(!is_partial_1, "First frame of new bbox should emit full frame");
+    assert!(output.starts_with("\x1b[H\x1b_Ga=T,q=2,i=1,p=1,C=1"));
+
+    // Frame 2: Consecutive identical damage (e.g. stationary video player) emits partial placement
+    let is_partial_2 = encoder.encode_frame_into(
+        &rgba,
+        width,
+        height,
+        16,
+        10,
+        10,
+        10,
+        Some(&damage),
+        false,
+        &mut output,
+    );
+    assert!(is_partial_2, "Stationary bbox must emit partial placement");
 
     // Cursor position for (x=20, y=30) with cell size 10x10 -> col = 20/10 + 1 = 3, row = 30/10 + 1 = 4
     assert!(output.starts_with("\x1b[4;3H"), "Expected cursor at 4;3H, got: {}", &output[..20]);
-    assert!(output.contains("\x1b_Ga=T,q=2,C=1,f=32,o=z,z=-2147483648"));
+    assert!(output.contains("\x1b_Ga=T,q=2,i=2,p=1,C=1,f=32,o=z,z=-2147483647"));
     assert!(output.contains("s=20,v=10,c=2,r=1"));
     assert!(!output.contains("\x1b_Ga=d,d=a\x1b\\"), "Partial placement should not clear images");
+    assert!(!output.contains("\x1b_Ga=d,d=i,i=2\x1b\\"), "Partial placement should not clear subimages");
 
     // Extract payload and verify pixels
     let g_idx = output.find("\x1b_G").expect("kitty header");
@@ -201,6 +220,113 @@ fn test_kitty_partial_placement_structure() {
 }
 
 #[test]
+fn test_kitty_moving_damage_no_ghosting_full_frame() {
+    use termway::display::DamageRect;
+    use termway::protocol::KittyStreamEncoder;
+
+    let width = 160u32;
+    let height = 100u32;
+    let rgba = vec![10u8; (width * height * 4) as usize];
+    let mut encoder = KittyStreamEncoder::new();
+    encoder.set_enable_partial(true);
+    let mut output = String::new();
+
+    // Warmup frame
+    encoder.encode_frame_into(
+        &rgba, width, height, 16, 10, 10, 10, None, false, &mut output,
+    );
+
+    // Frame 1: Damage at (20, 30)
+    let damage_1 = [DamageRect {
+        x: 20,
+        y: 30,
+        width: 20,
+        height: 10,
+    }];
+    encoder.encode_frame_into(
+        &rgba, width, height, 16, 10, 10, 10, Some(&damage_1), false, &mut output,
+    );
+
+    // Frame 2: Damage moves to (40, 50) (e.g. xeyes pupil moving or window dragging)
+    let damage_2 = [DamageRect {
+        x: 40,
+        y: 50,
+        width: 20,
+        height: 10,
+    }];
+
+    let is_partial = encoder.encode_frame_into(
+        &rgba,
+        width,
+        height,
+        16,
+        10,
+        10,
+        10,
+        Some(&damage_2),
+        false,
+        &mut output,
+    );
+
+    // Moving damage MUST NOT use partial placement to guarantee zero ghosting
+    assert!(!is_partial, "Moving damage must fall back to full frame");
+    assert!(output.starts_with("\x1b[H\x1b_Ga=T,q=2,i=1,p=1,C=1,f=32,o=z,z=-2147483648"));
+    assert!(!output.contains("i=2"), "Must not use subimage i=2 when moving to avoid ghosting");
+}
+
+#[test]
+fn test_kitty_subimage_neutralized_by_transparent_dummy_not_delete() {
+    use termway::display::DamageRect;
+    use termway::protocol::KittyStreamEncoder;
+
+    let width = 160u32;
+    let height = 100u32;
+    let rgba = vec![10u8; (width * height * 4) as usize];
+    let mut encoder = KittyStreamEncoder::new();
+    encoder.set_enable_partial(true);
+    let mut output = String::new();
+
+    // Warmup frame
+    encoder.encode_frame_into(
+        &rgba, width, height, 16, 10, 10, 10, None, false, &mut output,
+    );
+
+    // Frame 1: Damage at (20, 30) establishes anchor
+    let damage_1 = [DamageRect {
+        x: 20,
+        y: 30,
+        width: 20,
+        height: 10,
+    }];
+    encoder.encode_frame_into(
+        &rgba, width, height, 16, 10, 10, 10, Some(&damage_1), false, &mut output,
+    );
+
+    // Frame 2: Same damage at (20, 30) emits partial frame
+    let is_partial = encoder.encode_frame_into(
+        &rgba, width, height, 16, 10, 10, 10, Some(&damage_1), false, &mut output,
+    );
+    assert!(is_partial, "Must be partial frame");
+
+    // Frame 3: Damage moves to (40, 50). Subimage was active, now anchor is lost!
+    let damage_2 = [DamageRect {
+        x: 40,
+        y: 50,
+        width: 20,
+        height: 10,
+    }];
+    let is_partial_3 = encoder.encode_frame_into(
+        &rgba, width, height, 16, 10, 10, 10, Some(&damage_2), false, &mut output,
+    );
+    assert!(!is_partial_3, "Must fall back to full frame");
+
+    // Must neutralize active subimage with 1x1 transparent dummy pixel, NEVER a=d
+    assert!(output.contains(";AAAAAA==\x1b\\"), "Must emit 1x1 transparent dummy pixel");
+    assert!(!output.contains("\x1b_Ga=d"), "Must NEVER emit a=d");
+    assert!(output.contains("\x1b[H\x1b_Ga=T,q=2,i=1,p=1,C=1,f=32,o=z,z=-2147483648"));
+}
+
+#[test]
 fn test_kitty_partial_placement_fallback_on_large_damage() {
     use termway::display::DamageRect;
     use termway::protocol::KittyStreamEncoder;
@@ -209,6 +335,7 @@ fn test_kitty_partial_placement_fallback_on_large_damage() {
     let height = 100u32;
     let rgba = vec![128u8; (width * height * 4) as usize];
     let mut encoder = KittyStreamEncoder::new();
+    encoder.set_enable_partial(true);
     let mut output = String::new();
 
     // Warmup full frame
@@ -217,15 +344,15 @@ fn test_kitty_partial_placement_fallback_on_large_damage() {
     );
     assert!(output.starts_with("\x1b[H"));
 
-    // Large damage (> 50% of the screen, e.g. 80x80 = 6400 out of 10000 pixels)
+    // Large damage (> 75% of the screen, e.g. 90x90 = 8100 out of 10000 pixels)
     let large_damage = [DamageRect {
-        x: 10,
-        y: 10,
-        width: 80,
-        height: 80,
+        x: 5,
+        y: 5,
+        width: 90,
+        height: 90,
     }];
 
-    encoder.encode_frame_into(
+    let is_partial = encoder.encode_frame_into(
         &rgba,
         width,
         height,
@@ -239,7 +366,8 @@ fn test_kitty_partial_placement_fallback_on_large_damage() {
     );
 
     // Large damage must fall back to full-screen frame
-    assert!(output.contains("\x1b[H\x1b_Ga=T,q=2,i=1,C=1,f=32,o=z,z=-2147483648,s=100,v=100,c=10,r=10"));
+    assert!(!is_partial);
+    assert!(output.contains("\x1b[H\x1b_Ga=T,q=2,i=1,p=1,C=1,f=32,o=z,z=-2147483648,s=100,v=100,c=10,r=10"));
 }
 
 #[test]
@@ -251,6 +379,7 @@ fn test_kitty_partial_placement_periodic_consolidation() {
     let height = 100u32;
     let rgba = vec![64u8; (width * height * 4) as usize];
     let mut encoder = KittyStreamEncoder::new();
+    encoder.set_enable_partial(true);
     let mut output = String::new();
 
     // Initial frame
@@ -265,9 +394,14 @@ fn test_kitty_partial_placement_periodic_consolidation() {
         height: 10,
     }];
 
+    // Warmup 1 frame to establish stationary bbox
+    let _ = encoder.encode_frame_into(
+        &rgba, width, height, 10, 10, 10, 10, Some(&damage), false, &mut output,
+    );
+
     // Run 60 partial frames
     for _ in 0..60 {
-        encoder.encode_frame_into(
+        let is_partial = encoder.encode_frame_into(
             &rgba,
             width,
             height,
@@ -279,12 +413,14 @@ fn test_kitty_partial_placement_periodic_consolidation() {
             false,
             &mut output,
         );
+        assert!(is_partial);
         assert!(output.starts_with("\x1b[1;1H"), "Should be partial placement");
         assert!(!output.contains("\x1b_Ga=d,d=a\x1b\\"));
+        assert!(!output.contains("\x1b_Ga=d,d=i,i=2\x1b\\"));
     }
 
-    // 61st frame must trigger consolidation: delete prior overlays and send full frame
-    encoder.encode_frame_into(
+    // 61st frame must trigger consolidation: delete prior subimage and send full frame
+    let is_partial_61 = encoder.encode_frame_into(
         &rgba,
         width,
         height,
@@ -296,8 +432,45 @@ fn test_kitty_partial_placement_periodic_consolidation() {
         false,
         &mut output,
     );
-    assert!(output.starts_with("\x1b_Ga=d,d=a\x1b\\\x1b[H"), "61st frame should consolidate with deletion and home cursor");
+    assert!(!is_partial_61);
+    assert!(output.starts_with("\x1b[H\x1b_Ga=T,q=2,i=1,p=1,C=1"), "61st frame should consolidate with full frame and home cursor");
+    assert!(!output.contains("\x1b_Ga=d"), "Must never issue a=d to prevent terminal emulator crashes");
     assert!(output.contains("s=100,v=100,c=10,r=10"));
+}
+
+#[test]
+fn test_kitty_default_mode_fullscreen_only() {
+    use termway::display::DamageRect;
+    use termway::protocol::KittyStreamEncoder;
+
+    let width = 100u32;
+    let height = 100u32;
+    let rgba = vec![64u8; (width * height * 4) as usize];
+    let mut encoder = KittyStreamEncoder::new();
+    let mut output = String::new();
+
+    // Default encoder must have enable_partial = false
+    assert!(!encoder.enable_partial());
+
+    // Initial frame
+    encoder.encode_frame_into(
+        &rgba, width, height, 10, 10, 10, 10, None, false, &mut output,
+    );
+
+    let damage = [DamageRect {
+        x: 0,
+        y: 0,
+        width: 10,
+        height: 10,
+    }];
+
+    // Even with small, stationary damage, default must emit full frame i=1, p=1
+    let is_partial = encoder.encode_frame_into(
+        &rgba, width, height, 10, 10, 10, 10, Some(&damage), false, &mut output,
+    );
+    assert!(!is_partial, "Default mode must always emit full frame");
+    assert!(output.starts_with("\x1b[H\x1b_Ga=T,q=2,i=1,p=1,C=1"));
+    assert!(!output.contains("i=2"));
 }
 
 #[test]

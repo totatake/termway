@@ -26,6 +26,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 pub struct BackendMetrics {
     pub jobs_submitted: AtomicU64,
     pub jobs_rendered: AtomicU64,
+    pub partial_frames: AtomicU64,
     pub frames_dropped: AtomicU64,
     pub total_encode_us: AtomicU64,
     pub max_encode_us: AtomicU64,
@@ -112,7 +113,7 @@ impl TerminalBackend {
                         sixel_out.len()
                     } else {
                         let image_rows = job.term_rows.saturating_sub(1).max(1);
-                        kitty_stream.encode_frame_into(
+                        let is_partial = kitty_stream.encode_frame_into(
                             &job.pixels,
                             job.width,
                             job.height,
@@ -124,6 +125,9 @@ impl TerminalBackend {
                             job.needs_clear,
                             &mut kitty_out,
                         );
+                        if is_partial {
+                            metrics_clone.partial_frames.fetch_add(1, Ordering::Relaxed);
+                        }
                         kitty_out.len()
                     };
 
@@ -172,7 +176,7 @@ impl TerminalBackend {
                         if use_sixel {
                             clear_seq.push_str("\x1b[2J\x1b[H");
                         } else {
-                            clear_seq.push_str("\x1b[2J\x1b[H\x1b_Ga=d,d=a\x1b\\");
+                            clear_seq.push_str("\x1b[2J\x1b[H\x1b_Ga=d,d=i,i=2\x1b\\");
                         }
                     } else if prev_hud_shown && !job.show_hud {
                         for r in 2..=5 {

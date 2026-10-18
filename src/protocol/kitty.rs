@@ -16,6 +16,9 @@ use miniz_oxide::deflate::core::{
 
 use crate::display::DamageRect;
 
+pub const IMAGE_ID_CANVAS: u32 = 1;
+pub const IMAGE_ID_SUBIMAGE: u32 = 2;
+
 /// High-performance stateful Kitty protocol encoder reusing zlib compression state and buffers.
 pub struct KittyStreamEncoder {
     #[cfg(feature = "zlib-ng")]
@@ -27,6 +30,9 @@ pub struct KittyStreamEncoder {
     quantized_buf: Vec<u8>,
     partial_frames_count: u32,
     has_full_frame: bool,
+    subimage_active: bool,
+    enable_partial: bool,
+    last_partial_bbox: Option<(u16, u16, u16, u16)>,
 }
 
 impl Default for KittyStreamEncoder {
@@ -38,6 +44,9 @@ impl Default for KittyStreamEncoder {
             let flags = create_comp_flags_from_zip_params(1, 1, CompressionStrategy::Default as i32);
             CompressorOxide::new(flags)
         };
+        let enable_partial = std::env::var("TERMWAY_KITTY_PARTIAL")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
         Self {
             compressor,
             compressed_buf: Vec::with_capacity(256 * 1024),
@@ -45,6 +54,9 @@ impl Default for KittyStreamEncoder {
             quantized_buf: Vec::with_capacity(1024 * 1024 * 4),
             partial_frames_count: 0,
             has_full_frame: false,
+            subimage_active: false,
+            enable_partial,
+            last_partial_bbox: None,
         }
     }
 }
@@ -308,14 +320,28 @@ impl KittyStreamEncoder {
         }
     }
 
+    /// Enable or disable partial rectangular overlay placement.
+    /// When disabled (default), all damaged frames are transmitted as full-screen base frames,
+    /// completely preventing ghosting/duplicate images for moving content (like xeyes, cursor, dragging)
+    /// and eliminating terminal emulator crashes caused by overlay lifecycle race conditions.
+    pub fn set_enable_partial(&mut self, enable: bool) {
+        self.enable_partial = enable;
+    }
+
+    pub fn enable_partial(&self) -> bool {
+        self.enable_partial
+    }
+
     /// Reset stream state, forcing full-frame transmission on next frame.
     pub fn reset(&mut self) {
         self.partial_frames_count = 0;
         self.has_full_frame = false;
+        self.subimage_active = false;
+        self.last_partial_bbox = None;
     }
 
     /// Encodes a frame into Kitty escape sequence using partial rectangular placement
-    /// if damage is small enough (<= 50% screen area) or full-frame otherwise.
+    /// if damage is small enough (<= 50% screen area) and stationary, or full-frame otherwise.
     #[allow(clippy::too_many_arguments)]
     pub fn encode_frame_into(
         &mut self,
@@ -329,9 +355,11 @@ impl KittyStreamEncoder {
         damage: Option<&[DamageRect]>,
         needs_clear: bool,
         output: &mut String,
-    ) {
+    ) -> bool {
         const MAX_PARTIAL_FRAMES: u32 = 60;
         let total_area = (width as u64) * (height as u64);
+
+        let clear_subimage = self.subimage_active;
 
         if needs_clear {
             self.reset();
@@ -340,10 +368,11 @@ impl KittyStreamEncoder {
         // If explicitly no damage (empty damage list) and not forced clear, skip encoding
         if !needs_clear && damage.is_some_and(|d| d.is_empty()) {
             output.clear();
-            return;
+            return false;
         }
 
-        let can_partial = !needs_clear
+        let can_partial = self.enable_partial
+            && !needs_clear
             && self.has_full_frame
             && self.partial_frames_count < MAX_PARTIAL_FRAMES
             && cell_width_px > 0
@@ -372,56 +401,84 @@ impl KittyStreamEncoder {
             let end_col = (max_x + cw - 1) / cw;
             let end_row = (max_y + ch - 1) / ch;
 
-            let snapped_x = (start_col * cw).min(width);
-            let snapped_y = (start_row * ch).min(height);
-            let snapped_w = ((end_col - start_col) * cw).min(width.saturating_sub(snapped_x));
-            let snapped_h = ((end_row - start_row) * ch).min(height.saturating_sub(snapped_y));
+            let col = (start_col as u16 + 1).min(term_cols).max(1);
+            let row = (start_row as u16 + 1).min(term_rows).max(1);
+            let mut cols = (((end_col - start_col) as u16))
+                .min(term_cols.saturating_sub(col - 1))
+                .max(1);
+            let mut rows = (((end_row - start_row) as u16))
+                .min(term_rows.saturating_sub(row - 1))
+                .max(1);
+
+            let snapped_x = ((col - 1) as u32 * cw).min(width);
+            let snapped_y = ((row - 1) as u32 * ch).min(height);
+            let mut snapped_w = (cols as u32 * cw).min(width.saturating_sub(snapped_x));
+            let mut snapped_h = (rows as u32 * ch).min(height.saturating_sub(snapped_y));
 
             let bbox_area = (snapped_w as u64) * (snapped_h as u64);
 
-            // Only use partial placement if dirty bounding box is <= 50% of the total screen area
-            if bbox_area > 0 && bbox_area * 2 <= total_area {
-                let col = (start_col as u16 + 1).min(term_cols).max(1);
-                let row = (start_row as u16 + 1).min(term_rows).max(1);
-                let cols = (((snapped_w + cw - 1) / cw) as u16)
-                    .min(term_cols.saturating_sub(col - 1))
-                    .max(1);
-                let rows = (((snapped_h + ch - 1) / ch) as u16)
-                    .min(term_rows.saturating_sub(row - 1))
-                    .max(1);
+            // Only use partial placement if dirty bounding box is <= 75% of total screen area
+            if bbox_area > 0 && bbox_area * 100 <= total_area * 75 {
+                // Anti-ghosting guarantee: Only emit partial overlay if the anchor origin (col, row)
+                // is stationary (e.g. video player anchored at fixed coordinates).
+                // If the origin moved (e.g. xeyes pupil, cursor, window drag, scrolling), we MUST NOT
+                // move the subimage over the canvas because uncovering the old position would
+                // expose stale base pixels. Instead, fall through to full frame.
+                if let Some((last_col, last_row, last_cols, last_rows)) = self.last_partial_bbox {
+                    if col == last_col && row == last_row {
+                        // Stationary anchor! Expand dimensions to encompass any minor seekbar fluctuations
+                        cols = cols.max(last_cols).min(term_cols.saturating_sub(col - 1));
+                        rows = rows.max(last_rows).min(term_rows.saturating_sub(row - 1));
+                        snapped_w = (cols as u32 * cw).min(width.saturating_sub(snapped_x));
+                        snapped_h = (rows as u32 * ch).min(height.saturating_sub(snapped_y));
+                        self.last_partial_bbox = Some((col, row, cols, rows));
 
-                self.encode_subimage_into(
-                    rgba,
-                    width,
-                    snapped_x,
-                    snapped_y,
-                    snapped_w,
-                    snapped_h,
-                    col,
-                    row,
-                    cols,
-                    rows,
-                    output,
-                );
-                self.partial_frames_count += 1;
-                return;
+                        self.encode_subimage_into(
+                            rgba,
+                            width,
+                            snapped_x,
+                            snapped_y,
+                            snapped_w,
+                            snapped_h,
+                            col,
+                            row,
+                            cols,
+                            rows,
+                            output,
+                        );
+                        self.subimage_active = true;
+                        self.partial_frames_count += 1;
+                        return true;
+                    } else {
+                        self.last_partial_bbox = Some((col, row, cols, rows));
+                    }
+                } else {
+                    self.last_partial_bbox = Some((col, row, cols, rows));
+                }
+            } else {
+                self.last_partial_bbox = None;
             }
+        } else if self.partial_frames_count < MAX_PARTIAL_FRAMES {
+            self.last_partial_bbox = None;
         }
 
-        // Full-frame fallback: if previously partial frames were emitted, delete them atomically
-        let clear_placements = self.partial_frames_count > 0;
+        // Full-frame fallback: clear subimage unless we are doing periodic consolidation of stationary anchor
+        let is_periodic_consolidation = self.partial_frames_count >= MAX_PARTIAL_FRAMES && self.last_partial_bbox.is_some();
+        let delete_subimage = (clear_subimage || self.subimage_active) && !is_periodic_consolidation;
         self.partial_frames_count = 0;
         self.has_full_frame = true;
+        self.subimage_active = false;
         self.encode_fullscreen_frame_into_with_cleanup(
             rgba,
             width,
             height,
             term_cols,
             term_rows,
-            1,
-            clear_placements,
+            IMAGE_ID_CANVAS,
+            delete_subimage,
             output,
         );
+        false
     }
 
     /// Compresses and encodes an RGBA sub-rectangle into Kitty protocol chunked escape sequences,
@@ -497,8 +554,8 @@ impl KittyStreamEncoder {
             if first {
                 let _ = write!(
                     output,
-                    "\x1b_Ga=T,q=2,C=1,f=32,o=z,z=-2147483648,s={},v={},c={},r={},m={};",
-                    rect_w, rect_h, cell_cols, cell_rows, m_flag
+                    "\x1b_Ga=T,q=2,i={},p=1,C=1,f=32,o=z,z=-2147483647,s={},v={},c={},r={},m={};",
+                    IMAGE_ID_SUBIMAGE, rect_w, rect_h, cell_cols, cell_rows, m_flag
                 );
                 first = false;
             } else if m_flag == 1 {
@@ -559,14 +616,17 @@ impl KittyStreamEncoder {
 
         // 3. Direct streaming Base64 encoding into Kitty chunk packets (no intermediate string)
         output.clear();
-        let extra = if clear_placements { 16 } else { 0 };
+        let extra = if clear_placements { 32 } else { 0 };
         let est_capacity = (out_pos * 4 / 3) + (out_pos / 3072 + 1) * 64 + 64 + extra;
         if output.capacity() < est_capacity {
             output.reserve(est_capacity - output.capacity());
         }
 
         if clear_placements {
-            output.push_str("\x1b_Ga=d,d=a\x1b\\");
+            // Overwrite i=2 with an invisible 1x1 transparent dummy pixel.
+            // Never issue a=d (image delete) because it triggers a Use-After-Free race condition
+            // in Ghostty/Noctty's multi-threaded GPU renderer.
+            output.push_str("\x1b[1;1H\x1b_Ga=T,q=2,i=2,p=1,C=1,f=32,s=1,v=1,c=1,r=1;AAAAAA==\x1b\\");
         }
         output.push_str("\x1b[H");
 
@@ -584,7 +644,7 @@ impl KittyStreamEncoder {
             if first {
                 let _ = write!(
                     output,
-                    "\x1b_Ga=T,q=2,i={},C=1,f=32,o=z,z=-2147483648,s={},v={},c={},r={},m={};",
+                    "\x1b_Ga=T,q=2,i={},p=1,C=1,f=32,o=z,z=-2147483648,s={},v={},c={},r={},m={};",
                     image_id, width, height, term_cols, term_rows, m_flag
                 );
                 first = false;
