@@ -11,3 +11,4 @@
 | ADR 番号 | タイトル | ステータス | 日付 |
 | :--- | :--- | :--- | :--- |
 | [ADR-0001](0001-hybrid-dbus-session-routing.md) | ハイブリッド D-Bus セッションルーティングと Snap アプリケーション対応 | Accepted | 2026-10-09 |
+| [ADR-0002](0002-fixed-image-id-partial-placement.md) | 固定画像IDによる部分画面転送アーキテクチャと端末エミュレータ保護 | Accepted | 2026-10-18 |
