@@ -119,7 +119,7 @@ flowchart LR
 | **FR-27** | リアルタイムパフォーマンス HUD (`--hud`) | `--hud` 指定時に FPS、解像度、転送帯域（KB/s）、エンコード時間（ms）を画面右上にオーバーレイ表示すること。 | `tests/unit_compositor.rs` | **PASS** |
 | **FR-28** | 起動時スプラッシュスクリーン (`--no-splash`) | 最初のウィンドウが表示されるまでの間、ブルー〜シアンのグラデーションロゴ `>_ TERMWAY` とカーネル風テレメトリログを描画し、ウィンドウ表示時に自動消去すること（`--no-splash` で非表示化可能）。 | `tests/unit_compositor.rs` | **PASS** |
 | **FR-29** | パフォーマンスプロファイリング (`--profile`) | `--profile` オプションまたは環境変数 `TERMWAY_PROFILE=1` 指定時に、レンダリング・エンコード・I/Oステージごとの詳細レイテンシテレメトリ（avg/max/p95）を定期出力すること。また専用ベンチマークスイートによる継続的リグレッション検知を保証すること。 | `tests/perf_pipeline.rs`<br/>`tests/unit_compositor.rs` | **PASS** |
-| **FR-30** | Sixel ダーティバンドキャッシュ & Kitty ストリーミング・部分矩形プレースメント | Sixel エンコーダにおいて 6 行バンド単位の FNV-1a ハッシュキャッシュによる完全同一バンドスキップを行い、Kitty エンコーダにおいては `KittyStreamEncoder` によるゼロアロケーションバッファ再利用ストリーミングおよびセルスナップ部分矩形プレースメント転送（50%以下の汚損領域の部分配置転送と60フレーム定期統合リフレッシュ）を実現すること。 | `tests/unit_sixel_encoder.rs`<br/>`tests/unit_kitty_encoder.rs` | **PASS** |
+| **FR-30** | Sixel ダーティバンドキャッシュ & Kitty ストリーミング・部分矩形プレースメント | Sixel エンコーダにおいて 6 行バンド単位の FNV-1a ハッシュキャッシュによる完全同一バンドスキップを行い、Kitty エンコーダにおいては `KittyStreamEncoder` によるゼロアロケーションバッファ再利用ストリーミングおよび累積バウンディングボックス部分矩形プレースメント転送（75%以下の累積汚損領域の部分配置転送、スパース膨張時の適応的リベース、定点動画の無制限連続部分転送、1パスRGB565量子化）を実現すること。 | `tests/unit_sixel_encoder.rs`<br/>`tests/unit_kitty_encoder.rs` | **PASS** |
 | **FR-31** | 統一 FD ポーリング & `--fps` フレームペーシング | `calloop` イベントループにおいて stdin, Wayland display, XWayland, clipboard, signal の全記述子を単一 epoll で統一監視し、`--fps`（デフォルト 30fps）による適応型フレームペーシング制御を行うこと。 | `tests/unit_compositor.rs`<br/>`tests/integration_pipeline.rs` | **PASS** |
 | **FR-34** | Wayland Fractional Scale (`wp_fractional_scale_v1`) & Viewporter (`wp_viewporter`) & HiDPI制御 (`--scale`) | `--scale <FACTOR>`（0.25〜4.0）による動的スケール指定、`wp_fractional_scale_v1`（120分の1単位）および `wp_viewporter` 拡張プロトコルのアドバタイズ、サーフェスコミット時の `preferred_scale` 通知、論理/物理座標系の分離（ウィンドウ管理・装飾・マウス入力・Pixman合成）を保証すること。 | `tests/unit_compositor.rs` | **PASS** |
 | **FR-35** | OSC 22 マウスカーソル形状同期 | ウィンドウの枠線やリサイズハンドル（`nwse-resize`）、タイトルバー（`grab`）、ボタン（`pointer`）などのホバー対象に応じて、ホスト端末のマウスカーソル形状を動的に同期（`\x1b]22;<name>\x07`）すること。 | `tests/unit_compositor.rs` | **PASS** |
@@ -144,9 +144,9 @@ flowchart LR
 | :--- | :---: | :--- |
 | `tests/unit_compositor.rs` | 36 | `TermwayState` / `WindowManager` ドメイン操作、SSD/CSD 装飾、最大化・80%中央復元・最小化、動的リサイズ (`SIGWINCH`)、OSC 52 クリップボード送信、マウスホイール、スプラッシュ描画・消去、JSON 状態ダンプ、UTF-8 日本語入力、Fractional Scale / Viewporter / HiDPI スケールレンダリング、OSC 22 カーソル形状同期、Wayland Primary Selection、OSC 2 端末タブタイトル同期検証 |
 | `tests/unit_session.rs` | 7 | ハイブリッド D-Bus セッション起動、Snap コマンド判定・PATH シムルーティング、Polkit エージェント検出、コマンド存在性検証、`/tmp/.X11-unix` 書込検査 |
-| `tests/unit_kitty_encoder.rs` | 10 | Kitty フルスクリーン RFC 1950 zlib 圧縮 (`o=z`)・4096B チャンク分割・ラウンドトリップ解凍検証、部分矩形プレースメント転送構造・デコード検証、大面積更新時フルフレームフォールバック、60フレーム定期統合リフレッシュ、1080x720 パフォーマンス検証 |
+| `tests/unit_kitty_encoder.rs` | 18 | Kitty フルスクリーン RFC 1950 zlib 圧縮 (`o=z`)・4096B チャンク分割・ラウンドトリップ解凍検証、累積バウンディングボックス部分矩形プレースメント転送・デコード検証、大面積更新時フルフレームフォールバック、定点動画の無制限連続部分転送、解像度変更ガード、端末合成シミュレータによるピクセルレベル残像完全ゼロ検証、1080x720 パフォーマンス検証 |
 | `tests/unit_sixel_encoder.rs` | 7 | Sixel AVX2 / ARM NEON SIMD 減色・6行バンド走査・単色バンド高速パス・RLE 圧縮・非8倍数幅エッジケース、6行バンド差分キャッシュ (`SixelStreamEncoder`)、1080x720 パフォーマンス検証 |
-| `tests/unit_damage_tracker.rs` | 6 | 32x32 タイル FNV-1a ハッシュ比較、AVX2 / ARM NEON SIMD 端数タイル一致検証、リセット・リサイズ検証 |
+| `tests/unit_damage_tracker.rs` | 7 | 32x32 タイル FNV-1a ハッシュ比較、AVX2 / ARM NEON SIMD 端数タイル一致検証、RGB565 量子化マスクノイズ除去検証、リセット・リサイズ検証 |
 | `tests/unit_sgr_mouse.rs` | 7 | SGR 1006 クリック・ドラッグ・リリース・ホイール・修飾キー・高値座標パース・不正シーケンス耐性検証 |
 | `tests/integration_pipeline.rs` | 7 | Framebuffer → DamageTracker → Kitty エンコード結合検証、マウス座標変換、プロトコル自動検出、`--version` / `-V` 検証 |
 | `tests/unit_keyboard.rs` | 6 | UTF-8 文字、矢印キー、Ctrl 制御文字、Shift/Ctrl 修飾キー付きカーソル・選択キー、日本語 UTF-8 複数バイト解析、Kitty Keyboard Protocol (CSI u) 解析検証 |
