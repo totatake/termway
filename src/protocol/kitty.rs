@@ -33,6 +33,8 @@ pub struct KittyStreamEncoder {
     subimage_active: bool,
     enable_partial: bool,
     last_partial_bbox: Option<(u16, u16, u16, u16)>,
+    last_width: u32,
+    last_height: u32,
 }
 
 impl Default for KittyStreamEncoder {
@@ -45,7 +47,10 @@ impl Default for KittyStreamEncoder {
             CompressorOxide::new(flags)
         };
         let enable_partial = std::env::var("TERMWAY_KITTY_PARTIAL")
-            .map(|v| v != "0" && !v.eq_ignore_ascii_case("false"))
+            .map(|v| {
+                let v = v.trim();
+                v != "0" && !v.is_empty() && !v.eq_ignore_ascii_case("false")
+            })
             .unwrap_or(true);
         Self {
             compressor,
@@ -57,6 +62,8 @@ impl Default for KittyStreamEncoder {
             subimage_active: false,
             enable_partial,
             last_partial_bbox: None,
+            last_width: 0,
+            last_height: 0,
         }
     }
 }
@@ -338,6 +345,8 @@ impl KittyStreamEncoder {
         self.has_full_frame = false;
         self.subimage_active = false;
         self.last_partial_bbox = None;
+        self.last_width = 0;
+        self.last_height = 0;
     }
 
     /// Encodes a frame into Kitty escape sequence using cumulative bounding box partial placement
@@ -371,6 +380,8 @@ impl KittyStreamEncoder {
         let can_partial = self.enable_partial
             && !needs_clear
             && self.has_full_frame
+            && self.last_width == width
+            && self.last_height == height
             && cell_width_px > 0
             && cell_height_px > 0
             && damage.is_some_and(|d| !d.is_empty());
@@ -470,6 +481,8 @@ impl KittyStreamEncoder {
         self.has_full_frame = true;
         self.subimage_active = false;
         self.last_partial_bbox = None;
+        self.last_width = width;
+        self.last_height = height;
         self.encode_fullscreen_frame_into_with_cleanup(
             rgba,
             width,

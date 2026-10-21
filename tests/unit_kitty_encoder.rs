@@ -623,3 +623,48 @@ fn test_quantization_compression_comparison() {
     );
 }
 
+#[test]
+fn test_kitty_resize_forces_fullscreen_rebase() {
+    use termway::display::DamageRect;
+    use termway::protocol::KittyStreamEncoder;
+
+    let mut encoder = KittyStreamEncoder::new();
+    let mut output = String::new();
+
+    // Frame 1 at 100x100
+    let w1 = 100u32;
+    let h1 = 100u32;
+    let rgba1 = vec![50u8; (w1 * h1 * 4) as usize];
+    encoder.encode_frame_into(
+        &rgba1, w1, h1, 10, 10, 10, 10, None, false, &mut output,
+    );
+
+    // Small damage at 100x100 -> emits partial
+    let dmg = [DamageRect {
+        x: 0,
+        y: 0,
+        width: 10,
+        height: 10,
+    }];
+    let is_p = encoder.encode_frame_into(
+        &rgba1, w1, h1, 10, 10, 10, 10, Some(&dmg), false, &mut output,
+    );
+    assert!(is_p, "Small damage on same resolution should emit partial");
+
+    // Frame 3: Window resized to 200x150, but caller passes small damage
+    let w2 = 200u32;
+    let h2 = 150u32;
+    let rgba2 = vec![80u8; (w2 * h2 * 4) as usize];
+    let is_p_resized = encoder.encode_frame_into(
+        &rgba2, w2, h2, 20, 15, 10, 10, Some(&dmg), false, &mut output,
+    );
+    assert!(
+        !is_p_resized,
+        "Resizing must reject partial placement and force fullscreen rebase"
+    );
+    assert!(
+        output.contains("s=200,v=150,c=20,r=15"),
+        "Fullscreen sequence must reflect new dimensions"
+    );
+}
+
