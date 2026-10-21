@@ -224,7 +224,7 @@ fn test_kitty_partial_placement_structure() {
 }
 
 #[test]
-fn test_kitty_moving_damage_no_ghosting_full_frame() {
+fn test_kitty_moving_damage_cumulative_bbox_and_adaptive_rebase() {
     use termway::display::DamageRect;
     use termway::protocol::KittyStreamEncoder;
 
@@ -393,7 +393,7 @@ fn test_kitty_partial_placement_fallback_on_large_damage() {
 }
 
 #[test]
-fn test_kitty_partial_placement_periodic_consolidation() {
+fn test_kitty_partial_placement_unlimited_stationary_streaming() {
     use termway::display::DamageRect;
     use termway::protocol::KittyStreamEncoder;
 
@@ -665,6 +665,258 @@ fn test_kitty_resize_forces_fullscreen_rebase() {
     assert!(
         output.contains("s=200,v=150,c=20,r=15"),
         "Fullscreen sequence must reflect new dimensions"
+    );
+}
+
+#[test]
+fn test_kitty_pixel_level_zero_ghosting_simulation() {
+    use base64::engine::general_purpose::STANDARD as BASE64;
+    use base64::Engine;
+    use termway::display::DamageRect;
+    use termway::protocol::KittyStreamEncoder;
+
+    struct SimKittyTerminal {
+        width: u32,
+        height: u32,
+        cell_w: u32,
+        cell_h: u32,
+        base_canvas: Vec<u8>,
+        overlay_img: Option<(u32, u32, u32, u32, Vec<u8>)>,
+    }
+
+    impl SimKittyTerminal {
+        fn new(width: u32, height: u32, cell_w: u32, cell_h: u32) -> Self {
+            Self {
+                width,
+                height,
+                cell_w,
+                cell_h,
+                base_canvas: vec![0u8; (width * height * 4) as usize],
+                overlay_img: None,
+            }
+        }
+
+        fn apply_kitty_seq(&mut self, seq: &str) {
+            let mut cur = 0;
+            while let Some(g_rel) = seq[cur..].find("\x1b_G") {
+                let g_start = cur + g_rel;
+                let semi = match seq[g_start..].find(';') {
+                    Some(s) => g_start + s,
+                    None => break,
+                };
+                let end = match seq[semi..].find("\x1b\\") {
+                    Some(e) => semi + e,
+                    None => break,
+                };
+                let header = &seq[g_start + 3..semi];
+                let chunk_payload = &seq[semi + 1..end];
+
+                // Check cursor position before this image command (e.g. \x1b[{row};{col}H)
+                let prefix = &seq[cur..g_start];
+                let mut col = 1u32;
+                let mut row = 1u32;
+                if let Some(cup_start) = prefix.rfind("\x1b[") {
+                    if let Some(cup_end) = prefix[cup_start..].find('H') {
+                        let inner = &prefix[cup_start + 2..cup_start + cup_end];
+                        let parts: Vec<&str> = inner.split(';').collect();
+                        if parts.len() == 2 {
+                            row = parts[0].parse().unwrap_or(1);
+                            col = parts[1].parse().unwrap_or(1);
+                        }
+                    }
+                }
+
+                // Handle dummy 1x1 neutralization
+                if chunk_payload == "AAAAAA==" {
+                    self.overlay_img = None;
+                    cur = end + 2;
+                    continue;
+                }
+
+                let is_base = header.contains("i=1");
+                let is_sub = header.contains("i=2");
+
+                // If chunked m=1, gather all chunks of this image
+                let mut payload = chunk_payload.to_string();
+                let mut is_last = !header.contains("m=1");
+                cur = end + 2;
+
+                while !is_last {
+                    if let Some(next_g) = seq[cur..].find("\x1b_G") {
+                        let next_start = cur + next_g;
+                        let next_semi = seq[next_start..].find(';').unwrap() + next_start;
+                        let next_end = seq[next_semi..].find("\x1b\\").unwrap() + next_semi;
+                        let next_header = &seq[next_start + 3..next_semi];
+                        payload.push_str(&seq[next_semi + 1..next_end]);
+                        is_last = !next_header.contains("m=1");
+                        cur = next_end + 2;
+                    } else {
+                        break;
+                    }
+                }
+
+                let comp = BASE64.decode(&payload).expect("valid base64");
+                let decomp = miniz_oxide::inflate::decompress_to_vec_zlib(&comp).expect("valid zlib");
+
+                if is_base {
+                    assert_eq!(decomp.len(), (self.width * self.height * 4) as usize);
+                    self.base_canvas.copy_from_slice(&decomp);
+                } else if is_sub {
+                    let mut sub_w = 0u32;
+                    let mut sub_h = 0u32;
+                    for part in header.split(',') {
+                        if let Some(val) = part.strip_prefix("s=") {
+                            sub_w = val.parse().unwrap();
+                        } else if let Some(val) = part.strip_prefix("v=") {
+                            sub_h = val.parse().unwrap();
+                        }
+                    }
+                    let px_x = (col - 1) * self.cell_w;
+                    let px_y = (row - 1) * self.cell_h;
+                    assert_eq!(decomp.len(), (sub_w * sub_h * 4) as usize);
+                    self.overlay_img = Some((px_x, px_y, sub_w, sub_h, decomp));
+                }
+            }
+        }
+
+        fn composite(&self) -> Vec<u8> {
+            let mut result = self.base_canvas.clone();
+            if let Some((ox, oy, ow, oh, ref odata)) = self.overlay_img {
+                let stride = (self.width * 4) as usize;
+                let o_stride = (ow * 4) as usize;
+                for y in 0..oh {
+                    let dy = oy + y;
+                    if dy >= self.height {
+                        break;
+                    }
+                    let src_row = &odata[(y as usize * o_stride)..((y + 1) as usize * o_stride)];
+                    let dst_start = (dy as usize * stride) + (ox as usize * 4);
+                    let dst_end = dst_start + (ow as usize * 4);
+                    if dst_end <= result.len() {
+                        result[dst_start..dst_end].copy_from_slice(src_row);
+                    }
+                }
+            }
+            result
+        }
+    }
+
+    fn quantize_rgb565(raw: &[u8]) -> Vec<u8> {
+        let mut out = raw.to_vec();
+        for p in out.chunks_exact_mut(4) {
+            p[0] &= 0xF8;
+            p[1] &= 0xFC;
+            p[2] &= 0xF8;
+        }
+        out
+    }
+
+    let width = 160u32;
+    let height = 100u32;
+    let cell_w = 10u32;
+    let cell_h = 10u32;
+    let term_cols = 16u16;
+    let term_rows = 10u16;
+
+    let mut sim = SimKittyTerminal::new(width, height, cell_w, cell_h);
+    let mut encoder = KittyStreamEncoder::new();
+    encoder.set_enable_partial(true);
+    let mut output = String::new();
+
+    // Frame 0: Solid green background (0, 180, 0, 255)
+    let mut frame = vec![0u8; (width * height * 4) as usize];
+    for p in frame.chunks_exact_mut(4) {
+        p[0] = 0;
+        p[1] = 180;
+        p[2] = 0;
+        p[3] = 255;
+    }
+    encoder.encode_frame_into(
+        &frame, width, height, term_cols, term_rows, cell_w as u16, cell_h as u16, None, false, &mut output,
+    );
+    sim.apply_kitty_seq(&output);
+    assert_eq!(sim.composite(), quantize_rgb565(&frame), "Frame 0 composite mismatch");
+
+    // Frame 1: Pupil at (20..30, 30..40) painted black (0, 0, 0, 255)
+    for y in 30..40 {
+        for x in 20..30 {
+            let idx = ((y * width + x) * 4) as usize;
+            frame[idx] = 0; frame[idx + 1] = 0; frame[idx + 2] = 0; frame[idx + 3] = 255;
+        }
+    }
+    let dmg1 = [DamageRect { x: 20, y: 30, width: 10, height: 10 }];
+    let is_p1 = encoder.encode_frame_into(
+        &frame, width, height, term_cols, term_rows, cell_w as u16, cell_h as u16, Some(&dmg1), false, &mut output,
+    );
+    assert!(is_p1, "Frame 1 must be partial");
+    sim.apply_kitty_seq(&output);
+    assert_eq!(sim.composite(), quantize_rgb565(&frame), "Frame 1 zero-ghosting verification");
+
+    // Frame 2: Pupil moves to (25..35, 30..40). Pos A (20..25) restored to green.
+    for y in 30..40 {
+        for x in 20..25 {
+            let idx = ((y * width + x) * 4) as usize;
+            frame[idx] = 0; frame[idx + 1] = 180; frame[idx + 2] = 0; frame[idx + 3] = 255;
+        }
+        for x in 25..35 {
+            let idx = ((y * width + x) * 4) as usize;
+            frame[idx] = 0; frame[idx + 1] = 0; frame[idx + 2] = 0; frame[idx + 3] = 255;
+        }
+    }
+    let dmg2 = [DamageRect { x: 20, y: 30, width: 15, height: 10 }];
+    let is_p2 = encoder.encode_frame_into(
+        &frame, width, height, term_cols, term_rows, cell_w as u16, cell_h as u16, Some(&dmg2), false, &mut output,
+    );
+    assert!(is_p2, "Frame 2 must be partial");
+    sim.apply_kitty_seq(&output);
+    assert_eq!(
+        sim.composite(),
+        quantize_rgb565(&frame),
+        "Frame 2 zero-ghosting: previous pupil location must be restored cleanly with zero ghosting"
+    );
+
+    // Frame 3: Pupil moves further to (28..38, 32..42). Pos B restored to green.
+    for y in 30..40 {
+        for x in 25..35 {
+            let idx = ((y * width + x) * 4) as usize;
+            frame[idx] = 0; frame[idx + 1] = 180; frame[idx + 2] = 0; frame[idx + 3] = 255;
+        }
+    }
+    for y in 32..42 {
+        for x in 28..38 {
+            let idx = ((y * width + x) * 4) as usize;
+            frame[idx] = 0; frame[idx + 1] = 0; frame[idx + 2] = 0; frame[idx + 3] = 255;
+        }
+    }
+    let dmg3 = [DamageRect { x: 25, y: 30, width: 13, height: 12 }];
+    let is_p3 = encoder.encode_frame_into(
+        &frame, width, height, term_cols, term_rows, cell_w as u16, cell_h as u16, Some(&dmg3), false, &mut output,
+    );
+    assert!(is_p3, "Frame 3 must be partial");
+    sim.apply_kitty_seq(&output);
+    assert_eq!(
+        sim.composite(),
+        quantize_rgb565(&frame),
+        "Frame 3 zero-ghosting: cumulative subimage must cleanly cover both past pupil footprints"
+    );
+
+    // Frame 4: Distant cursor appears at (140, 80). Sparse inflation triggers adaptive rebase.
+    for y in 80..85 {
+        for x in 140..145 {
+            let idx = ((y * width + x) * 4) as usize;
+            frame[idx] = 255; frame[idx + 1] = 255; frame[idx + 2] = 255; frame[idx + 3] = 255;
+        }
+    }
+    let dmg4 = [DamageRect { x: 140, y: 80, width: 5, height: 5 }];
+    let is_p4 = encoder.encode_frame_into(
+        &frame, width, height, term_cols, term_rows, cell_w as u16, cell_h as u16, Some(&dmg4), false, &mut output,
+    );
+    assert!(!is_p4, "Frame 4 must trigger adaptive rebase to full frame");
+    sim.apply_kitty_seq(&output);
+    assert_eq!(
+        sim.composite(),
+        quantize_rgb565(&frame),
+        "Frame 4 zero-ghosting: adaptive rebase must cleanly display full frame"
     );
 }
 
