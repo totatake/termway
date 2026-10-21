@@ -45,8 +45,8 @@ impl Default for KittyStreamEncoder {
             CompressorOxide::new(flags)
         };
         let enable_partial = std::env::var("TERMWAY_KITTY_PARTIAL")
-            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-            .unwrap_or(false);
+            .map(|v| v != "0" && !v.eq_ignore_ascii_case("false"))
+            .unwrap_or(true);
         Self {
             compressor,
             compressed_buf: Vec::with_capacity(256 * 1024),
@@ -340,8 +340,8 @@ impl KittyStreamEncoder {
         self.last_partial_bbox = None;
     }
 
-    /// Encodes a frame into Kitty escape sequence using partial rectangular placement
-    /// if damage is small enough (<= 50% screen area) and stationary, or full-frame otherwise.
+    /// Encodes a frame into Kitty escape sequence using cumulative bounding box partial placement
+    /// if damage is small enough (<= 75% screen area) and un-inflated, or full-frame otherwise.
     #[allow(clippy::too_many_arguments)]
     pub fn encode_frame_into(
         &mut self,
@@ -356,10 +356,7 @@ impl KittyStreamEncoder {
         needs_clear: bool,
         output: &mut String,
     ) -> bool {
-        const MAX_PARTIAL_FRAMES: u32 = 60;
         let total_area = (width as u64) * (height as u64);
-
-        let clear_subimage = self.subimage_active;
 
         if needs_clear {
             self.reset();
@@ -374,100 +371,105 @@ impl KittyStreamEncoder {
         let can_partial = self.enable_partial
             && !needs_clear
             && self.has_full_frame
-            && self.partial_frames_count < MAX_PARTIAL_FRAMES
             && cell_width_px > 0
             && cell_height_px > 0
             && damage.is_some_and(|d| !d.is_empty());
 
         if can_partial {
             let rects = damage.unwrap();
-            let mut min_x = u32::MAX;
-            let mut min_y = u32::MAX;
-            let mut max_x = 0;
-            let mut max_y = 0;
+            let mut step_min_x = u32::MAX;
+            let mut step_min_y = u32::MAX;
+            let mut step_max_x = 0;
+            let mut step_max_y = 0;
 
             for r in rects {
-                min_x = min_x.min(r.x);
-                min_y = min_y.min(r.y);
-                max_x = max_x.max(r.x + r.width);
-                max_y = max_y.max(r.y + r.height);
+                step_min_x = step_min_x.min(r.x);
+                step_min_y = step_min_y.min(r.y);
+                step_max_x = step_max_x.max(r.x + r.width);
+                step_max_y = step_max_y.max(r.y + r.height);
+            }
+            let step_w = step_max_x.saturating_sub(step_min_x);
+            let step_h = step_max_y.saturating_sub(step_min_y);
+            let step_area = (step_w as u64) * (step_h as u64);
+
+            // Invariant for Zero Ghosting:
+            // B_cand = B_prev ∪ D_step.
+            // Since B_cand contains all pixels previously covered by subimage i=2 (B_prev),
+            // no pixel of B_prev is ever uncovered, eliminating ghosting artifacts.
+            let mut cand_min_x = step_min_x;
+            let mut cand_min_y = step_min_y;
+            let mut cand_max_x = step_max_x;
+            let mut cand_max_y = step_max_y;
+
+            if let Some((prev_col, prev_row, prev_cols, prev_rows)) = self.last_partial_bbox {
+                if self.subimage_active {
+                    let prev_px_x = (prev_col.saturating_sub(1) as u32) * (cell_width_px as u32);
+                    let prev_px_y = (prev_row.saturating_sub(1) as u32) * (cell_height_px as u32);
+                    let prev_px_w = (prev_cols as u32) * (cell_width_px as u32);
+                    let prev_px_h = (prev_rows as u32) * (cell_height_px as u32);
+                    cand_min_x = cand_min_x.min(prev_px_x);
+                    cand_min_y = cand_min_y.min(prev_px_y);
+                    cand_max_x = cand_max_x.max(prev_px_x + prev_px_w);
+                    cand_max_y = cand_max_y.max(prev_px_y + prev_px_h);
+                }
             }
 
             // Snap bounding box outward to character cell boundaries
             let cw = cell_width_px as u32;
             let ch = cell_height_px as u32;
-            let start_col = min_x / cw;
-            let start_row = min_y / ch;
-            let end_col = (max_x + cw - 1) / cw;
-            let end_row = (max_y + ch - 1) / ch;
+            let start_col = cand_min_x / cw;
+            let start_row = cand_min_y / ch;
+            let end_col = (cand_max_x + cw - 1) / cw;
+            let end_row = (cand_max_y + ch - 1) / ch;
 
             let col = (start_col as u16 + 1).min(term_cols).max(1);
             let row = (start_row as u16 + 1).min(term_rows).max(1);
-            let mut cols = (((end_col - start_col) as u16))
+            let cols = (((end_col - start_col) as u16))
                 .min(term_cols.saturating_sub(col - 1))
                 .max(1);
-            let mut rows = (((end_row - start_row) as u16))
+            let rows = (((end_row - start_row) as u16))
                 .min(term_rows.saturating_sub(row - 1))
                 .max(1);
 
             let snapped_x = ((col - 1) as u32 * cw).min(width);
             let snapped_y = ((row - 1) as u32 * ch).min(height);
-            let mut snapped_w = (cols as u32 * cw).min(width.saturating_sub(snapped_x));
-            let mut snapped_h = (rows as u32 * ch).min(height.saturating_sub(snapped_y));
+            let snapped_w = (cols as u32 * cw).min(width.saturating_sub(snapped_x));
+            let snapped_h = (rows as u32 * ch).min(height.saturating_sub(snapped_y));
 
-            let bbox_area = (snapped_w as u64) * (snapped_h as u64);
+            let cand_area = (snapped_w as u64) * (snapped_h as u64);
 
-            // Only use partial placement if dirty bounding box is <= 75% of total screen area
-            if bbox_area > 0 && bbox_area * 100 <= total_area * 75 {
-                // Anti-ghosting guarantee: Only emit partial overlay if the anchor origin (col, row)
-                // is stationary (e.g. video player anchored at fixed coordinates).
-                // If the origin moved (e.g. xeyes pupil, cursor, window drag, scrolling), we MUST NOT
-                // move the subimage over the canvas because uncovering the old position would
-                // expose stale base pixels. Instead, fall through to full frame.
-                if let Some((last_col, last_row, last_cols, last_rows)) = self.last_partial_bbox {
-                    if col == last_col && row == last_row {
-                        // Stationary anchor! Expand dimensions to encompass any minor seekbar fluctuations
-                        cols = cols.max(last_cols).min(term_cols.saturating_sub(col - 1));
-                        rows = rows.max(last_rows).min(term_rows.saturating_sub(row - 1));
-                        snapped_w = (cols as u32 * cw).min(width.saturating_sub(snapped_x));
-                        snapped_h = (rows as u32 * ch).min(height.saturating_sub(snapped_y));
-                        self.last_partial_bbox = Some((col, row, cols, rows));
+            let is_area_ok = cand_area > 0 && cand_area * 100 <= total_area * 75;
+            let is_sparse_inflated = self.subimage_active
+                && cand_area > step_area * 2
+                && (cand_area.saturating_sub(step_area) * 100) > (total_area * 12);
 
-                        self.encode_subimage_into(
-                            rgba,
-                            width,
-                            snapped_x,
-                            snapped_y,
-                            snapped_w,
-                            snapped_h,
-                            col,
-                            row,
-                            cols,
-                            rows,
-                            output,
-                        );
-                        self.subimage_active = true;
-                        self.partial_frames_count += 1;
-                        return true;
-                    } else {
-                        self.last_partial_bbox = Some((col, row, cols, rows));
-                    }
-                } else {
-                    self.last_partial_bbox = Some((col, row, cols, rows));
-                }
-            } else {
-                self.last_partial_bbox = None;
+            if is_area_ok && !is_sparse_inflated {
+                self.last_partial_bbox = Some((col, row, cols, rows));
+                self.encode_subimage_into(
+                    rgba,
+                    width,
+                    snapped_x,
+                    snapped_y,
+                    snapped_w,
+                    snapped_h,
+                    col,
+                    row,
+                    cols,
+                    rows,
+                    output,
+                );
+                self.subimage_active = true;
+                self.partial_frames_count += 1;
+                return true;
             }
-        } else if self.partial_frames_count < MAX_PARTIAL_FRAMES {
-            self.last_partial_bbox = None;
         }
 
-        // Full-frame fallback: clear subimage unless we are doing periodic consolidation of stationary anchor
-        let is_periodic_consolidation = self.partial_frames_count >= MAX_PARTIAL_FRAMES && self.last_partial_bbox.is_some();
-        let delete_subimage = (clear_subimage || self.subimage_active) && !is_periodic_consolidation;
+        // Full-frame rebase: clear subimage placement and update base canvas (i=1, p=1)
+        let delete_subimage = self.subimage_active;
         self.partial_frames_count = 0;
         self.has_full_frame = true;
         self.subimage_active = false;
+        self.last_partial_bbox = None;
         self.encode_fullscreen_frame_into_with_cleanup(
             rgba,
             width,
@@ -506,22 +508,27 @@ impl KittyStreamEncoder {
         if self.sub_image_buf.capacity() < sub_len {
             self.sub_image_buf.reserve(sub_len - self.sub_image_buf.capacity());
         }
+        self.sub_image_buf.resize(sub_len, 0);
 
         for y in 0..rect_h {
             let src_y = (rect_y + y) as usize;
             let src_start = src_y * stride + (rect_x * 4) as usize;
             let src_end = src_start + row_bytes;
+            let dst_start = (y as usize) * row_bytes;
+            let dst_end = dst_start + row_bytes;
             if src_end <= full_rgba.len() {
-                self.sub_image_buf.extend_from_slice(&full_rgba[src_start..src_end]);
+                Self::quantize_rgb565(
+                    &full_rgba[src_start..src_end],
+                    &mut self.sub_image_buf[dst_start..dst_end],
+                );
             } else if src_start < full_rgba.len() {
-                self.sub_image_buf.extend_from_slice(&full_rgba[src_start..]);
-                self.sub_image_buf.resize(self.sub_image_buf.len() + (src_end - full_rgba.len()), 0);
-            } else {
-                self.sub_image_buf.resize(self.sub_image_buf.len() + row_bytes, 0);
+                let avail = full_rgba.len() - src_start;
+                Self::quantize_rgb565(
+                    &full_rgba[src_start..],
+                    &mut self.sub_image_buf[dst_start..dst_start + avail],
+                );
             }
         }
-
-        Self::quantize_rgb565_in_place(&mut self.sub_image_buf);
 
         // 1. Zero-allocation RFC 1950 zlib compression (level 1)
         Self::compress_raw(

@@ -166,7 +166,7 @@ fn test_kitty_partial_placement_structure() {
         height: 10,
     }];
 
-    // Frame 1: First appearance of damage registers stationary candidate and safely emits full frame
+    // Frame 1: Initial damage bounding box immediately emits partial placement
     let is_partial_1 = encoder.encode_frame_into(
         &rgba,
         width,
@@ -179,8 +179,12 @@ fn test_kitty_partial_placement_structure() {
         false,
         &mut output,
     );
-    assert!(!is_partial_1, "First frame of new bbox should emit full frame");
-    assert!(output.starts_with("\x1b[H\x1b_Ga=T,q=2,i=1,p=1,C=1"));
+    assert!(is_partial_1, "Initial damage should immediately emit partial placement");
+    assert!(output.starts_with("\x1b[4;3H"), "Expected cursor at 4;3H, got: {}", &output[..20]);
+    assert!(output.contains("\x1b_Ga=T,q=2,i=2,p=1,C=1,f=32,o=z,z=-2147483647"));
+    assert!(output.contains("s=20,v=10,c=2,r=1"));
+    assert!(!output.contains("\x1b_Ga=d,d=a\x1b\\"), "Partial placement should not clear images");
+    assert!(!output.contains("\x1b_Ga=d,d=i,i=2\x1b\\"), "Partial placement should not clear subimages");
 
     // Frame 2: Consecutive identical damage (e.g. stationary video player) emits partial placement
     let is_partial_2 = encoder.encode_frame_into(
@@ -243,14 +247,15 @@ fn test_kitty_moving_damage_no_ghosting_full_frame() {
         width: 20,
         height: 10,
     }];
-    encoder.encode_frame_into(
+    let is_p1 = encoder.encode_frame_into(
         &rgba, width, height, 16, 10, 10, 10, Some(&damage_1), false, &mut output,
     );
+    assert!(is_p1, "Initial damage should emit partial placement");
 
-    // Frame 2: Damage moves to (40, 50) (e.g. xeyes pupil moving or window dragging)
+    // Frame 2: Damage moves nearby to (25, 30) (e.g. xeyes pupil moving within eye)
     let damage_2 = [DamageRect {
-        x: 40,
-        y: 50,
+        x: 25,
+        y: 30,
         width: 20,
         height: 10,
     }];
@@ -268,10 +273,32 @@ fn test_kitty_moving_damage_no_ghosting_full_frame() {
         &mut output,
     );
 
-    // Moving damage MUST NOT use partial placement to guarantee zero ghosting
-    assert!(!is_partial, "Moving damage must fall back to full frame");
-    assert!(output.starts_with("\x1b[H\x1b_Ga=T,q=2,i=1,p=1,C=1,f=32,o=z,z=-2147483648"));
-    assert!(!output.contains("i=2"), "Must not use subimage i=2 when moving to avoid ghosting");
+    // Moving damage within bounds uses cumulative bounding box partial placement without ghosting
+    assert!(is_partial, "Nearby moving damage should use partial placement");
+    assert!(output.contains("i=2"), "Subimage i=2 must be used for partial placement");
+
+    // Frame 3: Damage jumps far away across screen (e.g. cursor moves to 140, 80)
+    let damage_far = [DamageRect {
+        x: 140,
+        y: 80,
+        width: 10,
+        height: 10,
+    }];
+    let is_partial_far = encoder.encode_frame_into(
+        &rgba,
+        width,
+        height,
+        16,
+        10,
+        10,
+        10,
+        Some(&damage_far),
+        false,
+        &mut output,
+    );
+    // Sparse inflation triggers adaptive rebase (full frame i=1)
+    assert!(!is_partial_far, "Sparse inflated damage must trigger adaptive full frame rebase");
+    assert!(output.contains("\x1b[H\x1b_Ga=T,q=2,i=1,p=1,C=1,f=32,o=z,z=-2147483648"));
 }
 
 #[test]
@@ -298,27 +325,22 @@ fn test_kitty_subimage_neutralized_by_transparent_dummy_not_delete() {
         width: 20,
         height: 10,
     }];
-    encoder.encode_frame_into(
-        &rgba, width, height, 16, 10, 10, 10, Some(&damage_1), false, &mut output,
-    );
-
-    // Frame 2: Same damage at (20, 30) emits partial frame
     let is_partial = encoder.encode_frame_into(
         &rgba, width, height, 16, 10, 10, 10, Some(&damage_1), false, &mut output,
     );
     assert!(is_partial, "Must be partial frame");
 
-    // Frame 3: Damage moves to (40, 50). Subimage was active, now anchor is lost!
-    let damage_2 = [DamageRect {
-        x: 40,
-        y: 50,
-        width: 20,
+    // Frame 2: Damage jumps far away causing sparse inflation -> triggers fallback rebase
+    let damage_far = [DamageRect {
+        x: 140,
+        y: 80,
+        width: 10,
         height: 10,
     }];
-    let is_partial_3 = encoder.encode_frame_into(
-        &rgba, width, height, 16, 10, 10, 10, Some(&damage_2), false, &mut output,
+    let is_partial_2 = encoder.encode_frame_into(
+        &rgba, width, height, 16, 10, 10, 10, Some(&damage_far), false, &mut output,
     );
-    assert!(!is_partial_3, "Must fall back to full frame");
+    assert!(!is_partial_2, "Must fall back to full frame");
 
     // Must neutralize active subimage with 1x1 transparent dummy pixel, NEVER a=d
     assert!(output.contains(";AAAAAA==\x1b\\"), "Must emit 1x1 transparent dummy pixel");
@@ -399,8 +421,8 @@ fn test_kitty_partial_placement_periodic_consolidation() {
         &rgba, width, height, 10, 10, 10, 10, Some(&damage), false, &mut output,
     );
 
-    // Run 60 partial frames
-    for _ in 0..60 {
+    // Run 100 partial frames: stationary video streaming continues indefinitely without 60-frame consolidation drop
+    for frame in 1..=100 {
         let is_partial = encoder.encode_frame_into(
             &rgba,
             width,
@@ -413,33 +435,15 @@ fn test_kitty_partial_placement_periodic_consolidation() {
             false,
             &mut output,
         );
-        assert!(is_partial);
+        assert!(is_partial, "Frame {} should maintain partial streaming", frame);
         assert!(output.starts_with("\x1b[1;1H"), "Should be partial placement");
         assert!(!output.contains("\x1b_Ga=d,d=a\x1b\\"));
         assert!(!output.contains("\x1b_Ga=d,d=i,i=2\x1b\\"));
     }
-
-    // 61st frame must trigger consolidation: delete prior subimage and send full frame
-    let is_partial_61 = encoder.encode_frame_into(
-        &rgba,
-        width,
-        height,
-        10,
-        10,
-        10,
-        10,
-        Some(&damage),
-        false,
-        &mut output,
-    );
-    assert!(!is_partial_61);
-    assert!(output.starts_with("\x1b[H\x1b_Ga=T,q=2,i=1,p=1,C=1"), "61st frame should consolidate with full frame and home cursor");
-    assert!(!output.contains("\x1b_Ga=d"), "Must never issue a=d to prevent terminal emulator crashes");
-    assert!(output.contains("s=100,v=100,c=10,r=10"));
 }
 
 #[test]
-fn test_kitty_default_mode_fullscreen_only() {
+fn test_kitty_default_mode_and_opt_out() {
     use termway::display::DamageRect;
     use termway::protocol::KittyStreamEncoder;
 
@@ -449,8 +453,8 @@ fn test_kitty_default_mode_fullscreen_only() {
     let mut encoder = KittyStreamEncoder::new();
     let mut output = String::new();
 
-    // Default encoder must have enable_partial = false
-    assert!(!encoder.enable_partial());
+    // Default encoder must have enable_partial = true
+    assert!(encoder.enable_partial());
 
     // Initial frame
     encoder.encode_frame_into(
@@ -464,13 +468,21 @@ fn test_kitty_default_mode_fullscreen_only() {
         height: 10,
     }];
 
-    // Even with small, stationary damage, default must emit full frame i=1, p=1
+    // By default, small damage emits partial placement
     let is_partial = encoder.encode_frame_into(
         &rgba, width, height, 10, 10, 10, 10, Some(&damage), false, &mut output,
     );
-    assert!(!is_partial, "Default mode must always emit full frame");
-    assert!(output.starts_with("\x1b[H\x1b_Ga=T,q=2,i=1,p=1,C=1"));
-    assert!(!output.contains("i=2"));
+    assert!(is_partial, "Default mode should emit partial placement for small damage");
+    assert!(output.contains("i=2"));
+
+    // When opt-out via set_enable_partial(false), must emit full frame i=1, p=1
+    encoder.set_enable_partial(false);
+    assert!(!encoder.enable_partial());
+    let is_partial_opt_out = encoder.encode_frame_into(
+        &rgba, width, height, 10, 10, 10, 10, Some(&damage), false, &mut output,
+    );
+    assert!(!is_partial_opt_out, "Opted-out mode must always emit full frame");
+    assert!(output.contains("\x1b[H\x1b_Ga=T,q=2,i=1,p=1,C=1"));
 }
 
 #[test]
