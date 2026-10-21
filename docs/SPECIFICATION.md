@@ -160,23 +160,24 @@ flowchart LR
 ## 4. 全テスト実行ログ
 
 ```bash
-$ cargo test --release
-   Compiling termway v0.10.0 (/path/to/termway)
-    Finished `release` profile [optimized] target(s)
-     Running tests/integration_pipeline.rs (7 tests) ... ok
+$ cargo test
+   Compiling termway v0.12.0 (/path/to/termway)
+    Finished `test` profile [unoptimized + debuginfo] target(s)
+     Running unittests src/lib.rs (4 tests) ... ok
+     Running tests/integration_pipeline.rs (8 tests) ... ok
      Running tests/perf_pipeline.rs (1 test) ... ok
      Running tests/system_e2e_gui.rs (2 tests) ... ok
      Running tests/unit_compositor.rs (36 tests) ... ok
-     Running tests/unit_damage_tracker.rs (6 tests) ... ok
+     Running tests/unit_damage_tracker.rs (7 tests) ... ok
      Running tests/unit_keyboard.rs (6 tests) ... ok
-     Running tests/unit_kitty_encoder.rs (10 tests) ... ok
+     Running tests/unit_kitty_encoder.rs (20 tests) ... ok
      Running tests/unit_secret_bridge.rs (4 tests) ... ok
      Running tests/unit_session.rs (7 tests) ... ok
      Running tests/unit_sgr_mouse.rs (7 tests) ... ok
      Running tests/unit_sixel_encoder.rs (7 tests) ... ok
      Running tests/unit_terminal.rs (5 tests) ... ok
 
-test result: ok. 98 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.35s
+test result: ok. 114 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 26.5s
 ```
-全 98 テストが 100% 成功し、すべての要件定義項目が検証されました。
+全 114 テストが 100% 成功し、すべての要件定義項目が検証されました。
 
