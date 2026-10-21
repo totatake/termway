@@ -669,6 +669,96 @@ fn test_kitty_resize_forces_fullscreen_rebase() {
 }
 
 #[test]
+fn test_kitty_jpeg_f101_fullscreen_and_partial_placement() {
+    use base64::engine::general_purpose::STANDARD as BASE64;
+    use base64::Engine;
+    use termway::display::DamageRect;
+    use termway::protocol::KittyStreamEncoder;
+
+    let mut encoder = KittyStreamEncoder::new();
+    encoder.set_enable_partial(true);
+    encoder.set_use_jpeg(true);
+    assert!(encoder.use_jpeg());
+
+    let w = 160u32;
+    let h = 100u32;
+    let rgba = vec![120u8; (w * h * 4) as usize];
+    let mut output = String::new();
+
+    // 1. Initial fullscreen frame must use f=101 without o=z
+    encoder.encode_frame_into(
+        &rgba, w, h, 16, 10, 10, 10, None, false, &mut output,
+    );
+    assert!(output.contains("f=101"), "Fullscreen header must use f=101");
+    assert!(!output.contains("o=z"), "JPEG mode must not specify o=z");
+    assert!(output.contains("i=1,p=1"));
+
+    // Extract payload and verify JPEG SOI and EOI
+    let semi_idx = output.find(';').unwrap();
+    let esc_idx = output.find("\x1b\\").unwrap();
+    let b64 = &output[semi_idx + 1..esc_idx];
+    let jpeg_bytes = BASE64.decode(b64).expect("valid base64");
+    assert_eq!(jpeg_bytes[0], 0xFF);
+    assert_eq!(jpeg_bytes[1], 0xD8); // SOI
+    assert_eq!(jpeg_bytes[jpeg_bytes.len() - 2], 0xFF);
+    assert_eq!(jpeg_bytes[jpeg_bytes.len() - 1], 0xD9); // EOI
+
+    // 2. Partial damage must use f=101 for subimage i=2
+    let dmg = [DamageRect {
+        x: 20,
+        y: 30,
+        width: 20,
+        height: 10,
+    }];
+    let is_p = encoder.encode_frame_into(
+        &rgba, w, h, 16, 10, 10, 10, Some(&dmg), false, &mut output,
+    );
+    assert!(is_p, "Partial frame should emit subimage");
+    assert!(output.contains("f=101"), "Subimage must use f=101");
+    assert!(!output.contains("o=z"), "Subimage must not specify o=z");
+    assert!(output.contains("i=2,p=1"));
+
+    // 3. Fallback / clear_placements must preserve f=32 transparent dummy pixel
+    encoder.encode_frame_into(
+        &rgba, w, h, 16, 10, 10, 10, None, false, &mut output,
+    );
+    assert!(
+        output.contains("f=32,s=1,v=1,c=1,r=1;AAAAAA==\x1b\\"),
+        "Dummy pixel cleanup must remain f=32 for alpha transparency"
+    );
+}
+
+#[test]
+fn test_kitty_jpeg_quality_configuration() {
+    use termway::protocol::KittyStreamEncoder;
+
+    let mut encoder = KittyStreamEncoder::new();
+    assert_eq!(encoder.jpeg_quality(), 80); // default
+
+    encoder.set_jpeg_quality(95);
+    assert_eq!(encoder.jpeg_quality(), 95);
+
+    let w = 80u32;
+    let h = 60u32;
+    let rgba = vec![140u8; (w * h * 4) as usize];
+    let mut out_high = String::new();
+    encoder.set_use_jpeg(true);
+    encoder.encode_frame_into(
+        &rgba, w, h, 8, 6, 10, 10, None, false, &mut out_high,
+    );
+
+    encoder.set_jpeg_quality(15);
+    assert_eq!(encoder.jpeg_quality(), 15);
+    let mut out_low = String::new();
+    encoder.encode_frame_into(
+        &rgba, w, h, 8, 6, 10, 10, None, false, &mut out_low,
+    );
+
+    // Higher quality JPEG has less quantization and should be larger or equal
+    assert!(out_high.len() >= out_low.len());
+}
+
+#[test]
 fn test_kitty_pixel_level_zero_ghosting_simulation() {
     use base64::engine::general_purpose::STANDARD as BASE64;
     use base64::Engine;

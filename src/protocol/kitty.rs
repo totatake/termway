@@ -15,6 +15,7 @@ use miniz_oxide::deflate::core::{
 };
 
 use crate::display::DamageRect;
+use crate::protocol::jpeg::JpegEncoder;
 
 pub const IMAGE_ID_CANVAS: u32 = 1;
 pub const IMAGE_ID_SUBIMAGE: u32 = 2;
@@ -35,6 +36,8 @@ pub struct KittyStreamEncoder {
     last_partial_bbox: Option<(u16, u16, u16, u16)>,
     last_width: u32,
     last_height: u32,
+    use_jpeg: bool,
+    jpeg_encoder: JpegEncoder,
 }
 
 impl Default for KittyStreamEncoder {
@@ -52,6 +55,16 @@ impl Default for KittyStreamEncoder {
                 v != "0" && !v.is_empty() && !v.eq_ignore_ascii_case("false")
             })
             .unwrap_or(true);
+        let use_jpeg = std::env::var("TERMWAY_KITTY_JPEG")
+            .map(|v| {
+                let v = v.trim();
+                v == "1" || v.eq_ignore_ascii_case("true")
+            })
+            .unwrap_or(false);
+        let jpeg_quality = std::env::var("TERMWAY_JPEG_QUALITY")
+            .ok()
+            .and_then(|v| v.trim().parse::<u8>().ok())
+            .unwrap_or(80);
         Self {
             compressor,
             compressed_buf: Vec::with_capacity(256 * 1024),
@@ -64,6 +77,8 @@ impl Default for KittyStreamEncoder {
             last_partial_bbox: None,
             last_width: 0,
             last_height: 0,
+            use_jpeg,
+            jpeg_encoder: JpegEncoder::new(jpeg_quality),
         }
     }
 }
@@ -339,6 +354,26 @@ impl KittyStreamEncoder {
         self.enable_partial
     }
 
+    /// Whether JPEG (f=101) streaming mode is enabled.
+    pub fn use_jpeg(&self) -> bool {
+        self.use_jpeg
+    }
+
+    /// Enable or disable JPEG (f=101) streaming mode.
+    pub fn set_use_jpeg(&mut self, enable: bool) {
+        self.use_jpeg = enable;
+    }
+
+    /// Returns the current JPEG compression quality (1-100).
+    pub fn jpeg_quality(&self) -> u8 {
+        self.jpeg_encoder.quality()
+    }
+
+    /// Set JPEG compression quality (1-100).
+    pub fn set_jpeg_quality(&mut self, quality: u8) {
+        self.jpeg_encoder.set_quality(quality);
+    }
+
     /// Reset stream state, forcing full-frame transmission on next frame.
     pub fn reset(&mut self) {
         self.partial_frames_count = 0;
@@ -513,42 +548,54 @@ impl KittyStreamEncoder {
         cell_rows: u16,
         output: &mut String,
     ) {
-        let stride = (full_width * 4) as usize;
-        let row_bytes = (rect_w * 4) as usize;
-        let sub_len = row_bytes * (rect_h as usize);
+        if self.use_jpeg {
+            self.jpeg_encoder.encode_subimage_into(
+                full_rgba,
+                full_width,
+                rect_x,
+                rect_y,
+                rect_w,
+                rect_h,
+                &mut self.compressed_buf,
+            );
+        } else {
+            let stride = (full_width * 4) as usize;
+            let row_bytes = (rect_w * 4) as usize;
+            let sub_len = row_bytes * (rect_h as usize);
 
-        self.sub_image_buf.clear();
-        if self.sub_image_buf.capacity() < sub_len {
-            self.sub_image_buf.reserve(sub_len - self.sub_image_buf.capacity());
-        }
-        self.sub_image_buf.resize(sub_len, 0);
-
-        for y in 0..rect_h {
-            let src_y = (rect_y + y) as usize;
-            let src_start = src_y * stride + (rect_x * 4) as usize;
-            let src_end = src_start + row_bytes;
-            let dst_start = (y as usize) * row_bytes;
-            let dst_end = dst_start + row_bytes;
-            if src_end <= full_rgba.len() {
-                Self::quantize_rgb565(
-                    &full_rgba[src_start..src_end],
-                    &mut self.sub_image_buf[dst_start..dst_end],
-                );
-            } else if src_start < full_rgba.len() {
-                let avail = full_rgba.len() - src_start;
-                Self::quantize_rgb565(
-                    &full_rgba[src_start..],
-                    &mut self.sub_image_buf[dst_start..dst_start + avail],
-                );
+            self.sub_image_buf.clear();
+            if self.sub_image_buf.capacity() < sub_len {
+                self.sub_image_buf.reserve(sub_len - self.sub_image_buf.capacity());
             }
-        }
+            self.sub_image_buf.resize(sub_len, 0);
 
-        // 1. Zero-allocation RFC 1950 zlib compression (level 1)
-        Self::compress_raw(
-            &mut self.compressor,
-            &mut self.compressed_buf,
-            &self.sub_image_buf,
-        );
+            for y in 0..rect_h {
+                let src_y = (rect_y + y) as usize;
+                let src_start = src_y * stride + (rect_x * 4) as usize;
+                let src_end = src_start + row_bytes;
+                let dst_start = (y as usize) * row_bytes;
+                let dst_end = dst_start + row_bytes;
+                if src_end <= full_rgba.len() {
+                    Self::quantize_rgb565(
+                        &full_rgba[src_start..src_end],
+                        &mut self.sub_image_buf[dst_start..dst_end],
+                    );
+                } else if src_start < full_rgba.len() {
+                    let avail = full_rgba.len() - src_start;
+                    Self::quantize_rgb565(
+                        &full_rgba[src_start..],
+                        &mut self.sub_image_buf[dst_start..dst_start + avail],
+                    );
+                }
+            }
+
+            // 1. Zero-allocation RFC 1950 zlib compression (level 1)
+            Self::compress_raw(
+                &mut self.compressor,
+                &mut self.compressed_buf,
+                &self.sub_image_buf,
+            );
+        }
         let out_pos = self.compressed_buf.len();
 
         // 2. Direct streaming Base64 encoding into Kitty chunk packets
@@ -572,11 +619,19 @@ impl KittyStreamEncoder {
             let m_flag = if is_last { 0 } else { 1 };
 
             if first {
-                let _ = write!(
-                    output,
-                    "\x1b_Ga=T,q=2,i={},p=1,C=1,f=32,o=z,z=-2147483647,s={},v={},c={},r={},m={};",
-                    IMAGE_ID_SUBIMAGE, rect_w, rect_h, cell_cols, cell_rows, m_flag
-                );
+                if self.use_jpeg {
+                    let _ = write!(
+                        output,
+                        "\x1b_Ga=T,q=2,i={},p=1,C=1,f=101,z=-2147483647,s={},v={},c={},r={},m={};",
+                        IMAGE_ID_SUBIMAGE, rect_w, rect_h, cell_cols, cell_rows, m_flag
+                    );
+                } else {
+                    let _ = write!(
+                        output,
+                        "\x1b_Ga=T,q=2,i={},p=1,C=1,f=32,o=z,z=-2147483647,s={},v={},c={},r={},m={};",
+                        IMAGE_ID_SUBIMAGE, rect_w, rect_h, cell_cols, cell_rows, m_flag
+                    );
+                }
                 first = false;
             } else if m_flag == 1 {
                 output.push_str("\x1b_Gm=1;");
@@ -622,16 +677,28 @@ impl KittyStreamEncoder {
         clear_placements: bool,
         output: &mut String,
     ) {
-        // 1. Zero-allocation 16-bit color (RGB565 equivalent) masking to maximize zlib LZ77 compression
-        self.quantized_buf.clear();
-        if self.quantized_buf.capacity() < rgba.len() {
-            self.quantized_buf.reserve(rgba.len() - self.quantized_buf.capacity());
-        }
-        self.quantized_buf.resize(rgba.len(), 0);
-        Self::quantize_rgb565(rgba, &mut self.quantized_buf);
+        if self.use_jpeg {
+            self.jpeg_encoder.encode_subimage_into(
+                rgba,
+                width,
+                0,
+                0,
+                width,
+                height,
+                &mut self.compressed_buf,
+            );
+        } else {
+            // 1. Zero-allocation 16-bit color (RGB565 equivalent) masking to maximize zlib LZ77 compression
+            self.quantized_buf.clear();
+            if self.quantized_buf.capacity() < rgba.len() {
+                self.quantized_buf.reserve(rgba.len() - self.quantized_buf.capacity());
+            }
+            self.quantized_buf.resize(rgba.len(), 0);
+            Self::quantize_rgb565(rgba, &mut self.quantized_buf);
 
-        // 2. Zero-allocation RFC 1950 zlib compression (level 1)
-        Self::compress_raw(&mut self.compressor, &mut self.compressed_buf, &self.quantized_buf);
+            // 2. Zero-allocation RFC 1950 zlib compression (level 1)
+            Self::compress_raw(&mut self.compressor, &mut self.compressed_buf, &self.quantized_buf);
+        }
         let out_pos = self.compressed_buf.len();
 
         // 3. Direct streaming Base64 encoding into Kitty chunk packets (no intermediate string)
@@ -662,11 +729,19 @@ impl KittyStreamEncoder {
             let m_flag = if is_last { 0 } else { 1 };
 
             if first {
-                let _ = write!(
-                    output,
-                    "\x1b_Ga=T,q=2,i={},p=1,C=1,f=32,o=z,z=-2147483648,s={},v={},c={},r={},m={};",
-                    image_id, width, height, term_cols, term_rows, m_flag
-                );
+                if self.use_jpeg {
+                    let _ = write!(
+                        output,
+                        "\x1b_Ga=T,q=2,i={},p=1,C=1,f=101,z=-2147483648,s={},v={},c={},r={},m={};",
+                        image_id, width, height, term_cols, term_rows, m_flag
+                    );
+                } else {
+                    let _ = write!(
+                        output,
+                        "\x1b_Ga=T,q=2,i={},p=1,C=1,f=32,o=z,z=-2147483648,s={},v={},c={},r={},m={};",
+                        image_id, width, height, term_cols, term_rows, m_flag
+                    );
+                }
                 first = false;
             } else if m_flag == 1 {
                 output.push_str("\x1b_Gm=1;");
