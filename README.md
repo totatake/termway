@@ -235,7 +235,7 @@ Specify the target command and arguments after `--`:
 
 ### 3. Graphics Protocol Auto-Detection & Explicit Selection (`--kitty`, `--sixel`)
 `termway` automatically detects terminal graphics protocol capabilities on startup:
-- **Kitty-capable terminals** (Kitty, Ghostty, WezTerm, etc.): Automatically uses Kitty Graphics Protocol.
+- **Kitty-capable terminals** (Noctty, Kitty, Ghostty, WezTerm, etc.): Automatically uses Kitty Graphics Protocol.
 - **Sixel-capable terminals** (Windows Terminal, iTerm2, Foot, mlterm, RLogin, etc.): Automatically uses Sixel Graphics Protocol.
 - **VTE-based terminals** (GNOME Terminal, xterm, etc.): Automatically falls back to Sixel protocol.
 
@@ -247,6 +247,22 @@ You can explicitly override the protocol using `--kitty` or `--sixel`:
 
 # Force Kitty protocol
 ./target/release/termway --kitty -- gvim
+```
+
+#### Kitty Graphics Protocol `f=101` (JPEG) Extension & Dynamic Fallback
+For compatible terminals such as Noctty, `termway` supports Kitty Graphics Protocol extension format `f=101` (Baseline JPEG) powered by a pure Rust zero-allocation JPEG encoder. This reduces PTY transmission bandwidth for video frames and high-entropy scenes by ~80% compared to standard zlib. On non-supporting terminals (upstream Kitty, Ghostty, etc.), `termway` dynamically detects capabilities on startup and safely falls back to standard `f=32,o=z` (zlib).
+
+- CLI Options:
+  - `--jpeg`: Force-enable Kitty `f=101` JPEG extension
+  - `--no-jpeg`: Force-disable JPEG extension (use standard zlib `f=32,o=z`)
+  - `--jpeg-quality <1-100>`: Set JPEG compression quality (default: `80`)
+- Environment Variables:
+  - `TERMWAY_KITTY_JPEG=1` / `true` (force enabled), `0` / `false` (force disabled), unset / `auto` (auto-detect)
+  - `TERMWAY_JPEG_QUALITY=1..=100` (quality setting)
+
+```bash
+# Run with JPEG extension explicitly enabled
+./target/release/termway --jpeg -- firefox
 ```
 
 ### 4. Font Cell Size Optimization (`--cell-size`, `TERMWAY_CELL_SIZE`)
@@ -278,6 +294,9 @@ export TERMWAY_CELL_SIZE=10x22
 | `--wayland` | - | Use Smithay headless Wayland compositor mode (default) | Enabled |
 | `--kitty` | - | Force Kitty Graphics Protocol | Auto-detected |
 | `--sixel` | - | Force Sixel Graphics Protocol | Auto-detected |
+| `--jpeg` | - | Force-enable Kitty Graphics Protocol JPEG extension (`f=101`) | Auto-probed |
+| `--no-jpeg` | - | Force-disable JPEG extension (use standard zlib `f=32,o=z`) | Auto-probed |
+| `--jpeg-quality` | `<1-100>` | Set JPEG compression quality (1..=100) | `80` |
 | `--cell-size` | `<WxH>` | Specify font cell dimensions in pixels (e.g. `10x22`) | Auto-detected via SGR 14t |
 | `--width` | `<PIXELS>` | Virtual display resolution width | Auto-calculated from terminal |
 | `--height` | `<PIXELS>` | Virtual display resolution height | Auto-calculated from terminal |

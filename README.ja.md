@@ -236,7 +236,7 @@ Sixelを使いたい場合は `--sixel` を追加します：
 ### 3. グラフィックスプロトコルの自動検出と明示指定 (`--kitty`, `--sixel`)
 
 termway は起動時に端末エミュレータのプロトコル対応状況を自動検出します：
-- **Kitty 対応端末**（Kitty, Ghostty, WezTerm 等）: 自動的に Kitty Graphics Protocol を使用
+- **Kitty 対応端末**（Noctty, Kitty, Ghostty, WezTerm 等）: 自動的に Kitty Graphics Protocol を使用
 - **Sixel 対応端末**（Windows Terminal, iTerm2, Foot, mlterm, RLogin 等）: 自動的に Sixel プロトコルを使用
 - **VTE 系端末**（GNOME Terminal, xterm 等）: 自動的に Sixel プロトコルへフォールバック
 
@@ -248,6 +248,22 @@ termway は起動時に端末エミュレータのプロトコル対応状況を
 
 # Kitty プロトコルを明示指定
 ./target/release/termway --kitty -- gvim
+```
+
+#### Kitty Graphics Protocol `f=101` (JPEG) 拡張と動的フォールバック
+Noctty 等の対応端末向けに、純粋 Rust 製ゼロアロケーション Baseline JPEG エンコーダによる Kitty `f=101` 拡張ストリーミングに対応しています。動画フレームや高エントロピー画面の PTY 転送帯域を従来の zlib 比でさらに約 80% 削減します。未対応の端末（Kitty 本家、Ghostty 本家等）では起動時のプローブ検知により安全に `f=32,o=z`（zlib）へ自動フォールバックします。
+
+- CLI オプション:
+  - `--jpeg`: Kitty `f=101` JPEG 拡張を強制有効化
+  - `--no-jpeg`: JPEG 拡張を無効化（標準の zlib `f=32,o=z` を強制）
+  - `--jpeg-quality <1-100>`: JPEG 圧縮品質を指定（デフォルト: `80`）
+- 環境変数:
+  - `TERMWAY_KITTY_JPEG=1` / `true`（強制有効）、`0` / `false`（強制無効）、未設定 / `auto`（自動プローブ判定）
+  - `TERMWAY_JPEG_QUALITY=1..=100`（品質指定）
+
+```bash
+# JPEG 拡張を明示的に有効化して動画アプリやブラウザを起動
+./target/release/termway --jpeg -- firefox
 ```
 
 ### 4. フォントセルサイズの動的測定と補正 (`--cell-size`, `TERMWAY_CELL_SIZE`)
@@ -280,6 +296,9 @@ Sixel および SGR マウスプロトコルでのピクセルパーフェクト
 | `--wayland` | - | Smithay ベースのヘッドレス Wayland コンポジタモードを使用する（デフォルト） | 有効 |
 | `--kitty` | - | Kitty Graphics Protocol を明示的に使用する | 自動検出 |
 | `--sixel` | - | Sixel Graphics Protocol を明示的に使用する | 自動検出 |
+| `--jpeg` | - | Kitty Graphics Protocol JPEG 拡張 (`f=101`) を明示的に有効化 | 自動プローブ判定 |
+| `--no-jpeg` | - | Kitty Graphics Protocol JPEG 拡張を無効化（標準 zlib `f=32,o=z` を強制） | 自動プローブ判定 |
+| `--jpeg-quality` | `<1-100>` | JPEG 圧縮品質 (1〜100) を設定 | `80` |
 | `--cell-size` | `<WxH>` | フォントセル寸法（幅x高さ）をピクセル単位で明示指定 (例: `10x22`) | SGR 14t 自動測定 |
 | `--width` | `<PIXELS>` | 仮想ディスプレイ解像度の幅 | 端末サイズから自動算出 |
 | `--height` | `<PIXELS>` | 仮想ディスプレイ解像度の高さ | 端末サイズから自動算出 |
