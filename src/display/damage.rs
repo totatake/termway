@@ -45,13 +45,20 @@ impl DamageTracker {
     #[inline(always)]
     fn hash_row_words(mut hash: u64, row: &[u8]) -> u64 {
         const PRIME: u64 = 0x100000001b3u64;
+        const MASK64: u64 = 0xFFF8_FCF8_FFF8_FCF8u64;
         let mut chunks = row.chunks_exact(8);
         for chunk in &mut chunks {
-            let word = u64::from_le_bytes(chunk.try_into().unwrap());
+            let word = u64::from_le_bytes(chunk.try_into().unwrap()) & MASK64;
             hash = (hash ^ word).wrapping_mul(PRIME);
         }
-        for &byte in chunks.remainder() {
-            hash = (hash ^ (byte as u64)).wrapping_mul(PRIME);
+        for (i, &byte) in chunks.remainder().iter().enumerate() {
+            let m = match i % 4 {
+                0 => 0xF8,
+                1 => 0xFC,
+                2 => 0xF8,
+                _ => 0xFF,
+            };
+            hash = (hash ^ ((byte & m) as u64)).wrapping_mul(PRIME);
         }
         hash
     }
@@ -68,6 +75,7 @@ impl DamageTracker {
         rect_h: usize,
     ) -> u64 {
         use std::arch::x86_64::*;
+        let mask = _mm256_set1_epi32(0xFFF8_FCF8u32 as i32);
         let mut acc0 = _mm256_set1_epi64x(0x517cc1b727220a95u64 as i64);
         let mut acc1 = _mm256_set1_epi64x(0x9e3779b97f4a7c15u64 as i64);
         let row_bytes = rect_w * 4;
@@ -79,8 +87,8 @@ impl DamageTracker {
             let mut rem = row_bytes;
 
             while rem >= 64 {
-                let v0 = _mm256_loadu_si256(ptr as *const __m256i);
-                let v1 = _mm256_loadu_si256(ptr.add(32) as *const __m256i);
+                let v0 = _mm256_and_si256(_mm256_loadu_si256(ptr as *const __m256i), mask);
+                let v1 = _mm256_and_si256(_mm256_loadu_si256(ptr.add(32) as *const __m256i), mask);
                 acc0 = _mm256_xor_si256(acc0, v0);
                 acc0 = _mm256_add_epi64(_mm256_slli_epi64(acc0, 13), _mm256_srli_epi64(acc0, 51));
                 acc0 = _mm256_add_epi64(acc0, v1);
@@ -93,7 +101,7 @@ impl DamageTracker {
                 rem -= 64;
             }
             while rem >= 32 {
-                let v0 = _mm256_loadu_si256(ptr as *const __m256i);
+                let v0 = _mm256_and_si256(_mm256_loadu_si256(ptr as *const __m256i), mask);
                 acc0 = _mm256_xor_si256(acc0, v0);
                 acc0 = _mm256_add_epi64(_mm256_slli_epi64(acc0, 13), _mm256_srli_epi64(acc0, 51));
                 ptr = ptr.add(32);
@@ -127,6 +135,7 @@ impl DamageTracker {
         rect_h: usize,
     ) -> u64 {
         use std::arch::aarch64::*;
+        let mask = vdupq_n_u32(0xFFF8_FCF8);
         let mut acc0 = vdupq_n_u64(0x517cc1b727220a95u64);
         let mut acc1 = vdupq_n_u64(0x9e3779b97f4a7c15u64);
         let row_bytes = rect_w * 4;
@@ -138,31 +147,31 @@ impl DamageTracker {
             let mut rem = row_bytes;
 
             while rem >= 64 {
-                let v0 = vld1q_u64(ptr as *const u64);
-                let v1 = vld1q_u64(ptr.add(16) as *const u64);
-                let v2 = vld1q_u64(ptr.add(32) as *const u64);
-                let v3 = vld1q_u64(ptr.add(48) as *const u64);
+                let v0 = vandq_u32(vld1q_u32(ptr as *const u32), mask);
+                let v1 = vandq_u32(vld1q_u32(ptr.add(16) as *const u32), mask);
+                let v2 = vandq_u32(vld1q_u32(ptr.add(32) as *const u32), mask);
+                let v3 = vandq_u32(vld1q_u32(ptr.add(48) as *const u32), mask);
 
-                acc0 = veorq_u64(acc0, v0);
-                acc0 = vaddq_u64(vaddq_u64(vshlq_n_u64(acc0, 13), vshrq_n_u64(acc0, 51)), v1);
+                acc0 = veorq_u64(acc0, vreinterpretq_u64_u32(v0));
+                acc0 = vaddq_u64(vaddq_u64(vshlq_n_u64(acc0, 13), vshrq_n_u64(acc0, 51)), vreinterpretq_u64_u32(v1));
 
-                acc1 = veorq_u64(acc1, v2);
-                acc1 = vaddq_u64(vaddq_u64(vshlq_n_u64(acc1, 17), vshrq_n_u64(acc1, 47)), v3);
+                acc1 = veorq_u64(acc1, vreinterpretq_u64_u32(v2));
+                acc1 = vaddq_u64(vaddq_u64(vshlq_n_u64(acc1, 17), vshrq_n_u64(acc1, 47)), vreinterpretq_u64_u32(v3));
 
                 ptr = ptr.add(64);
                 rem -= 64;
             }
             while rem >= 32 {
-                let v0 = vld1q_u64(ptr as *const u64);
-                let v1 = vld1q_u64(ptr.add(16) as *const u64);
-                acc0 = veorq_u64(acc0, v0);
-                acc0 = vaddq_u64(vaddq_u64(vshlq_n_u64(acc0, 13), vshrq_n_u64(acc0, 51)), v1);
+                let v0 = vandq_u32(vld1q_u32(ptr as *const u32), mask);
+                let v1 = vandq_u32(vld1q_u32(ptr.add(16) as *const u32), mask);
+                acc0 = veorq_u64(acc0, vreinterpretq_u64_u32(v0));
+                acc0 = vaddq_u64(vaddq_u64(vshlq_n_u64(acc0, 13), vshrq_n_u64(acc0, 51)), vreinterpretq_u64_u32(v1));
                 ptr = ptr.add(32);
                 rem -= 32;
             }
             while rem >= 16 {
-                let v0 = vld1q_u64(ptr as *const u64);
-                acc0 = veorq_u64(acc0, v0);
+                let v0 = vandq_u32(vld1q_u32(ptr as *const u32), mask);
+                acc0 = veorq_u64(acc0, vreinterpretq_u64_u32(v0));
                 acc0 = vaddq_u64(vshlq_n_u64(acc0, 13), vshrq_n_u64(acc0, 51));
                 ptr = ptr.add(16);
                 rem -= 16;
@@ -183,6 +192,42 @@ impl DamageTracker {
         if h == 0 { 1 } else { h }
     }
 
+    /// Public helper to compute RGB565-quantized hash of an arbitrary rectangle in an RGBA buffer.
+    pub fn compute_tile_hash_at(
+        rgba_data: &[u8],
+        stride: usize,
+        rect_x: usize,
+        rect_y: usize,
+        rect_w: usize,
+        rect_h: usize,
+    ) -> u64 {
+        #[cfg(target_arch = "x86_64")]
+        {
+            if std::is_x86_feature_detected!("avx2") {
+                return unsafe {
+                    Self::hash_tile_avx2(rgba_data, stride, rect_x, rect_y, rect_w, rect_h)
+                };
+            }
+        }
+        #[cfg(target_arch = "aarch64")]
+        {
+            return unsafe {
+                Self::hash_tile_neon(rgba_data, stride, rect_x, rect_y, rect_w, rect_h)
+            };
+        }
+        #[allow(unreachable_code)]
+        {
+            let mut h = 0xcbf29ce484222325u64;
+            for y in 0..rect_h {
+                let cur_y = rect_y + y;
+                let row_start = cur_y * stride + rect_x * 4;
+                let row_end = row_start + rect_w * 4;
+                h = Self::hash_row_words(h, &rgba_data[row_start..row_end]);
+            }
+            if h == 0 { 1 } else { h }
+        }
+    }
+
     /// Resize damage tracker to new resolution
     pub fn resize(&mut self, width: u32, height: u32) {
         if self.width == width && self.height == height {
@@ -196,8 +241,6 @@ impl DamageTracker {
     pub fn track_damage(&mut self, rgba_data: &[u8]) -> Vec<DamageRect> {
         let stride = (self.width * 4) as usize;
         let mut dirty_tiles = Vec::new();
-        #[cfg(target_arch = "x86_64")]
-        let has_avx2 = std::is_x86_feature_detected!("avx2");
 
         for ty in 0..self.tiles_y {
             for tx in 0..self.tiles_x {
@@ -212,54 +255,14 @@ impl DamageTracker {
                     + ((rect_x + rect_w) * 4) as usize;
 
                 let current_hash = if last_row_end <= rgba_data.len() && rect_h > 0 && rect_w > 0 {
-                    #[cfg(target_arch = "x86_64")]
-                    {
-                        if has_avx2 {
-                            unsafe {
-                                Self::hash_tile_avx2(
-                                    rgba_data,
-                                    stride,
-                                    rect_x as usize,
-                                    rect_y as usize,
-                                    rect_w as usize,
-                                    rect_h as usize,
-                                )
-                            }
-                        } else {
-                            let mut h = 0xcbf29ce484222325u64;
-                            for y in 0..rect_h {
-                                let cur_y = (rect_y + y) as usize;
-                                let row_start = cur_y * stride + (rect_x * 4) as usize;
-                                let row_end = row_start + (rect_w * 4) as usize;
-                                h = Self::hash_row_words(h, &rgba_data[row_start..row_end]);
-                            }
-                            if h == 0 { 1 } else { h }
-                        }
-                    }
-                    #[cfg(target_arch = "aarch64")]
-                    {
-                        unsafe {
-                            Self::hash_tile_neon(
-                                rgba_data,
-                                stride,
-                                rect_x as usize,
-                                rect_y as usize,
-                                rect_w as usize,
-                                rect_h as usize,
-                            )
-                        }
-                    }
-                    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-                    {
-                        let mut h = 0xcbf29ce484222325u64;
-                        for y in 0..rect_h {
-                            let cur_y = (rect_y + y) as usize;
-                            let row_start = cur_y * stride + (rect_x * 4) as usize;
-                            let row_end = row_start + (rect_w * 4) as usize;
-                            h = Self::hash_row_words(h, &rgba_data[row_start..row_end]);
-                        }
-                        if h == 0 { 1 } else { h }
-                    }
+                    Self::compute_tile_hash_at(
+                        rgba_data,
+                        stride,
+                        rect_x as usize,
+                        rect_y as usize,
+                        rect_w as usize,
+                        rect_h as usize,
+                    )
                 } else {
                     0
                 };

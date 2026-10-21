@@ -103,3 +103,29 @@ fn test_damage_tracker_simd_edge_tiles_and_benchmark_1080x720() {
     assert_eq!(edge_damage[0].width, 24);
 }
 
+#[test]
+fn test_damage_tracker_rgb565_noise_filtering() {
+    let mut tracker = DamageTracker::new(64, 64, 32);
+    let mut frame = vec![0u8; 64 * 64 * 4];
+
+    // Establish baseline frame
+    for b in &mut frame {
+        *b = 100; // 100 & 0xF8 = 96
+    }
+    let _ = tracker.track_damage(&frame);
+
+    // Perturb lowest bits: 100 (0b01100100) -> 102 (0b01100110)
+    // For R (& 0xF8), G (& 0xFC), B (& 0xF8), these small perturbations are masked to 0
+    frame[0] = 102; // R: 102 & 0xF8 = 96
+    frame[1] = 101; // G: 101 & 0xFC = 100
+    frame[2] = 103; // B: 103 & 0xF8 = 96
+
+    let damage = tracker.track_damage(&frame);
+    assert!(damage.is_empty(), "Noise in lower bits masked by RGB565 must not trigger damage");
+
+    // But perturbation in high bits must trigger damage
+    frame[0] = 120; // 120 & 0xF8 = 120 != 96
+    let damage_high = tracker.track_damage(&frame);
+    assert_eq!(damage_high.len(), 1, "Significant color change must trigger damage");
+}
+
