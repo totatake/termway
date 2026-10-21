@@ -332,17 +332,18 @@ impl QuantizationTables {
 /// Quantizes and zig-zag reorders DCT coefficients.
 #[inline(always)]
 fn quantize_and_zigzag(dct: &[i32; 64], q_table: &[u8; 64], out: &mut [i16; 64]) {
-    for i in 0..64 {
-        let val = dct[i];
-        let q = q_table[i] as i32;
-        // Divide by 16 because 2D DCT scale adds 16x (4x row * 4x col)
-        let q16 = q * 16;
+    for k in 0..64 {
+        let raster_idx = ZIGZAG[k];
+        let val = dct[raster_idx];
+        let q = q_table[k] as i32;
+        // Divide by 128 (8 * sqrt(2) * 8 * sqrt(2)) because 2D DCT scale adds 128x
+        let q128 = q * 128;
         let quantized = if val >= 0 {
-            (val + q16 / 2) / q16
+            (val + q128 / 2) / q128
         } else {
-            (val - q16 / 2) / q16
+            (val - q128 / 2) / q128
         };
-        out[ZIGZAG[i]] = quantized.clamp(i16::MIN as i32, i16::MAX as i32) as i16;
+        out[k] = quantized.clamp(i16::MIN as i32, i16::MAX as i32) as i16;
     }
 }
 
@@ -688,7 +689,7 @@ impl JpegEncoder {
 
 /// Static 1x1 white JPEG base64 payload for zero-latency capability query (`a=q,f=101`).
 pub const TINY_1X1_JPEG_BASE64: &str =
-    "/9j/4AAQSkZJRgABAQAAAQABAAD/2wCEABALDA4MChAODQ4SERATGCgaGBYWGDEjJR0oOjM9PDkzODdASFxOQERXRTc4UG1RV19iZ2hnPk1xeXBkeFxlZ2MBERIYL2NjY2MSFRpCY2NjYxgaOGNjY2NjL0JjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY//AABEIAAEAAQMBIgACEQEDEQH/xAAfAAABBQEBAQEBAQAAAAAAAAAAAQIDBAUGBwgJCgv/xAC1EAACAQMDAgQDBQUEBAAAAX0BAgMABBEFEiExQQYTUWEHInEUMoGRoQgjQrHBFVLR8CQzYnKCCQoWFxgZGiUmJygpKjQ1Njc4OTpDREVGR0hJSlNUVVZXWFlaY2RlZmdoaWpzdHV2d3h5eoOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4eLj5OXm5+jp6vHy8/T19vf4+fr/xAAfAQADAQEBAQEBAQEBAAAAAAAAAQIDBAUGBwgJCgv/xAC1EQACAQIEBAMEBwUEBAABAncAAQIDEQQFITEGEkFRB2FxEyIygQgUQpGhscEJIzNS8BVictEKFiQ04SXxFxgZGiYnKCkqNTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqCg4SFhoeIiYqSk5SVlpeYmZqio6Slpqeoqaqys7S1tre4ubrCw8TFxsfIycrS09TV1tfY2dri4+Tl5ufo6ery8/T19vf4+fr/2gAMAwEAAhEDEQA/AP38ooooA//Z";
+    "/9j/4AAQSkZJRgABAQAAAQABAAD/2wCEAAYEBQYFBAYGBQYHBwYIChAKCgkJChQODwwQFxQYGBcUFhYaHSUfGhsjHBYWICwgIyYnKSopGR8tMC0oMCUoKSgBBwcKEygoKCgHCAoaKCgoKAoKFigoKCgoExooKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKP/AABEIAAEAAQMBIgACEQEDEQH/xAAfAAABBQEBAQEBAQAAAAAAAAAAAQIDBAUGBwgJCgv/xAC1EAACAQMDAgQDBQUEBAAAAX0BAgMABBEFEiExQQYTUWEHInEUMoGRoQgjQrHBFVLR8CQzYnKCCQoWFxgZGiUmJygpKjQ1Njc4OTpDREVGR0hJSlNUVVZXWFlaY2RlZmdoaWpzdHV2d3h5eoOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4eLj5OXm5+jp6vHy8/T19vf4+fr/xAAfAQADAQEBAQEBAQEBAAAAAAAAAQIDBAUGBwgJCgv/xAC1EQACAQIEBAMEBwUEBAABAncAAQIDEQQFITEGEkFRB2FxEyIygQgUQpGhscEJIzNS8BVictEKFiQ04SXxFxgZGiYnKCkqNTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqCg4SFhoeIiYqSk5SVlpeYmZqio6Slpqeoqaqys7S1tre4ubrCw8TFxsfIycrS09TV1tfY2dri4+Tl5ufo6ery8/T19vf4+fr/2gAMAwEAAhEDEQA/APqmiiigD//Z";
 
 #[cfg(test)]
 mod tests {
@@ -709,7 +710,6 @@ mod tests {
         let encoder = JpegEncoder::new(80);
         let mut jpeg = Vec::new();
         encoder.encode_subimage_into(&rgba, w, 0, 0, w, h, &mut jpeg);
-
         assert!(!jpeg.is_empty());
         assert_eq!(jpeg[0], 0xFF);
         assert_eq!(jpeg[1], 0xD8); // SOI
@@ -750,9 +750,70 @@ mod tests {
     }
 
     #[test]
+    fn test_color_fidelity() {
+        let w = 32u32;
+        let h = 32u32;
+        let enc = JpegEncoder::new(90);
+
+        // White
+        let rgba = vec![255u8; (w * h * 4) as usize];
+        let mut out = Vec::new();
+        enc.encode_subimage_into(&rgba, w, 0, 0, w, h, &mut out);
+        std::fs::write("/tmp/white.jpg", &out).ok();
+
+        // Red: RGBA (255, 0, 0, 255)
+        let mut rgba_red = vec![0u8; (w * h * 4) as usize];
+        for p in rgba_red.chunks_exact_mut(4) {
+            p[0] = 255;
+            p[3] = 255;
+        }
+        out.clear();
+        enc.encode_subimage_into(&rgba_red, w, 0, 0, w, h, &mut out);
+        std::fs::write("/tmp/red.jpg", &out).ok();
+
+        // Green: RGBA (0, 255, 0, 255)
+        let mut rgba_green = vec![0u8; (w * h * 4) as usize];
+        for p in rgba_green.chunks_exact_mut(4) {
+            p[1] = 255;
+            p[3] = 255;
+        }
+        out.clear();
+        enc.encode_subimage_into(&rgba_green, w, 0, 0, w, h, &mut out);
+        std::fs::write("/tmp/green.jpg", &out).ok();
+
+        // Blue: RGBA (0, 0, 255, 255)
+        let mut rgba_blue = vec![0u8; (w * h * 4) as usize];
+        for p in rgba_blue.chunks_exact_mut(4) {
+            p[2] = 255;
+            p[3] = 255;
+        }
+        out.clear();
+        enc.encode_subimage_into(&rgba_blue, w, 0, 0, w, h, &mut out);
+        std::fs::write("/tmp/blue.jpg", &out).ok();
+
+        // 1260x714 pattern
+        let w2 = 1260u32;
+        let h2 = 714u32;
+        let mut rgba_large = vec![0u8; (w2 * h2 * 4) as usize];
+        for y in 0..h2 {
+            for x in 0..w2 {
+                let idx = ((y * w2 + x) * 4) as usize;
+                rgba_large[idx] = (x % 256) as u8;
+                rgba_large[idx + 1] = (y % 256) as u8;
+                rgba_large[idx + 2] = ((x + y) % 256) as u8;
+                rgba_large[idx + 3] = 255;
+            }
+        }
+        out.clear();
+        enc.encode_subimage_into(&rgba_large, w2, 0, 0, w2, h2, &mut out);
+        std::fs::write("/tmp/pattern_1260x714.jpg", &out).ok();
+    }
+
+    #[test]
     fn test_tiny_1x1_jpeg_base64_validity() {
         use base64::engine::general_purpose::STANDARD as BASE64;
         use base64::Engine;
+
         let bytes = BASE64.decode(TINY_1X1_JPEG_BASE64).expect("valid base64");
         assert_eq!(bytes[0], 0xFF);
         assert_eq!(bytes[1], 0xD8);
