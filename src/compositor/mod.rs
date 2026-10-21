@@ -760,7 +760,7 @@ impl TermwayCompositor {
                     self.prev_taskbar = taskbar.clone();
 
                     if !damage.is_empty() || taskbar_changed || self.backend.needs_clear {
-                        let damage_arg = if self.backend.needs_clear || taskbar_changed {
+                        let damage_arg = if self.backend.needs_clear {
                             None
                         } else {
                             Some(damage)
