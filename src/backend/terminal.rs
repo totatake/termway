@@ -44,6 +44,7 @@ struct AsyncRenderState {
 pub struct TerminalBackend {
     pub term_size: TerminalSize,
     use_sixel: bool,
+    use_jpeg: bool,
     pub show_hud: bool,
     pub needs_clear: bool,
     async_state: Arc<(Mutex<AsyncRenderState>, Condvar)>,
@@ -52,7 +53,7 @@ pub struct TerminalBackend {
 }
 
 impl TerminalBackend {
-    pub fn new(term_size: TerminalSize, use_sixel: bool) -> Self {
+    pub fn new(term_size: TerminalSize, use_sixel: bool, use_jpeg: bool, jpeg_quality: u8) -> Self {
         let metrics = Arc::new(BackendMetrics::default());
         let metrics_clone = Arc::clone(&metrics);
         let async_state = Arc::new((
@@ -67,6 +68,8 @@ impl TerminalBackend {
         let state_clone = Arc::clone(&async_state);
         let mode_desc = if use_sixel {
             "Sixel"
+        } else if use_jpeg {
+            "Kitty-JPEG"
         } else {
             "Kitty"
         };
@@ -78,6 +81,8 @@ impl TerminalBackend {
                 let mut sixel_stream = SixelStreamEncoder::new();
                 let mut sixel_out = Vec::new();
                 let mut kitty_stream = KittyStreamEncoder::new();
+                kitty_stream.set_use_jpeg(use_jpeg);
+                kitty_stream.set_jpeg_quality(jpeg_quality);
                 let mut kitty_out = String::new();
 
                 let mut stat_start = std::time::Instant::now();
@@ -232,6 +237,7 @@ impl TerminalBackend {
         Self {
             term_size,
             use_sixel,
+            use_jpeg,
             show_hud: false,
             needs_clear: false,
             async_state,
@@ -269,9 +275,15 @@ impl TerminalBackend {
         self.use_sixel
     }
 
+    pub fn is_jpeg(&self) -> bool {
+        self.use_jpeg
+    }
+
     pub fn name(&self) -> &'static str {
         if self.use_sixel {
             "Sixel"
+        } else if self.use_jpeg {
+            "Kitty-JPEG"
         } else {
             "Kitty"
         }

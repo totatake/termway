@@ -2,6 +2,8 @@ use std::env;
 use std::io::{self, Write};
 use std::os::fd::AsRawFd;
 
+use crate::protocol::TINY_1X1_JPEG_BASE64;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GraphicsProtocol {
     Kitty,
@@ -179,4 +181,120 @@ fn query_graphics_protocol_via_da() -> GraphicsProtocol {
     } else {
         GraphicsProtocol::None
     }
+}
+
+/// Probes terminal for Kitty Graphics Protocol JPEG extension (f=101) support.
+///
+/// Priority:
+/// 1. `TERMWAY_KITTY_JPEG` environment variable:
+///    - "1" / "true" -> force true
+///    - "0" / "false" -> force false
+///    - "auto" / unset -> probe via terminal escape sequence query (`a=q,f=101`)
+/// 2. If stdin is not a TTY (pipe, daemon, test), safely returns false (fallback to zlib).
+/// 3. Emits `\x1b_Gi=32,s=1,v=1,a=q,t=d,f=101;<1x1_JPEG>\x1b\\\x1b[c` and checks for `\x1b_Gi=32;OK\x1b\`.
+pub fn query_kitty_jpeg_support() -> bool {
+    if let Ok(v) = env::var("TERMWAY_KITTY_JPEG") {
+        let v = v.trim();
+        if v == "1" || v.eq_ignore_ascii_case("true") {
+            return true;
+        }
+        if v == "0" || v.eq_ignore_ascii_case("false") {
+            return false;
+        }
+    }
+
+    let stdin_fd = io::stdin().as_raw_fd();
+    if unsafe { libc::isatty(stdin_fd) } != 1 {
+        return false;
+    }
+
+    let mut termios = std::mem::MaybeUninit::<libc::termios>::uninit();
+    if unsafe { libc::tcgetattr(stdin_fd, termios.as_mut_ptr()) } != 0 {
+        return false;
+    }
+    let orig_termios = unsafe { termios.assume_init() };
+    let mut raw = orig_termios;
+    unsafe { libc::cfmakeraw(&mut raw) };
+    unsafe { libc::tcsetattr(stdin_fd, libc::TCSANOW, &raw) };
+
+    let mut stdout = io::stdout();
+    let _ = write!(
+        stdout,
+        "\x1b_Gi=32,s=1,v=1,a=q,t=d,f=101;{}\x1b\\\x1b[c",
+        TINY_1X1_JPEG_BASE64
+    );
+    let _ = stdout.flush();
+
+    let mut buffer = Vec::new();
+    let mut chunk = [0u8; 256];
+    let mut supported = false;
+
+    let start_time = std::time::Instant::now();
+    let max_timeout_ms = 80;
+
+    while start_time.elapsed().as_millis() < max_timeout_ms {
+        let mut poll_fds = [nix::poll::PollFd::new(
+            unsafe { std::os::fd::BorrowedFd::borrow_raw(stdin_fd) },
+            nix::poll::PollFlags::POLLIN,
+        )];
+
+        if let Ok(poll_res) = nix::poll::poll(
+            &mut poll_fds,
+            nix::poll::PollTimeout::try_from(30).unwrap_or(nix::poll::PollTimeout::NONE),
+        ) {
+            if poll_res > 0 {
+                if let Some(revents) = poll_fds[0].revents() {
+                    if revents.contains(nix::poll::PollFlags::POLLIN) {
+                        let n = unsafe {
+                            libc::read(
+                                stdin_fd,
+                                chunk.as_mut_ptr() as *mut libc::c_void,
+                                chunk.len(),
+                            )
+                        };
+                        if n > 0 {
+                            buffer.extend_from_slice(&chunk[..n as usize]);
+                            let resp = String::from_utf8_lossy(&buffer);
+
+                            if resp.contains("\x1b_Gi=32;OK\x1b\\") {
+                                supported = true;
+                                break;
+                            }
+                            if resp.contains("\x1b_Gi=32;") || resp.contains("\x1b[?") {
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    loop {
+        let mut poll_drain = [nix::poll::PollFd::new(
+            unsafe { std::os::fd::BorrowedFd::borrow_raw(stdin_fd) },
+            nix::poll::PollFlags::POLLIN,
+        )];
+        if let Ok(1) = nix::poll::poll(
+            &mut poll_drain,
+            nix::poll::PollTimeout::try_from(0).unwrap_or(nix::poll::PollTimeout::NONE),
+        ) {
+            let mut drain_buf = [0u8; 256];
+            let n = unsafe {
+                libc::read(
+                    stdin_fd,
+                    drain_buf.as_mut_ptr() as *mut libc::c_void,
+                    drain_buf.len(),
+                )
+            };
+            if n <= 0 {
+                break;
+            }
+        } else {
+            break;
+        }
+    }
+
+    unsafe { libc::tcsetattr(stdin_fd, libc::TCSANOW, &orig_termios) };
+    supported
 }

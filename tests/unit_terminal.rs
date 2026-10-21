@@ -51,11 +51,18 @@ fn test_raw_mode_guard_dummy_drop() {
 
 #[test]
 fn test_terminal_backend_mode_names() {
-    let sixel_backend = termway::backend::TerminalBackend::new(TerminalSize::fallback(80, 24), true);
+    let sixel_backend = termway::backend::TerminalBackend::new(TerminalSize::fallback(80, 24), true, false, 80);
     assert_eq!(sixel_backend.name(), "Sixel");
     assert!(sixel_backend.is_sixel());
+    assert!(!sixel_backend.is_jpeg());
 
-    let kitty_backend = termway::backend::TerminalBackend::new(TerminalSize::fallback(80, 24), false);
+    let kitty_backend = termway::backend::TerminalBackend::new(TerminalSize::fallback(80, 24), false, false, 80);
     assert_eq!(kitty_backend.name(), "Kitty");
     assert!(!kitty_backend.is_sixel());
+    assert!(!kitty_backend.is_jpeg());
+
+    let kitty_jpeg_backend = termway::backend::TerminalBackend::new(TerminalSize::fallback(80, 24), false, true, 85);
+    assert_eq!(kitty_jpeg_backend.name(), "Kitty-JPEG");
+    assert!(!kitty_jpeg_backend.is_sixel());
+    assert!(kitty_jpeg_backend.is_jpeg());
 }

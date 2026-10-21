@@ -193,5 +193,28 @@ fn test_framebuffer_encode_png_valid_structure() {
     assert_eq!(&png[png.len() - 8..png.len() - 4], b"IEND");
 }
 
+#[test]
+fn test_query_kitty_jpeg_support_env_and_fallback() {
+    use termway::terminal::query_kitty_jpeg_support;
+
+    // TERMWAY_KITTY_JPEG=1 forces true
+    std::env::set_var("TERMWAY_KITTY_JPEG", "1");
+    assert!(query_kitty_jpeg_support());
+
+    std::env::set_var("TERMWAY_KITTY_JPEG", "true");
+    assert!(query_kitty_jpeg_support());
+
+    // TERMWAY_KITTY_JPEG=0 forces false
+    std::env::set_var("TERMWAY_KITTY_JPEG", "0");
+    assert!(!query_kitty_jpeg_support());
+
+    std::env::set_var("TERMWAY_KITTY_JPEG", "false");
+    assert!(!query_kitty_jpeg_support());
+
+    // In a test runner without interactive terminal, unset/auto safely falls back
+    std::env::remove_var("TERMWAY_KITTY_JPEG");
+    let _ = query_kitty_jpeg_support();
+}
+
 
 

@@ -49,6 +49,8 @@ pub struct EngineConfig {
     pub scale: f64,
     pub enable_wm: bool,
     pub use_sixel: bool,
+    pub use_jpeg: Option<bool>,
+    pub jpeg_quality: Option<u8>,
     pub hud: bool,
     pub profile: bool,
     pub no_splash: bool,
@@ -65,6 +67,8 @@ impl Default for EngineConfig {
             scale: 1.0,
             enable_wm: true,
             use_sixel: false,
+            use_jpeg: None,
+            jpeg_quality: None,
             hud: false,
             profile: false,
             no_splash: false,
@@ -186,7 +190,22 @@ impl TermwayCompositor {
         let renderer = TermwayRenderer::new(width, height)?;
 
         // 4. Initialize Terminal Output Backend
-        let mut backend = TerminalBackend::new(term_size, config.use_sixel);
+        let (use_jpeg, jpeg_quality) = if config.use_sixel {
+            (false, 80)
+        } else {
+            let q = config.jpeg_quality.unwrap_or_else(|| {
+                std::env::var("TERMWAY_JPEG_QUALITY")
+                    .ok()
+                    .and_then(|v| v.trim().parse::<u8>().ok())
+                    .unwrap_or(80)
+            });
+            let j = match config.use_jpeg {
+                Some(explicit) => explicit,
+                None => crate::terminal::query_kitty_jpeg_support(),
+            };
+            (j, q)
+        };
+        let mut backend = TerminalBackend::new(term_size, config.use_sixel, use_jpeg, jpeg_quality);
         if config.hud {
             backend.set_hud_enabled(true);
         }
@@ -266,7 +285,13 @@ impl TermwayCompositor {
         };
 
         state.show_splash = !config.no_splash;
-        let proto_name = if config.use_sixel { "SIXEL" } else { "KITTY-ZLIB" };
+        let proto_name = if config.use_sixel {
+            "SIXEL"
+        } else if use_jpeg {
+            "KITTY-JPEG"
+        } else {
+            "KITTY-ZLIB"
+        };
         let x11_str = x11_display.as_deref().unwrap_or("off");
         state.splash_info = format!("{} | {} | X11{} | {}x{}", proto_name, socket_name, x11_str, width, height);
         state.splash_command = if let Some(first) = config.command.first() {

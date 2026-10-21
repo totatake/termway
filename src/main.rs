@@ -18,6 +18,9 @@ OPTIONS:
     --scale <FACTOR>          Wayland output scale factor (e.g. 1.0, 1.25, 1.5, 2.0; default: 1.0)
     --sixel                   Force Sixel graphics protocol
     --kitty                   Force Kitty graphics protocol
+    --jpeg                    Enable Kitty Graphics Protocol JPEG extension (f=101)
+    --no-jpeg                 Disable Kitty Graphics Protocol JPEG extension (use standard zlib)
+    --jpeg-quality <1-100>    Set JPEG compression quality (default: 80)
     --hud                     Enable real-time performance HUD indicator
     --profile                 Enable performance profiling and latency breakdown
     --no-splash               Disable startup splash screen
@@ -114,6 +117,23 @@ fn main() -> Result<()> {
             explicit_sixel = true;
         } else if arg == "--kitty" {
             explicit_kitty = true;
+        } else if arg == "--jpeg" {
+            config.use_jpeg = Some(true);
+        } else if arg == "--no-jpeg" {
+            config.use_jpeg = Some(false);
+        } else if arg == "--jpeg-quality" {
+            i += 1;
+            if i >= args.len() {
+                eprintln!("Error: --jpeg-quality requires a numeric argument between 1 and 100");
+                std::process::exit(1);
+            }
+            match args[i].parse::<u8>() {
+                Ok(q) if (1..=100).contains(&q) => config.jpeg_quality = Some(q),
+                _ => {
+                    eprintln!("Error: --jpeg-quality must be an integer between 1 and 100");
+                    std::process::exit(1);
+                }
+            }
         } else if arg == "--hud" {
             config.hud = true;
         } else if arg == "--profile" {
