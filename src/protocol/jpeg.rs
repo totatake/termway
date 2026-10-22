@@ -301,10 +301,15 @@ fn fdct_2d(block: &mut [i32; 64]) {
     }
 }
 
-/// Scaled quantization table holder for Luminance and Chrominance.
+/// Scaled quantization table holder for Luminance and Chrominance,
+/// with precomputed reciprocal multipliers for zero-division quantization.
 pub struct QuantizationTables {
     pub y_table: [u8; 64],
     pub c_table: [u8; 64],
+    pub y_mult: [u32; 64],
+    pub y_half: [i32; 64],
+    pub c_mult: [u32; 64],
+    pub c_half: [i32; 64],
 }
 
 impl QuantizationTables {
@@ -314,34 +319,55 @@ impl QuantizationTables {
 
         let mut y_table = [0u8; 64];
         let mut c_table = [0u8; 64];
+        let mut y_mult = [0u32; 64];
+        let mut y_half = [0i32; 64];
+        let mut c_mult = [0u32; 64];
+        let mut c_half = [0i32; 64];
 
         for i in 0..64 {
             let y_val = ((STD_LUMA_QTABLE[i] as u32 * scale + 50) / 100).clamp(1, 255) as u8;
             let c_val = ((STD_CHROMA_QTABLE[i] as u32 * scale + 50) / 100).clamp(1, 255) as u8;
             y_table[i] = y_val;
             c_table[i] = c_val;
+
+            let dy = y_val as u64 * 128;
+            y_half[i] = (dy / 2) as i32;
+            y_mult[i] = (((1u64 << 33) + dy - 1) / dy) as u32;
+
+            let dc = c_val as u64 * 128;
+            c_half[i] = (dc / 2) as i32;
+            c_mult[i] = (((1u64 << 33) + dc - 1) / dc) as u32;
         }
 
         Self {
             y_table,
             c_table,
+            y_mult,
+            y_half,
+            c_mult,
+            c_half,
         }
     }
 }
 
-/// Quantizes and zig-zag reorders DCT coefficients.
+/// Quantizes and zig-zag reorders DCT coefficients with zero integer division.
 #[inline(always)]
-fn quantize_and_zigzag(dct: &[i32; 64], q_table: &[u8; 64], out: &mut [i16; 64]) {
+fn quantize_and_zigzag(
+    dct: &[i32; 64],
+    mult_table: &[u32; 64],
+    half_table: &[i32; 64],
+    out: &mut [i16; 64],
+) {
     for k in 0..64 {
         let raster_idx = ZIGZAG[k];
         let val = dct[raster_idx];
-        let q = q_table[k] as i32;
-        // Divide by 128 (8 * sqrt(2) * 8 * sqrt(2)) because 2D DCT scale adds 128x
-        let q128 = q * 128;
+        let half = half_table[k];
+        let mult = mult_table[k] as u64;
+
         let quantized = if val >= 0 {
-            (val + q128 / 2) / q128
+            (((val + half) as u64 * mult) >> 33) as i32
         } else {
-            (val - q128 / 2) / q128
+            -((((-val + half) as u64 * mult) >> 33) as i32)
         };
         out[k] = quantized.clamp(i16::MIN as i32, i16::MAX as i32) as i16;
     }
@@ -438,6 +464,10 @@ impl JpegEncoder {
             return;
         }
         output.clear();
+        let est_capacity = ((rect_w * rect_h) as usize / 8).max(4096) + 1024;
+        if output.capacity() < est_capacity {
+            output.reserve(est_capacity - output.capacity());
+        }
 
         // 1. SOI (Start of Image)
         output.extend_from_slice(&[0xFF, 0xD8]);
@@ -516,7 +546,12 @@ impl JpegEncoder {
                             &mut dct_block,
                         );
                         fdct_2d(&mut dct_block);
-                        quantize_and_zigzag(&dct_block, &self.q_tables.y_table, &mut quant_block);
+                        quantize_and_zigzag(
+                            &dct_block,
+                            &self.q_tables.y_mult,
+                            &self.q_tables.y_half,
+                            &mut quant_block,
+                        );
                         encode_block(
                             &quant_block,
                             &mut last_y_dc,
@@ -543,7 +578,12 @@ impl JpegEncoder {
 
                 // Encode Cb
                 fdct_2d(&mut cb_block);
-                quantize_and_zigzag(&cb_block, &self.q_tables.c_table, &mut quant_block);
+                quantize_and_zigzag(
+                    &cb_block,
+                    &self.q_tables.c_mult,
+                    &self.q_tables.c_half,
+                    &mut quant_block,
+                );
                 encode_block(
                     &quant_block,
                     &mut last_cb_dc,
@@ -554,7 +594,12 @@ impl JpegEncoder {
 
                 // Encode Cr
                 fdct_2d(&mut cr_block);
-                quantize_and_zigzag(&cr_block, &self.q_tables.c_table, &mut quant_block);
+                quantize_and_zigzag(
+                    &cr_block,
+                    &self.q_tables.c_mult,
+                    &self.q_tables.c_half,
+                    &mut quant_block,
+                );
                 encode_block(
                     &quant_block,
                     &mut last_cr_dc,
@@ -582,6 +627,27 @@ impl JpegEncoder {
         out: &mut [i32; 64],
     ) {
         let stride = (stride_w * 4) as usize;
+
+        // Fast path for in-bounds blocks (covers >95% of typical image tiles)
+        if start_x + 8 <= max_x && start_y + 8 <= max_y {
+            let base_offset = (start_y as usize) * stride + (start_x as usize) * 4;
+            for y in 0..8 {
+                let row_offset = base_offset + y * stride;
+                let out_row = y * 8;
+                let s = &rgba[row_offset..row_offset + 32];
+                for x in 0..8 {
+                    let px = x * 4;
+                    let r = s[px] as i32;
+                    let g = s[px + 1] as i32;
+                    let b = s[px + 2] as i32;
+                    let y_val = ((19595 * r + 38470 * g + 7471 * b + 32768) >> 16) - 128;
+                    out[out_row + x] = y_val;
+                }
+            }
+            return;
+        }
+
+        // Clamping fallback for edge blocks
         let limit_x = max_x.saturating_sub(1);
         let limit_y = max_y.saturating_sub(1);
 
@@ -597,7 +663,6 @@ impl JpegEncoder {
                     let g = rgba[idx + 1] as i32;
                     let b = rgba[idx + 2] as i32;
                     // Standard ITU-R BT.601 Y formula: Y = 0.299 R + 0.587 G + 0.114 B - 128
-                    // Integer fixed-point: (19595 R + 38470 G + 7471 B + 32768) >> 16 - 128
                     let y_val = ((19595 * r + 38470 * g + 7471 * b + 32768) >> 16) - 128;
                     out[out_row + x] = y_val;
                 } else {
@@ -620,6 +685,36 @@ impl JpegEncoder {
         cr_out: &mut [i32; 64],
     ) {
         let stride = (stride_w * 4) as usize;
+
+        // Fast path for in-bounds macroblocks
+        if start_x + 16 <= max_x && start_y + 16 <= max_y {
+            let base_offset = (start_y as usize) * stride + (start_x as usize) * 4;
+            for y in 0..8 {
+                let row0 = base_offset + (y * 2) * stride;
+                let row1 = base_offset + (y * 2 + 1) * stride;
+                let out_row = y * 8;
+                let s0 = &rgba[row0..row0 + 64];
+                let s1 = &rgba[row1..row1 + 64];
+
+                for x in 0..8 {
+                    let p0 = x * 8;
+                    let p1 = p0 + 4;
+
+                    let r = (s0[p0] as i32 + s0[p1] as i32 + s1[p0] as i32 + s1[p1] as i32 + 2) >> 2;
+                    let g = (s0[p0 + 1] as i32 + s0[p1 + 1] as i32 + s1[p0 + 1] as i32 + s1[p1 + 1] as i32 + 2) >> 2;
+                    let b = (s0[p0 + 2] as i32 + s0[p1 + 2] as i32 + s1[p0 + 2] as i32 + s1[p1 + 2] as i32 + 2) >> 2;
+
+                    let cb = (-11058 * r - 21710 * g + 32768 * b + 32768) >> 16;
+                    let cr = ( 32768 * r - 27439 * g -  5329 * b + 32768) >> 16;
+
+                    cb_out[out_row + x] = cb;
+                    cr_out[out_row + x] = cr;
+                }
+            }
+            return;
+        }
+
+        // Clamping fallback for edge blocks
         let limit_x = max_x.saturating_sub(1);
         let limit_y = max_y.saturating_sub(1);
 
@@ -650,11 +745,7 @@ impl JpegEncoder {
                     (0, 0, 0)
                 };
 
-                // Standard ITU-R BT.601 Cb/Cr formulas:
-                // Cb = -0.168736 R - 0.331264 G + 0.5 B
-                // Cr =  0.5 R - 0.418688 G - 0.081312 B
-                // Integer fixed-point:
-                let cb = (-11059 * r - 21709 * g + 32768 * b + 32768) >> 16;
+                let cb = (-11058 * r - 21710 * g + 32768 * b + 32768) >> 16;
                 let cr = ( 32768 * r - 27439 * g -  5329 * b + 32768) >> 16;
 
                 cb_out[out_row + x] = cb;
@@ -819,6 +910,41 @@ mod tests {
         assert_eq!(bytes[1], 0xD8);
         assert_eq!(bytes[bytes.len() - 2], 0xFF);
         assert_eq!(bytes[bytes.len() - 1], 0xD9);
+    }
+
+    #[test]
+    fn test_jpeg_benchmark_1080p() {
+        let w = 1260u32;
+        let h = 714u32;
+        let mut rgba = vec![0u8; (w * h * 4) as usize];
+        for y in 0..h {
+            for x in 0..w {
+                let idx = ((y * w + x) * 4) as usize;
+                rgba[idx] = (x % 256) as u8;
+                rgba[idx + 1] = (y % 256) as u8;
+                rgba[idx + 2] = ((x + y) % 256) as u8;
+                rgba[idx + 3] = 255;
+            }
+        }
+
+        let encoder = JpegEncoder::new(75);
+        let mut out = Vec::new();
+
+        // Warm up
+        encoder.encode_subimage_into(&rgba, w, 0, 0, w, h, &mut out);
+
+        let iters = 5;
+        let start = std::time::Instant::now();
+        for _ in 0..iters {
+            out.clear();
+            encoder.encode_subimage_into(&rgba, w, 0, 0, w, h, &mut out);
+        }
+        let elapsed = start.elapsed();
+        println!(
+            "\n[BENCHMARK] JpegEncoder 1260x714 (Q=75): avg = {:.2?}, size = {} bytes",
+            elapsed / iters,
+            out.len()
+        );
     }
 
     #[test]

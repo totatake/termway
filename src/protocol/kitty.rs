@@ -64,7 +64,7 @@ impl Default for KittyStreamEncoder {
         let jpeg_quality = std::env::var("TERMWAY_JPEG_QUALITY")
             .ok()
             .and_then(|v| v.trim().parse::<u8>().ok())
-            .unwrap_or(80);
+            .unwrap_or(75);
         Self {
             compressor,
             compressed_buf: Vec::with_capacity(256 * 1024),

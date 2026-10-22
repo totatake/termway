@@ -20,7 +20,7 @@ OPTIONS:
     --kitty                   Force Kitty graphics protocol
     --jpeg                    Enable Kitty Graphics Protocol JPEG extension (f=101)
     --no-jpeg                 Disable Kitty Graphics Protocol JPEG extension (use standard zlib)
-    --jpeg-quality <1-100>    Set JPEG compression quality (default: 80)
+    --jpeg-quality <1-100>    Set JPEG compression quality (default: 75)
     --hud                     Enable real-time performance HUD indicator
     --profile                 Enable performance profiling and latency breakdown
     --no-splash               Disable startup splash screen

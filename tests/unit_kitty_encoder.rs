@@ -733,7 +733,7 @@ fn test_kitty_jpeg_quality_configuration() {
     use termway::protocol::KittyStreamEncoder;
 
     let mut encoder = KittyStreamEncoder::new();
-    assert_eq!(encoder.jpeg_quality(), 80); // default
+    assert_eq!(encoder.jpeg_quality(), 75); // default
 
     encoder.set_jpeg_quality(95);
     assert_eq!(encoder.jpeg_quality(), 95);

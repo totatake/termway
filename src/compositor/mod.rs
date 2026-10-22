@@ -191,13 +191,13 @@ impl TermwayCompositor {
 
         // 4. Initialize Terminal Output Backend
         let (use_jpeg, jpeg_quality) = if config.use_sixel {
-            (false, 80)
+            (false, 75)
         } else {
             let q = config.jpeg_quality.unwrap_or_else(|| {
                 std::env::var("TERMWAY_JPEG_QUALITY")
                     .ok()
                     .and_then(|v| v.trim().parse::<u8>().ok())
-                    .unwrap_or(80)
+                    .unwrap_or(75)
             });
             let j = match config.use_jpeg {
                 Some(explicit) => explicit,
