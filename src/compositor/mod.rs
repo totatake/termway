@@ -673,7 +673,7 @@ impl TermwayCompositor {
                     .insert_client(stream, Arc::new(ClientState::default()));
             }
 
-            // C. Unified polling: terminal stdin, Wayland listener, and Wayland client display FD
+            // C. Unified polling: terminal stdin, Wayland listener, Wayland client display FD, and calloop event loop
             let mut poll_fds = [
                 nix::poll::PollFd::new(
                     std::os::fd::AsFd::as_fd(&stdin),
@@ -685,6 +685,10 @@ impl TermwayCompositor {
                 ),
                 nix::poll::PollFd::new(
                     self.display.backend().poll_fd(),
+                    nix::poll::PollFlags::POLLIN,
+                ),
+                nix::poll::PollFd::new(
+                    std::os::fd::AsFd::as_fd(&event_loop),
                     nix::poll::PollFlags::POLLIN,
                 ),
             ];
@@ -817,6 +821,10 @@ impl TermwayCompositor {
                     for surface in &self.state.unassociated_surfaces {
                         send_frames_surface_tree(surface, time);
                     }
+
+                    // Immediately flush Wayland client sockets so clients (e.g. Firefox)
+                    // receive wl_callback.done without waiting for the next poll() timeout.
+                    let _ = self.display.flush_clients();
                 }
                 self.state.dirty = false;
             }
