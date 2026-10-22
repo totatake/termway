@@ -214,10 +214,14 @@ Kitty グラフィックスプロトコルの標準仕様（RFC 1950 zlib 圧縮
   - 外部 C ライブラリや動的ヒープ確保に依存しない、純粋 Rust によるフルスクラッチの Baseline JPEG（SOF0、YCbCr 4:2:0 サブサンプリング）エンコーダを実装。
   - ITU-T T.81 / JPEG Annex K 標準量子化テーブルおよびハフマン符号化テーブルを採用。
   - Loeffler / LLM (Ligtenberg-Loeffler-Moschytz) 高速整数 1D/2D FDCT アルゴリズム（固定小数点スケーリング）による高速 DCT 変換。
-  - フレームバッファの指定ストライドから任意の部分矩形をサブサンプリング直接抽出。
+  - 事前計算した固定小数点逆数乗算（`u64` 乗算＋33-bit シフト）により、量子化時のハードウェア整数除算（`idiv`）を完全排除。
+  - フレームバッファ境界内の大半のブロックに対する境界クランプをバイパスする高速パスを実装。
   - `0xFF 0x00` バイトスタッフィングおよびストリーミング Base64 チャンク出力に対応。
+- **コンポジタ・イベントループの 30fps 解禁と遅延ゼロ化 (`src/compositor/mod.rs`)**:
+  - 描画完了時の `send_frames_surface_tree()` 直後に即座に `self.display.flush_clients()` を呼び出し、Wayland クライアントへの `wl_callback.done` 送信遅延（従来の 50ms `poll` タイムアウト待ち）を完全解消。
+  - `poll_fds` に `event_loop` (calloop) を統合し、XWayland やシグナルイベントも遅延なく即時起床。
 - **Kitty プロトコル連携と透過ダミー保護 (`src/protocol/kitty.rs`)**:
-  - `KittyStreamEncoder` に `use_jpeg` モードおよび品質パラメータ（`jpeg_quality: 1..=100`、デフォルト 80）を統合。
+  - `KittyStreamEncoder` に `use_jpeg` モードおよび品質パラメータ（`jpeg_quality: 1..=100`、デフォルト 75）を統合。
   - 全画面ストリーミングおよび部分更新矩形（`i=2, p=1`）双方で `f=101` チャンクを自動送出（JPEG 圧縮済みのため `o=z` は省略）。
   - JPEG はアルファチャンネルを持たないため、部分更新中和用の 1x1 透過ダミーピクセル（`clear_placements`）は安全に `f=32` を維持（Noctty / Kitty 双方で `f=101` 画像を `f=32` ダミーで正常に上書き可能）。
 - **動的機能検知バリア & フォールバック (`src/terminal/query.rs`, `src/backend/terminal.rs`)**:
@@ -226,7 +230,7 @@ Kitty グラフィックスプロトコルの標準仕様（RFC 1950 zlib 圧縮
   - 端末名（HUD やログ）に `[Kitty-JPEG]` / `[Kitty]` を区別表示。
 - **環境変数および CLI フラグによる制御**:
   - `TERMWAY_KITTY_JPEG`: `1` / `true`（強制有効）、`0` / `false`（強制無効）、`auto` / 未設定（自動プローブ検知）。
-  - `TERMWAY_JPEG_QUALITY`: `1..=100`（デフォルト: `80`）。
+  - `TERMWAY_JPEG_QUALITY`: `1..=100`（デフォルト: `75`）。
   - CLI オプション: `--jpeg`、`--no-jpeg`、`--jpeg-quality <1-100>`。
 
 ---

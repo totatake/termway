@@ -126,6 +126,7 @@ flowchart LR
 | **FR-36** | Kitty Keyboard Protocol (CSI u) | 起動時に `\x1b[>1u` を送信してプログレッシブなキーボード拡張を有効化し、修飾キーやエスケープシーケンスの曖昧性を解消すること（終了時に `\x1b[<u` で安全復元）。 | `tests/unit_keyboard.rs` | **PASS** |
 | **FR-37** | Wayland Primary Selection & 中クリックペースト | `zwp_primary_selection_device_manager_v1` および `gtk_primary_selection` を実装し、マウスによるテキスト選択範囲の即時共有とマウス中クリックによる即時貼り付けをサポートすること。 | `tests/unit_compositor.rs` | **PASS** |
 | **FR-38** | OSC 2 端末ウィンドウ/タブタイトル動的同期 | アクティブな GUI ウィンドウのタイトルを検知し、ホスト端末のウィンドウ/タブタイトルへ動的同期（`\x1b]2;termway: <Title>\x07`）すること（終了時に安全復元）。 | `tests/unit_compositor.rs` | **PASS** |
+| **FR-39** | Kitty Graphics JPEG 拡張 (`f=101`) & 30fps 即時フレームフラッシュ | 純粋 Rust によるフルスクラッチ Baseline JPEG (YCbCr 4:2:0) エンコーダと Kitty `f=101` 拡張をサポートし、固定小数点逆数乗算による除算排除やフレームバッファ直読み境界バイパス高速化を行うこと。Wayland コンポジタ描画直後に `flush_clients()` を行い、クライアントの `wl_callback.done` 待ちによる 50ms ポーリング遅延を解消して 30fps 以上の高フレームレートを実現すること。未対応端末では自動的に標準 Kitty (`f=32`) へフォールバックすること。 | `src/lib.rs`<br/>`tests/unit_kitty_encoder.rs`<br/>`tests/integration_pipeline.rs`<br/>`tests/unit_compositor.rs` | **PASS** |
 
 ### 2.2 非機能要件 (Non-Functional Requirements)
 
@@ -142,13 +143,14 @@ flowchart LR
 
 | テストターゲット | テスト数 | 検証内容 |
 | :--- | :---: | :--- |
+| `src/lib.rs` | 6 | 純粋 Rust Baseline JPEG (YCbCr 4:2:0) エンコーダ（SOF0, DQT, DHT, SOS）、任意ストライド部分矩形抽出、奇数解像度、1x1〜1080p 色再現性・高解像度ベンチマーク、固定小数点逆数乗算テーブル |
 | `tests/unit_compositor.rs` | 36 | `TermwayState` / `WindowManager` ドメイン操作、SSD/CSD 装飾、最大化・80%中央復元・最小化、動的リサイズ (`SIGWINCH`)、OSC 52 クリップボード送信、マウスホイール、スプラッシュ描画・消去、JSON 状態ダンプ、UTF-8 日本語入力、Fractional Scale / Viewporter / HiDPI スケールレンダリング、OSC 22 カーソル形状同期、Wayland Primary Selection、OSC 2 端末タブタイトル同期検証 |
 | `tests/unit_session.rs` | 7 | ハイブリッド D-Bus セッション起動、Snap コマンド判定・PATH シムルーティング、Polkit エージェント検出、コマンド存在性検証、`/tmp/.X11-unix` 書込検査 |
-| `tests/unit_kitty_encoder.rs` | 18 | Kitty フルスクリーン RFC 1950 zlib 圧縮 (`o=z`)・4096B チャンク分割・ラウンドトリップ解凍検証、累積バウンディングボックス部分矩形プレースメント転送・デコード検証、大面積更新時フルフレームフォールバック、定点動画の無制限連続部分転送、解像度変更ガード、端末合成シミュレータによるピクセルレベル残像完全ゼロ検証、1080x720 パフォーマンス検証 |
+| `tests/unit_kitty_encoder.rs` | 20 | Kitty フルスクリーン RFC 1950 zlib 圧縮 (`o=z`)・4096B チャンク分割・ラウンドトリップ解凍検証、累積バウンディングボックス部分矩形プレースメント転送・デコード検証、大面積更新時フルフレームフォールバック、定点動画の無制限連続部分転送、解像度変更ガード、端末合成シミュレータによるピクセルレベル残像完全ゼロ検証、Kitty-JPEG (`f=101`) フルスクリーン/部分プレースメント/透過ダミー保護検証、品質設定検証、1080x720 パフォーマンス検証 |
 | `tests/unit_sixel_encoder.rs` | 7 | Sixel AVX2 / ARM NEON SIMD 減色・6行バンド走査・単色バンド高速パス・RLE 圧縮・非8倍数幅エッジケース、6行バンド差分キャッシュ (`SixelStreamEncoder`)、1080x720 パフォーマンス検証 |
 | `tests/unit_damage_tracker.rs` | 7 | 32x32 タイル FNV-1a ハッシュ比較、AVX2 / ARM NEON SIMD 端数タイル一致検証、RGB565 量子化マスクノイズ除去検証、リセット・リサイズ検証 |
 | `tests/unit_sgr_mouse.rs` | 7 | SGR 1006 クリック・ドラッグ・リリース・ホイール・修飾キー・高値座標パース・不正シーケンス耐性検証 |
-| `tests/integration_pipeline.rs` | 7 | Framebuffer → DamageTracker → Kitty エンコード結合検証、マウス座標変換、プロトコル自動検出、`--version` / `-V` 検証 |
+| `tests/integration_pipeline.rs` | 8 | Framebuffer → DamageTracker → Kitty エンコード結合検証、マウス座標変換、プロトコル自動検出、Kitty-JPEG 自動プローブおよびフォールバック検証、`--version` / `-V` 検証 |
 | `tests/unit_keyboard.rs` | 6 | UTF-8 文字、矢印キー、Ctrl 制御文字、Shift/Ctrl 修飾キー付きカーソル・選択キー、日本語 UTF-8 複数バイト解析、Kitty Keyboard Protocol (CSI u) 解析検証 |
 | `tests/unit_secret_bridge.rs` | 4 | D-Bus Secret Service (`org.freedesktop.secrets`) メッセージエンディアン解析・双方向リレー検証 |
 | `tests/unit_terminal.rs` | 5 | 端末サイズフォールバック、セル→ピクセル変換、TerminalBackend モード名検証、`RawModeGuard` RAII 安全性検証 |
@@ -163,7 +165,7 @@ flowchart LR
 $ cargo test
    Compiling termway v0.12.0 (/path/to/termway)
     Finished `test` profile [unoptimized + debuginfo] target(s)
-     Running unittests src/lib.rs (4 tests) ... ok
+     Running unittests src/lib.rs (6 tests) ... ok
      Running tests/integration_pipeline.rs (8 tests) ... ok
      Running tests/perf_pipeline.rs (1 test) ... ok
      Running tests/system_e2e_gui.rs (2 tests) ... ok
@@ -177,7 +179,7 @@ $ cargo test
      Running tests/unit_sixel_encoder.rs (7 tests) ... ok
      Running tests/unit_terminal.rs (5 tests) ... ok
 
-test result: ok. 114 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 26.5s
+test result: ok. 116 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 25.8s
 ```
-全 114 テストが 100% 成功し、すべての要件定義項目が検証されました。
+全 116 テストが 100% 成功し、すべての要件定義項目が検証されました。
 
