@@ -277,7 +277,46 @@ export TERMWAY_CELL_SIZE=10x22
 ./target/release/termway -- gvim
 ```
 
-### 5. Shortcuts & Built-in Features
+### 5. Performance Profiling & JSON Reporting (`--profile`, `TERMWAY_PROFILE_FILE`)
+
+You can measure and profile latency and data throughput across every pipeline stage (Pixman rendering, damage tracking, Kitty/Sixel encoding, and terminal PTY writing):
+
+- **CLI Option**: `--profile`
+- **Environment Variables**:
+  - `TERMWAY_PROFILE=1`: Enable profiler (equivalent to `--profile`)
+  - `TERMWAY_PROFILE_FILE=<PATH>`: Automatically export the performance report to a JSON file on session exit (e.g. `TERMWAY_PROFILE_FILE=/tmp/profile.json`)
+
+On exit (`Ctrl-Q`), a formatted summary is printed to `stderr`. If `TERMWAY_PROFILE_FILE` is set, the structured JSON report is written to that path:
+
+```bash
+# Profile with JSON report export
+TERMWAY_PROFILE_FILE=/tmp/profile.json ./target/release/termway --profile -- firefox
+```
+
+Example JSON schema:
+```json
+{
+  "duration_sec": 12.345,
+  "render_frames": 136,
+  "clean_skips": 12,
+  "jobs_submitted": 136,
+  "jobs_rendered": 136,
+  "partial_frames": 45,
+  "frames_dropped": 0,
+  "avg_render_ms": 1.250,
+  "max_render_ms": 3.400,
+  "avg_damage_us": 45.200,
+  "max_damage_us": 120.000,
+  "avg_encode_ms": 2.100,
+  "max_encode_ms": 4.500,
+  "avg_write_ms": 0.850,
+  "max_write_ms": 2.100,
+  "total_bytes": 1258291,
+  "kb_per_sec": 99.55
+}
+```
+
+### 6. Shortcuts & Built-in Features
 
 | Shortcut | Action | Description |
 | :--- | :--- | :--- |
@@ -287,7 +326,7 @@ export TERMWAY_CELL_SIZE=10x22
 | `Ctrl-V` / Terminal Paste | Paste from Clipboard | Pastes text from the host clipboard directly into the application via Bracketed Paste with full UTF-8 / multibyte support |
 | Middle Mouse Click | Paste Primary Selection | Pastes highlighted text via Wayland Primary Selection protocol (`zwp_primary_selection_v1`) |
 
-### 6. Command Line Options
+### 7. Command Line Options
 
 | Option | Argument | Description | Default |
 | :--- | :--- | :--- | :--- |
@@ -303,7 +342,7 @@ export TERMWAY_CELL_SIZE=10x22
 | `--fps` | `<FPS>` | Target frame rate limit | `30` |
 | `--scale` | `<FACTOR>` | Wayland output scale factor for HiDPI / fractional scaling (e.g. `1.25`, `1.5`, `2.0`) | `1.0` |
 | `--hud` | - | Show real-time performance HUD overlay (FPS, encode time, bandwidth, damage tiles) | Disabled |
-| `--profile` | - | Print stage-by-stage performance profiling report on exit (also enabled via `TERMWAY_PROFILE=1`) | Disabled |
+| `--profile` | - | Print stage-by-stage performance profiling report to stderr on exit (also enabled via `TERMWAY_PROFILE=1`; set `TERMWAY_PROFILE_FILE=<PATH>` for JSON output) | Disabled |
 | `--no-splash` | - | Disable the animated startup splash screen while waiting for the first window | Disabled |
 | `--demo` | - | Launch built-in GTK3 Wayland demo application | - |
 | `-V`, `--version` | - | Print version information | - |

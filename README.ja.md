@@ -279,7 +279,46 @@ Sixel および SGR マウスプロトコルでのピクセルパーフェクト
 ./target/release/termway --cell-size 10x22 -- gvim
 ```
 
-### 5. ショートカットキーと便利機能
+### 5. 性能プロファイリングと JSON 出力 (`--profile`, `TERMWAY_PROFILE_FILE`)
+
+パイプライン各段（Pixman レンダリング、Damage 差分走査、Kitty/Sixel プロトコルエンコード、PTY 端末書き込み）の平均/最大レイテンシや転送スループットを計測・可視化できます：
+
+- **CLI オプション**: `--profile`
+- **環境変数**:
+  - `TERMWAY_PROFILE=1`: `--profile` フラグと同様にプロファイラを有効化
+  - `TERMWAY_PROFILE_FILE=<ファイルパス>`: 終了時に指定したファイルパスへ JSON 形式で性能レポートを保存
+
+アプリケーション終了時（`Ctrl-Q` 等）に、標準エラー出力（stderr）に整形されたサマリーを出力し、`TERMWAY_PROFILE_FILE` が設定されている場合は JSON ファイルを自動生成します：
+
+```bash
+# JSON 形式のレポート出力を指定して実行
+TERMWAY_PROFILE_FILE=/tmp/profile.json ./target/release/termway --profile -- firefox
+```
+
+出力される JSON の形式：
+```json
+{
+  "duration_sec": 12.345,
+  "render_frames": 136,
+  "clean_skips": 12,
+  "jobs_submitted": 136,
+  "jobs_rendered": 136,
+  "partial_frames": 45,
+  "frames_dropped": 0,
+  "avg_render_ms": 1.250,
+  "max_render_ms": 3.400,
+  "avg_damage_us": 45.200,
+  "max_damage_us": 120.000,
+  "avg_encode_ms": 2.100,
+  "max_encode_ms": 4.500,
+  "avg_write_ms": 0.850,
+  "max_write_ms": 2.100,
+  "total_bytes": 1258291,
+  "kb_per_sec": 99.55
+}
+```
+
+### 6. ショートカットキーと便利機能
 
 | キー操作 | 機能 | 説明 |
 | :--- | :--- | :--- |
@@ -289,7 +328,7 @@ Sixel および SGR マウスプロトコルでのピクセルパーフェクト
 | `Ctrl-V` / 端末貼り付け | クリップボードから貼り付け | ホスト側でコピーしたテキストを Bracketed Paste 経由で日本語・マルチバイト文字も含めそのままアプリへ貼り付けます |
 | マウス中クリック | Primary Selection 貼り付け | テキスト選択範囲を Wayland Primary Selection プロトコル（`zwp_primary_selection_v1`）経由で貼り付けます |
 
-### 6. 主なコマンドラインオプション
+### 7. 主なコマンドラインオプション
 
 | オプション | 引数 | 説明 | デフォルト |
 | :--- | :--- | :--- | :--- |
@@ -305,7 +344,7 @@ Sixel および SGR マウスプロトコルでのピクセルパーフェクト
 | `--fps` | `<FPS>` | 目標フレームレート | `30` |
 | `--scale` | `<FACTOR>` | Wayland 出力スケール係数 (HiDPI / Fractional Scale 制御, 例: `1.25`, `1.5`, `2.0`) | `1.0` |
 | `--hud` | - | 画面上部にリアルタイムパフォーマンスインジケータ（FPS・エンコード時間・帯域・Damageタイル数）を表示 | 無効 |
-| `--profile` | - | 終了時にパイプライン各段（描画・差分検出・エンコード・端末書込）のレイテンシと帯域統計を表示（`TERMWAY_PROFILE=1` でも有効化可） | 無効 |
+| `--profile` | - | 終了時にパイプライン各段（描画・差分検出・エンコード・端末書込）のレイテンシと帯域統計を stderr に表示（`TERMWAY_PROFILE=1` でも有効化可。`TERMWAY_PROFILE_FILE=<PATH>` で JSON 出力可） | 無効 |
 | `--no-splash` | - | 起動時のアニメーションスプラッシュ画面を非表示にする | 無効 |
 | `--demo` | - | 内蔵 GTK3 デモアプリを起動 | - |
 | `-V`, `--version` | - | バージョン情報を表示 | - |
