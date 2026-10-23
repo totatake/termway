@@ -617,10 +617,10 @@ impl SessionManager {
                 name
             ));
         } else {
-            let msg = "[termway] Notice: No Polkit authentication agent found (policykit-1-gnome or lxpolkit).\n\
-                       [termway]         To run privileged apps (e.g. gparted) without sudo, install one via:\n\
-                       [termway]         sudo apt install -y policykit-1-gnome (or lxpolkit)\n\
-                       [termway]         Alternatively, run directly with: sudo ./termway --wm <command>";
+            let msg = "[termway] Notice: No Polkit authentication agent found (policykit-1-gnome, lxpolkit, or mate-polkit).\n\
+                       [termway]         To run privileged apps (e.g. gparted, pkexec) without sudo, install one via:\n\
+                       [termway]         sudo apt install -y policykit-1-gnome (or lxpolkit, mate-polkit)\n\
+                       [termway]         Alternatively, run directly with: sudo termway -- <command>";
             crate::compositor::log_line(msg);
         }
         self.polkit = Some(agent);

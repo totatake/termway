@@ -629,11 +629,21 @@ impl TermwayCompositor {
                                 status,
                                 if preview.is_empty() { "(no output)" } else { &preview }
                             ));
-                            let msg = if preview.is_empty() {
+                            let mut msg = if preview.is_empty() {
                                 format!("Client process exited with error ({}) before opening any window.", status)
                             } else {
                                 format!("Client process exited with error ({}) before opening any window:\n  {}", status, preview)
                             };
+                            if !self.session.is_polkit_running() {
+                                msg.push_str(
+                                    "\n\nHint: If this application requires administrative/root privileges (e.g. gparted, pkexec),\n\
+                                           no Polkit authentication agent was found in the environment.\n\
+                                           To display authentication password dialogs in Termway, install an agent via:\n\
+                                               sudo apt install -y policykit-1-gnome (or lxpolkit, mate-polkit)\n\
+                                           Alternatively, run directly with:\n\
+                                               sudo termway -- <command>"
+                                );
+                            }
                             return Err(TermwayError::ClientFailed(msg));
                         }
                         // If client exited with success (e.g. gvim fork or gnome-terminal launcher), wait up to 6s grace period for window to appear
@@ -646,11 +656,21 @@ impl TermwayCompositor {
                                     .and_then(|f| std::fs::read_to_string(f.path()).ok())
                                     .unwrap_or_default();
                                 let preview = err_msg.lines().take(5).collect::<Vec<_>>().join("\n  ");
-                                let msg = if preview.is_empty() {
+                                let mut msg = if preview.is_empty() {
                                     "Client process exited and grace period expired with no window opened.".to_string()
                                 } else {
                                     format!("Client process exited and no window was opened:\n  {}", preview)
                                 };
+                                if !self.session.is_polkit_running() {
+                                    msg.push_str(
+                                        "\n\nHint: If this application requires administrative/root privileges (e.g. gparted, pkexec),\n\
+                                               no Polkit authentication agent was found in the environment.\n\
+                                               To display authentication password dialogs in Termway, install an agent via:\n\
+                                                   sudo apt install -y policykit-1-gnome (or lxpolkit, mate-polkit)\n\
+                                               Alternatively, run directly with:\n\
+                                                   sudo termway -- <command>"
+                                    );
+                                }
                                 return Err(TermwayError::ClientFailed(msg));
                             }
                         }
