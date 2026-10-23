@@ -706,14 +706,17 @@ impl TermwayCompositor {
 
             let elapsed_since_render = last_render_time.elapsed();
             let poll_timeout = if self.state.dirty {
-                if elapsed_since_render >= self.target_frame_duration
+                // If frame interval has passed (with 500us sub-millisecond tolerance to avoid double-polling),
+                // render immediately with 0 timeout.
+                if elapsed_since_render + std::time::Duration::from_micros(500) >= self.target_frame_duration
                     || self.state.needs_clear
                     || self.backend.needs_clear
                 {
                     nix::poll::PollTimeout::ZERO
                 } else {
                     let remaining = self.target_frame_duration - elapsed_since_render;
-                    let ms = (remaining.as_millis() as u16).max(1);
+                    // Round up microseconds to milliseconds to prevent waking up slightly too early (< target_frame_duration)
+                    let ms = (((remaining.as_micros() + 999) / 1000) as u16).max(1);
                     nix::poll::PollTimeout::from(ms)
                 }
             } else {
@@ -753,13 +756,14 @@ impl TermwayCompositor {
             self.state.popups.cleanup();
 
             // F. Render if damaged and frame pacing interval has elapsed
+            // Allow a 500us sub-millisecond tolerance so integer millisecond timer wakeup jitter
+            // does not trigger an extra redundant poll cycle.
             let should_render = self.state.dirty
-                && (last_render_time.elapsed() >= self.target_frame_duration
+                && (last_render_time.elapsed() + std::time::Duration::from_micros(500) >= self.target_frame_duration
                     || self.state.needs_clear
                     || self.backend.needs_clear);
 
             if should_render {
-                last_render_time = std::time::Instant::now();
                 if self.state.needs_clear {
                     self.state.needs_clear = false;
                     self.backend.needs_clear = true;
@@ -778,27 +782,9 @@ impl TermwayCompositor {
                 let r_dur = t_r0.elapsed();
 
                 if let Ok(pixels) = render_res {
-                    let r_us = r_dur.as_micros() as u64;
-                    let t_d0 = std::time::Instant::now();
-                    let damage = self.damage_tracker.track_damage(pixels);
-                    let d_dur = t_d0.elapsed();
-                    let d_us = d_dur.as_micros() as u64;
-                    self.metrics.record_render(r_us, d_us);
-
-                    let taskbar_changed = taskbar != self.prev_taskbar;
-                    self.prev_taskbar = taskbar.clone();
-
-                    if !damage.is_empty() || taskbar_changed || self.backend.needs_clear {
-                        let damage_arg = if self.backend.needs_clear {
-                            None
-                        } else {
-                            Some(damage)
-                        };
-                        let _ = self.backend.render_pixels_with_damage(pixels, w, h, taskbar.as_deref(), damage_arg);
-                    } else {
-                        self.metrics.record_clean_skip();
-                    }
-
+                    // Send Wayland frame callbacks immediately after Pixman composite completes reading client SHM buffers.
+                    // This lets the client (e.g. Firefox WebRender) start preparing the next frame concurrently
+                    // while Termway performs SIMD damage tracking and hands off the frame to the background worker.
                     let time = self.state.start_time.elapsed().as_millis() as u32;
                     for window in &self.state.wm.windows {
                         if let Some(surface) = self.state.surface_for_managed_window(window) {
@@ -825,6 +811,32 @@ impl TermwayCompositor {
                     // Immediately flush Wayland client sockets so clients (e.g. Firefox)
                     // receive wl_callback.done without waiting for the next poll() timeout.
                     let _ = self.display.flush_clients();
+
+                    let r_us = r_dur.as_micros() as u64;
+                    let t_d0 = std::time::Instant::now();
+                    let damage = self.damage_tracker.track_damage(pixels);
+                    let d_dur = t_d0.elapsed();
+                    let d_us = d_dur.as_micros() as u64;
+                    self.metrics.record_render(r_us, d_us);
+
+                    let taskbar_changed = taskbar != self.prev_taskbar;
+                    self.prev_taskbar = taskbar.clone();
+
+                    if !damage.is_empty() || taskbar_changed || self.backend.needs_clear {
+                        // Only update last_render_time when a real frame is submitted to the backend worker.
+                        // Skipping this update on clean skips ensures empty commits (e.g. metadata/frame callback registration)
+                        // do not waste a frame pacing slot or delay subsequent video frames.
+                        last_render_time = std::time::Instant::now();
+
+                        let damage_arg = if self.backend.needs_clear {
+                            None
+                        } else {
+                            Some(damage)
+                        };
+                        let _ = self.backend.render_pixels_with_damage(pixels, w, h, taskbar.as_deref(), damage_arg);
+                    } else {
+                        self.metrics.record_clean_skip();
+                    }
                 }
                 self.state.dirty = false;
             }
