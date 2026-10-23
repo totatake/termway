@@ -255,7 +255,7 @@ For compatible terminals such as Noctty, `termway` supports Kitty Graphics Proto
 - CLI Options:
   - `--jpeg`: Force-enable Kitty `f=101` JPEG extension
   - `--no-jpeg`: Force-disable JPEG extension (use standard zlib `f=32,o=z`)
-  - `--jpeg-quality <1-100>`: Set JPEG compression quality (default: `80`)
+  - `--jpeg-quality <1-100>`: Set JPEG compression quality (default: `75`)
 - Environment Variables:
   - `TERMWAY_KITTY_JPEG=1` / `true` (force enabled), `0` / `false` (force disabled), unset / `auto` (auto-detect)
   - `TERMWAY_JPEG_QUALITY=1..=100` (quality setting)
@@ -335,7 +335,7 @@ Example JSON schema:
 | `--sixel` | - | Force Sixel Graphics Protocol | Auto-detected |
 | `--jpeg` | - | Force-enable Kitty Graphics Protocol JPEG extension (`f=101`) | Auto-probed |
 | `--no-jpeg` | - | Force-disable JPEG extension (use standard zlib `f=32,o=z`) | Auto-probed |
-| `--jpeg-quality` | `<1-100>` | Set JPEG compression quality (1..=100) | `80` |
+| `--jpeg-quality` | `<1-100>` | Set JPEG compression quality (1..=100) | `75` |
 | `--cell-size` | `<WxH>` | Specify font cell dimensions in pixels (e.g. `10x22`) | Auto-detected via SGR 14t |
 | `--width` | `<PIXELS>` | Virtual display resolution width | Auto-calculated from terminal |
 | `--height` | `<PIXELS>` | Virtual display resolution height | Auto-calculated from terminal |

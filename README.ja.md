@@ -256,7 +256,7 @@ Noctty 等の対応端末向けに、純粋 Rust 製ゼロアロケーション 
 - CLI オプション:
   - `--jpeg`: Kitty `f=101` JPEG 拡張を強制有効化
   - `--no-jpeg`: JPEG 拡張を無効化（標準の zlib `f=32,o=z` を強制）
-  - `--jpeg-quality <1-100>`: JPEG 圧縮品質を指定（デフォルト: `80`）
+  - `--jpeg-quality <1-100>`: JPEG 圧縮品質を指定（デフォルト: `75`）
 - 環境変数:
   - `TERMWAY_KITTY_JPEG=1` / `true`（強制有効）、`0` / `false`（強制無効）、未設定 / `auto`（自動プローブ判定）
   - `TERMWAY_JPEG_QUALITY=1..=100`（品質指定）
@@ -337,7 +337,7 @@ TERMWAY_PROFILE_FILE=/tmp/profile.json ./target/release/termway --profile -- fir
 | `--sixel` | - | Sixel Graphics Protocol を明示的に使用する | 自動検出 |
 | `--jpeg` | - | Kitty Graphics Protocol JPEG 拡張 (`f=101`) を明示的に有効化 | 自動プローブ判定 |
 | `--no-jpeg` | - | Kitty Graphics Protocol JPEG 拡張を無効化（標準 zlib `f=32,o=z` を強制） | 自動プローブ判定 |
-| `--jpeg-quality` | `<1-100>` | JPEG 圧縮品質 (1〜100) を設定 | `80` |
+| `--jpeg-quality` | `<1-100>` | JPEG 圧縮品質 (1〜100) を設定 | `75` |
 | `--cell-size` | `<WxH>` | フォントセル寸法（幅x高さ）をピクセル単位で明示指定 (例: `10x22`) | SGR 14t 自動測定 |
 | `--width` | `<PIXELS>` | 仮想ディスプレイ解像度の幅 | 端末サイズから自動算出 |
 | `--height` | `<PIXELS>` | 仮想ディスプレイ解像度の高さ | 端末サイズから自動算出 |
