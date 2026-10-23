@@ -250,10 +250,17 @@ You can explicitly override the protocol using `--kitty` or `--sixel`:
 ```
 
 #### Kitty Graphics Protocol `f=101` (JPEG) Extension & Dynamic Fallback
-For compatible terminals such as Noctty, `termway` supports Kitty Graphics Protocol extension format `f=101` (Baseline JPEG) powered by a pure Rust zero-allocation JPEG encoder. This reduces PTY transmission bandwidth for video frames and high-entropy scenes by ~80% compared to standard zlib. On non-supporting terminals (upstream Kitty, Ghostty, etc.), `termway` dynamically detects capabilities on startup and safely falls back to standard `f=32,o=z` (zlib).
+For compatible terminals such as specially extended Noctty (an experimental fork not yet merged into upstream), `termway` supports Kitty Graphics Protocol extension format `f=101` (Baseline JPEG) powered by a pure Rust zero-allocation JPEG encoder. This reduces PTY transmission bandwidth for video frames and high-entropy scenes by ~80% compared to standard zlib. On non-supporting terminals (official upstream Noctty, Kitty, Ghostty, WezTerm, etc.), `termway` dynamically detects capabilities on startup and safely falls back to standard `f=32,o=z` (zlib).
+
+> [!IMPORTANT]
+> **Terminal Requirements & Stability Notes (Noctty / Ghostty)**
+> 1. **Kitty JPEG Mode (`f=101`) Requirement**:
+>    To utilize `f=101` JPEG streaming, a **specially extended build of Noctty (an experimental branch/fork not yet merged upstream) is required**. Official releases of Noctty, Ghostty, and Kitty do not support `f=101`; on these terminals, `termway` automatically falls back to standard `f=32,o=z` (zlib compression).
+> 2. **High-Load / Video Playback Crashes on Upstream Noctty & Ghostty**:
+>    In official releases of Noctty and Ghostty, receiving continuous high-frequency graphic streams (such as YouTube video playback) can trigger terminal crashes (SIGSEGV/aborts) due to internal GPU texture management and multi-threaded rendering queue pressure under heavy throughput. An **experimental build of Noctty with patches for this crash issue exists (not yet merged upstream)**. For sustained high-FPS video streaming, using this patched Noctty build is strongly recommended.
 
 - CLI Options:
-  - `--jpeg`: Force-enable Kitty `f=101` JPEG extension
+  - `--jpeg`: Force-enable Kitty `f=101` JPEG extension (auto-probing is recommended for non-supporting terminals)
   - `--no-jpeg`: Force-disable JPEG extension (use standard zlib `f=32,o=z`)
   - `--jpeg-quality <1-100>`: Set JPEG compression quality (default: `75`)
 - Environment Variables:
