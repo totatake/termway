@@ -77,13 +77,14 @@ impl TerminalBackend {
         let worker_handle = std::thread::Builder::new()
             .name("termway-async-render".into())
             .spawn(move || {
-                let mut stdout = io::stdout();
+                let stdout = io::stdout();
                 let mut sixel_stream = SixelStreamEncoder::new();
                 let mut sixel_out = Vec::new();
                 let mut kitty_stream = KittyStreamEncoder::new();
                 kitty_stream.set_use_jpeg(use_jpeg);
                 kitty_stream.set_jpeg_quality(jpeg_quality);
                 let mut kitty_out = String::new();
+                let mut frame_buf = Vec::with_capacity(256 * 1024);
 
                 let mut stat_start = std::time::Instant::now();
                 let mut stat_frames: u32 = 0;
@@ -216,14 +217,28 @@ impl TerminalBackend {
                     };
 
                     let write_start = std::time::Instant::now();
+                    // Assemble the entire frame into a single contiguous buffer before writing to stdout.
+                    // This guarantees atomic output per frame and eliminates race conditions or interleaving
+                    // with asynchronous OSC/control sequences.
+                    frame_buf.clear();
+                    frame_buf.extend_from_slice(b"\x1b[?2026h");
+                    frame_buf.extend_from_slice(clear_seq.as_bytes());
                     if use_sixel {
-                        let _ = write!(stdout, "\x1b[?2026h{}\x1b[H", clear_seq);
-                        let _ = stdout.write_all(&sixel_out);
-                        let _ = write!(stdout, "{}{}{}\x1b[?2026l", taskbar_seq, overlay_seq, hud_seq);
+                        frame_buf.extend_from_slice(b"\x1b[H");
+                        frame_buf.extend_from_slice(&sixel_out);
                     } else {
-                        let _ = write!(stdout, "\x1b[?2026h{}{}{}{}{}\x1b[?2026l", clear_seq, kitty_out, taskbar_seq, overlay_seq, hud_seq);
+                        frame_buf.extend_from_slice(kitty_out.as_bytes());
                     }
-                    let _ = stdout.flush();
+                    frame_buf.extend_from_slice(taskbar_seq.as_bytes());
+                    frame_buf.extend_from_slice(overlay_seq.as_bytes());
+                    frame_buf.extend_from_slice(hud_seq.as_bytes());
+                    frame_buf.extend_from_slice(b"\x1b[?2026l");
+
+                    {
+                        let mut out_guard = stdout.lock();
+                        let _ = out_guard.write_all(&frame_buf);
+                        let _ = out_guard.flush();
+                    }
                     let write_us = write_start.elapsed().as_micros() as u64;
                     metrics_clone.total_write_us.fetch_add(write_us, Ordering::Relaxed);
                     metrics_clone.max_write_us.fetch_max(write_us, Ordering::Relaxed);
