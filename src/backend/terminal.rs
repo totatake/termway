@@ -22,7 +22,7 @@ struct RenderJob {
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct BackendMetrics {
     pub jobs_submitted: AtomicU64,
     pub jobs_rendered: AtomicU64,
@@ -30,9 +30,91 @@ pub struct BackendMetrics {
     pub frames_dropped: AtomicU64,
     pub total_encode_us: AtomicU64,
     pub max_encode_us: AtomicU64,
+    pub encode_buckets: [AtomicU64; 64],
     pub total_write_us: AtomicU64,
     pub max_write_us: AtomicU64,
+    pub write_buckets: [AtomicU64; 64],
     pub total_bytes_written: AtomicU64,
+}
+
+impl Default for BackendMetrics {
+    fn default() -> Self {
+        const INIT_BUCKET: AtomicU64 = AtomicU64::new(0);
+        Self {
+            jobs_submitted: AtomicU64::new(0),
+            jobs_rendered: AtomicU64::new(0),
+            partial_frames: AtomicU64::new(0),
+            frames_dropped: AtomicU64::new(0),
+            total_encode_us: AtomicU64::new(0),
+            max_encode_us: AtomicU64::new(0),
+            encode_buckets: [INIT_BUCKET; 64],
+            total_write_us: AtomicU64::new(0),
+            max_write_us: AtomicU64::new(0),
+            write_buckets: [INIT_BUCKET; 64],
+            total_bytes_written: AtomicU64::new(0),
+        }
+    }
+}
+
+impl BackendMetrics {
+    #[inline]
+    fn bucket_index(us: u64) -> usize {
+        let ms = us / 1000;
+        if ms < 32 {
+            ms as usize
+        } else if ms < 64 {
+            32 + ((ms - 32) / 2) as usize
+        } else if ms < 128 {
+            48 + ((ms - 64) / 8) as usize
+        } else if ms < 512 {
+            56 + ((ms - 128) / 64) as usize
+        } else {
+            63
+        }
+    }
+
+    pub fn record_encode_us(&self, us: u64) {
+        let idx = Self::bucket_index(us);
+        self.encode_buckets[idx].fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn record_write_us(&self, us: u64) {
+        let idx = Self::bucket_index(us);
+        self.write_buckets[idx].fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn percentile_encode(&self, p: f64) -> f64 {
+        Self::calc_percentile(&self.encode_buckets, self.jobs_rendered.load(Ordering::Relaxed), p)
+    }
+
+    pub fn percentile_write(&self, p: f64) -> f64 {
+        Self::calc_percentile(&self.write_buckets, self.jobs_rendered.load(Ordering::Relaxed), p)
+    }
+
+    fn calc_percentile(buckets: &[AtomicU64; 64], total_count: u64, p: f64) -> f64 {
+        if total_count == 0 {
+            return 0.0;
+        }
+        let target = ((total_count as f64) * p / 100.0).ceil() as u64;
+        let mut accum = 0;
+        for (i, b) in buckets.iter().enumerate() {
+            accum += b.load(Ordering::Relaxed);
+            if accum >= target {
+                return if i < 32 {
+                    i as f64 + 0.5
+                } else if i < 48 {
+                    32.0 + (i - 32) as f64 * 2.0 + 1.0
+                } else if i < 56 {
+                    64.0 + (i - 48) as f64 * 8.0 + 4.0
+                } else if i < 63 {
+                    128.0 + (i - 56) as f64 * 64.0 + 32.0
+                } else {
+                    512.0
+                };
+            }
+        }
+        512.0
+    }
 }
 
 struct AsyncRenderState {
@@ -142,6 +224,7 @@ impl TerminalBackend {
                     metrics_clone.jobs_rendered.fetch_add(1, Ordering::Relaxed);
                     metrics_clone.total_encode_us.fetch_add(encode_us, Ordering::Relaxed);
                     metrics_clone.max_encode_us.fetch_max(encode_us, Ordering::Relaxed);
+                    metrics_clone.record_encode_us(encode_us);
                     metrics_clone.total_bytes_written.fetch_add(bytes_encoded as u64, Ordering::Relaxed);
 
                     last_encode_ms = encode_dur.as_secs_f64() * 1000.0;
@@ -239,6 +322,7 @@ impl TerminalBackend {
                     let write_us = write_start.elapsed().as_micros() as u64;
                     metrics_clone.total_write_us.fetch_add(write_us, Ordering::Relaxed);
                     metrics_clone.max_write_us.fetch_max(write_us, Ordering::Relaxed);
+                    metrics_clone.record_write_us(write_us);
 
                     let mut guard = lock.lock().unwrap();
                     guard.spare_buffer = Some(job.pixels);
