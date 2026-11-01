@@ -118,8 +118,11 @@ fn test_sixel_auto_fallback_detection() {
     assert!(force_sixel, "explicit --sixel flag should always enable Sixel");
 }
 
+static ENV_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[test]
 fn test_graphics_protocol_fastpath_detection() {
+    let _lock = ENV_MUTEX.lock().unwrap();
     use termway::terminal::query::{query_graphics_protocol, GraphicsProtocol};
 
     // Test TERM=xterm-kitty
@@ -147,6 +150,7 @@ fn test_graphics_protocol_fastpath_detection() {
 
 #[test]
 fn test_pixel_mouse_query_support() {
+    let _lock = ENV_MUTEX.lock().unwrap();
     use termway::terminal::query_pixel_mouse_support;
 
     // Explicit override: 1 -> true, 0 -> false
@@ -238,6 +242,7 @@ fn test_framebuffer_encode_png_valid_structure() {
 
 #[test]
 fn test_query_kitty_jpeg_support_env_and_fallback() {
+    let _lock = ENV_MUTEX.lock().unwrap();
     use termway::terminal::query_kitty_jpeg_support;
 
     // TERMWAY_KITTY_JPEG=1 forces true

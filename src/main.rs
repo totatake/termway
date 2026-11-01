@@ -237,6 +237,11 @@ If your terminal supports Sixel or Kitty but auto-detection failed, you can expl
     }
 
     if run_demo || config.command.is_empty() {
+        if termway::session::find_executable("python3").is_none() {
+            eprintln!("Error: The built-in demo requires 'python3' with PyGObject (python3-gi) and GTK 3.0.");
+            eprintln!("Please install python3-gi (e.g. 'sudo apt install python3-gi gir1.2-gtk-3.0') or specify a command to run (e.g. 'termway -- xclock').");
+            std::process::exit(127);
+        }
         config.command = vec![
             "python3".to_string(),
             "-c".to_string(),
@@ -285,7 +290,13 @@ Gtk.main()
         }
     }
 
-    let mut compositor = TermwayCompositor::new(config)?;
+    let mut compositor = match TermwayCompositor::new(config) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
+        }
+    };
     if let Err(e) = compositor.run() {
         eprintln!("Error: {}", e);
         drop(compositor);
