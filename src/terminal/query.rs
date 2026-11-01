@@ -46,6 +46,56 @@ pub fn query_graphics_protocol() -> GraphicsProtocol {
     query_graphics_protocol_via_da()
 }
 
+/// Returns whether the host terminal emulator is known to support SGR-Pixels mouse mode (DECSET 1016).
+/// Supported by Kitty, WezTerm, Foot, Ghostty, and xterm (#359+).
+pub fn query_pixel_mouse_support() -> bool {
+    // 1. Explicit environment variable override
+    if let Ok(v) = env::var("TERMWAY_PIXEL_MOUSE") {
+        let v = v.trim().to_lowercase();
+        if v == "1" || v == "true" || v == "yes" {
+            return true;
+        }
+        if v == "0" || v == "false" || v == "no" {
+            return false;
+        }
+        // "auto" or other values fall through to detection
+    }
+
+    // 2. Known terminal environment variables
+    if env::var("KITTY_WINDOW_ID").is_ok()
+        || env::var("KITTY_PID").is_ok()
+        || env::var("WEZTERM_PANE").is_ok()
+        || env::var("FOOT_SERVER_SOCKET").is_ok()
+        || env::var("GHOSTTY_RESOURCES_DIR").is_ok()
+    {
+        return true;
+    }
+
+    if let Ok(tp) = env::var("TERM_PROGRAM") {
+        let tp = tp.to_lowercase();
+        if tp.contains("kitty")
+            || tp.contains("wezterm")
+            || tp.contains("ghostty")
+            || tp.contains("foot")
+        {
+            return true;
+        }
+    }
+
+    if let Ok(term) = env::var("TERM") {
+        let term_lower = term.to_lowercase();
+        if term_lower.contains("kitty")
+            || term_lower.contains("wezterm")
+            || term_lower.contains("ghostty")
+            || term_lower.contains("foot")
+        {
+            return true;
+        }
+    }
+
+    false
+}
+
 fn query_graphics_protocol_via_da() -> GraphicsProtocol {
     // 2. Terminal querying via escape sequence
     let stdin_fd = io::stdin().as_raw_fd();

@@ -420,6 +420,35 @@ fn test_compositor_mouse_dispatch() {
 }
 
 #[test]
+fn test_compositor_pixel_mouse_dispatch() {
+    use termway::compositor::input::dispatch_mouse_event;
+    use termway::protocol::{MouseAction, MouseButton, MouseEvent};
+
+    let display = Display::<TermwayState>::new().expect("Failed to create Wayland Display");
+    let dh = display.handle();
+
+    let mut state = TermwayState::new(&dh, 800, 600, true);
+    state.pixel_mouse = true;
+
+    // In pixel mouse mode (DECSET 1016h), col and row represent 1-based pixel coordinates:
+    // col 123 -> px = 122.0
+    // row 456 -> py = 455.0
+    let move_ev = MouseEvent {
+        button: MouseButton::None,
+        action: MouseAction::Move,
+        col: 123,
+        row: 456,
+        shift: false,
+        meta: false,
+        ctrl: false,
+    };
+    let mut child = None;
+    dispatch_mouse_event(&mut state, 800, 600, 80, 24, &move_ev, &mut child);
+    assert_eq!(state.pointer.current_location().x, 122.0);
+    assert_eq!(state.pointer.current_location().y, 455.0);
+}
+
+#[test]
 fn test_compositor_cursor_shape_synchronization() {
     use smithay::utils::{Point, Size};
     use termway::compositor::input::dispatch_mouse_event;

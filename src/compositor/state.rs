@@ -120,6 +120,7 @@ pub struct TermwayState {
     pub start_time: std::time::Instant,
     pub current_cursor_shape: String,
     pub current_terminal_title: String,
+    pub pixel_mouse: bool,
 }
 
 impl TermwayState {
@@ -227,6 +228,7 @@ impl TermwayState {
             start_time: std::time::Instant::now(),
             current_cursor_shape: String::from("default"),
             current_terminal_title: String::from("termway"),
+            pixel_mouse: false,
         };
         state.init_unicode_keymap_cache();
         state

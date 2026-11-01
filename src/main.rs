@@ -21,6 +21,8 @@ OPTIONS:
     --jpeg                    Enable Kitty Graphics Protocol JPEG extension (f=101)
     --no-jpeg                 Disable Kitty Graphics Protocol JPEG extension (use standard zlib)
     --jpeg-quality <1-100>    Set JPEG compression quality (default: 75)
+    --pixel-mouse             Enable SGR-Pixels (DEC 1016h) 1px precision mouse tracking
+    --no-pixel-mouse          Disable SGR-Pixels mouse tracking (use standard cell mode)
     --hud                     Enable real-time performance HUD indicator
     --profile                 Enable performance profiling and latency breakdown
     --no-splash               Disable startup splash screen
@@ -134,6 +136,10 @@ fn main() -> Result<()> {
                     std::process::exit(1);
                 }
             }
+        } else if arg == "--pixel-mouse" {
+            config.pixel_mouse = Some(true);
+        } else if arg == "--no-pixel-mouse" {
+            config.pixel_mouse = Some(false);
         } else if arg == "--hud" {
             config.hud = true;
         } else if arg == "--profile" {

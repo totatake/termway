@@ -145,6 +145,49 @@ fn test_graphics_protocol_fastpath_detection() {
     std::env::set_var("TERM", "dumb");
 }
 
+#[test]
+fn test_pixel_mouse_query_support() {
+    use termway::terminal::query_pixel_mouse_support;
+
+    // Explicit override: 1 -> true, 0 -> false
+    std::env::set_var("TERMWAY_PIXEL_MOUSE", "1");
+    assert!(query_pixel_mouse_support());
+    std::env::set_var("TERMWAY_PIXEL_MOUSE", "0");
+    assert!(!query_pixel_mouse_support());
+    std::env::remove_var("TERMWAY_PIXEL_MOUSE");
+
+    // Environment variable detection: KITTY_WINDOW_ID
+    std::env::set_var("KITTY_WINDOW_ID", "1");
+    assert!(query_pixel_mouse_support());
+    std::env::remove_var("KITTY_WINDOW_ID");
+
+    // WEZTERM_PANE
+    std::env::set_var("WEZTERM_PANE", "1");
+    assert!(query_pixel_mouse_support());
+    std::env::remove_var("WEZTERM_PANE");
+
+    // GHOSTTY_RESOURCES_DIR
+    std::env::set_var("GHOSTTY_RESOURCES_DIR", "/usr/share/ghostty");
+    assert!(query_pixel_mouse_support());
+    std::env::remove_var("GHOSTTY_RESOURCES_DIR");
+
+    // FOOT_SERVER_SOCKET
+    std::env::set_var("FOOT_SERVER_SOCKET", "/tmp/foot.sock");
+    assert!(query_pixel_mouse_support());
+    std::env::remove_var("FOOT_SERVER_SOCKET");
+
+    // TERM_PROGRAM
+    std::env::set_var("TERM_PROGRAM", "kitty");
+    assert!(query_pixel_mouse_support());
+    std::env::remove_var("TERM_PROGRAM");
+
+    // TERM
+    std::env::set_var("TERM", "xterm-kitty");
+    assert!(query_pixel_mouse_support());
+    std::env::set_var("TERM", "dumb");
+    assert!(!query_pixel_mouse_support());
+}
+
 
 #[test]
 fn test_termway_version_flag() {

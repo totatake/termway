@@ -54,6 +54,7 @@ pub struct EngineConfig {
     pub hud: bool,
     pub profile: bool,
     pub no_splash: bool,
+    pub pixel_mouse: Option<bool>,
     pub command: Vec<String>,
 }
 
@@ -72,6 +73,7 @@ impl Default for EngineConfig {
             hud: false,
             profile: false,
             no_splash: false,
+            pixel_mouse: None,
             command: Vec::new(),
         }
     }
@@ -177,7 +179,14 @@ impl TermwayCompositor {
         log_line(format!("[termway] Resolution: {}x{} (@{:.2}x)", width, height, config.scale));
 
         // 2. Initialize Compositor State
-        let state = TermwayState::with_scale(&dh, width, height, config.enable_wm, config.scale);
+        let pixel_mouse = config.pixel_mouse.unwrap_or_else(crate::terminal::query_pixel_mouse_support);
+        let mut state = TermwayState::with_scale(&dh, width, height, config.enable_wm, config.scale);
+        state.pixel_mouse = pixel_mouse;
+        if pixel_mouse {
+            log_line("[termway] Mouse tracking: SGR-Pixels (DECSET 1016h) enabled");
+        } else {
+            log_line("[termway] Mouse tracking: SGR extended cell mode (DECSET 1006h)");
+        }
         let refresh_mhz = (config.fps.clamp(1, 240) * 1000) as i32;
         let mode = smithay::output::Mode {
             size: (width as i32, height as i32).into(),
@@ -357,7 +366,7 @@ impl TermwayCompositor {
 
     pub fn run(&mut self) -> Result<()> {
         // Raw mode guard ensures terminal is restored upon exit
-        let _guard = RawModeGuard::enter()?;
+        let _guard = RawModeGuard::enter_with_options(self.state.pixel_mouse)?;
 
         let mut chunk = [0u8; 512];
         let stdin = io::stdin();
@@ -1148,12 +1157,25 @@ impl TermwayCompositor {
     }
 
     fn dispatch_mouse_event(&mut self, ev: &crate::protocol::MouseEvent) {
+        let avail_rows = self.term_rows.saturating_sub(1).max(1);
+        let cell_w = self.renderer.width() as f64 / self.term_cols.max(1) as f64;
+
+        let (taskbar_col, is_bottom_row) = if self.state.pixel_mouse {
+            let px = ev.col.saturating_sub(1) as f64;
+            let py = ev.row.saturating_sub(1) as f64;
+            let col = (px / cell_w.max(1.0)).floor() as u16 + 1;
+            let is_bottom = py >= self.renderer.height() as f64;
+            (col, is_bottom)
+        } else {
+            (ev.col, ev.row == self.term_rows)
+        };
+
         // Check taskbar click on the bottom row
         if ev.action == crate::protocol::MouseAction::Press
             && matches!(ev.button, crate::protocol::MouseButton::Left)
-            && ev.row == self.term_rows
+            && is_bottom_row
         {
-            if let Some(chip_id) = self.taskbar.find_chip_at_col(ev.col) {
+            if let Some(chip_id) = self.taskbar.find_chip_at_col(taskbar_col) {
                 if let Some(win) = self.state.wm.windows.iter().find(|w| w.id == chip_id) {
                     if win.is_minimized {
                         self.state.restore_window(chip_id);
@@ -1168,7 +1190,6 @@ impl TermwayCompositor {
             }
         }
 
-        let avail_rows = self.term_rows.saturating_sub(1).max(1);
         self::input::dispatch_mouse_event(
             &mut self.state,
             self.renderer.width(),
