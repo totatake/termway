@@ -454,11 +454,13 @@ impl TermwayCompositor {
             let xwayland_is_ready = self.state.xwayland_ready || self.x11_display.is_none();
             if loop_count >= 5 && xwayland_is_ready {
                 // Start Polkit Authentication Agent once Wayland and XWayland are fully ready
-                if !self.session.is_polkit_running() {
+                if !self.session.is_polkit_initialized() {
                     self.session.update_activation_environment(Some(&self.socket_name), self.x11_display.as_deref());
                     self.session.start_polkit(Some(&self.socket_name), self.x11_display.as_deref());
-                    // Allow the agent to register with D-Bus and polkitd before launching the client
-                    std::thread::sleep(std::time::Duration::from_millis(300));
+                    // Allow the agent to register with D-Bus and polkitd only if an agent was actually found and started
+                    if self.session.is_polkit_running() {
+                        std::thread::sleep(std::time::Duration::from_millis(300));
+                    }
                 }
 
                 if let Some(cmd_args) = self.pending_command.take() {

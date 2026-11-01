@@ -28,7 +28,9 @@ fn test_session_manager_integration() {
         assert!(addr.starts_with("unix:"));
     }
     // Starting polkit should not panic
+    assert!(!manager.is_polkit_initialized());
     manager.start_polkit(Some("wayland-1"), Some(":1"));
+    assert!(manager.is_polkit_initialized());
 }
 
 #[test]

@@ -626,6 +626,10 @@ impl SessionManager {
         self.polkit = Some(agent);
     }
 
+    pub fn is_polkit_initialized(&self) -> bool {
+        self.polkit.is_some()
+    }
+
     pub fn is_polkit_running(&self) -> bool {
         self.polkit.as_ref().map(|p| p.is_running()).unwrap_or(false)
     }
