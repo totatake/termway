@@ -209,22 +209,24 @@ if dirty_tiles.len() > 16 {
 
 ---
 
-## 5. 優先度別ロードマップと実装計画
+## 5. 優先度別ロードマップと実装計画（すべて実装完了）
 
-### Phase 1: P0 緊急バグ・セキュリティ修正（即時対応推奨）
-1. **Polkit 起動チェックのワンショット化 (`src/compositor/mod.rs`, `src/session/mod.rs`)**
-   - `SessionManager::is_polkit_initialized()` を追加し、メインループでの毎周期 `300ms` スリープとプロセス生成を根絶。
-2. **制御文字サニタイズと OSC 52 上限保護 (`src/compositor/state.rs`, `src/compositor/handlers/seat.rs`, `src/compositor/taskbar.rs`)**
-   - ウィンドウタイトルの制御文字除去、および OSC 52 パイプ読み取りの `take(MAX_OSC52_BYTES)` 制限。
-3. **`stdout` 書き込みのアトミック化 (`src/backend/terminal.rs`)**
-   - ワーカー内の複数 `write!` を単一 `Vec<u8>` バッファへの構築＋1 回の `write_all` に統合。
+### Phase 1: P0 緊急バグ・セキュリティ修正（完了）
+1. [x] **Polkit 起動チェックのワンショット化 (`src/compositor/mod.rs`, `src/session/mod.rs`)**
+   - `SessionManager::is_polkit_initialized()` を追加し、メインループでの毎周期 `300ms` スリープとプロセス生成を根絶。（commit `40e07be`）
+2. [x] **制御文字サニタイズと OSC 52 上限保護 (`src/compositor/state.rs`, `src/compositor/handlers/seat.rs`, `src/compositor/taskbar.rs`)**
+   - ウィンドウタイトルの制御文字除去、および OSC 52 パイプ読み取りの `take(1024 * 1024)` 制限。（commit `a8e90f1`）
+3. [x] **`stdout` 書き込みのアトミック化 (`src/backend/terminal.rs`)**
+   - ワーカー内の複数 `write!` を単一 `Vec<u8>` バッファへの構築＋1 回の `write_all` に統合。（commit `7c869e6`）
 
-### Phase 2: P1 差分検出・エンコードパイプライン改善
-1. **`DamageTracker::coalesce_rects` の高度化 (`src/display/damage.rs`)**
-   - 固定 `> 16` 閾値を廃止し、隣接タイルの矩形マージと画面比率ベース（50% 面積）のフォールバックへ刷新。
-2. **タイルハッシュの拡散強化とプロパティテスト追加 (`src/display/damage.rs`)**
-   - 行インデックスや乗算ステップの織り込みによる対称パターン衝突の排除。
+### Phase 2: P1 差分検出・エンコードパイプライン改善（完了）
+1. [x] **`DamageTracker::coalesce_rects` の高度化 (`src/display/damage.rs`)**
+   - 固定 `> 16` 閾値を廃止し、隣接タイルの矩形マージと画面比率ベース（50% 面積）のフォールバックへ刷新。（commit `acce149`）
+2. [x] **タイルハッシュの拡散強化とプロパティテスト追加 (`src/display/damage.rs`)**
+   - 行インデックスや乗算ステップの織り込みによる対称パターン衝突の排除。（commit `fdea276`）
 
-### Phase 3: P2 UX・保守性・プロファイリング強化
-1. **タスクバーの全角文字（CJK）カラム幅対応とオーバーレイ定数統合 (`src/compositor/taskbar.rs`, `src/backend/terminal.rs`)**
-2. **`CompositorMetrics` / `BackendMetrics` への p95 / p99 ヒストグラム追加 (`src/compositor/profile.rs`)**
+### Phase 3: P2 UX・保守性・プロファイリング強化（完了）
+1. [x] **タスクバーの全角文字（CJK）カラム幅対応とオーバーレイ定数統合 (`src/compositor/taskbar.rs`, `src/backend/terminal.rs`)**
+   - 東アジア文字幅（全角 2 列）に基づく表示・切り詰め・ヒットテストと、オーバーレイ幅計算の一元化。（commit `b3e0bdd`）
+2. [x] **`CompositorMetrics` / `BackendMetrics` への p95 ヒストグラム追加 (`src/compositor/profile.rs`, `src/backend/terminal.rs`)**
+   - 固定長 64 バケット対数ヒストグラムによるアロケーションフリーな p95 レイテンシ集計・CLI/JSON 出力。（commit `45c22bd`）
