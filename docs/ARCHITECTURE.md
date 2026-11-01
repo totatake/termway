@@ -1,4 +1,4 @@
-# termway システムアーキテクチャ詳細設計書 (v0.14.0)
+# termway システムアーキテクチャ詳細設計書 (v0.15.0)
 
 本書は、`termway` の**静的構造（モジュール構成・クラス/構造体関係・責務分割）**および**動的構造（起動シーケンス・非同期レンダリングパイプライン・ウィンドウ状態遷移・入力ディスパッチ）**について解説する技術設計ドキュメントです。
 
@@ -8,7 +8,7 @@
 
 ### 1.1 レイヤー構成とディレクトリツリー
 
-`termway` は単一バイナリの Smithay ベース自立型 Wayland コンポジタとして設計されており、以下の 5 つの疎結合なコアレイヤーで構成されています（v0.6.0 にてレガシー Xvfb エンジンを廃止し Smithay + XWayland アーキテクチャへ一本化、v0.7.0 にてコンポジタのモジュール分割とストリーム最適化、v0.8.0 にて aarch64/ARM NEON 最適化、v0.9.0 にて Kitty 部分プレースメント転送および Wayland Fractional Scale/HiDPI 制御、v0.10.0 にて OSC 22 マウスカーソル同期、Kitty Keyboard Protocol (CSI u)、Wayland Primary Selection、OSC 2 端末タブタイトル動的同期、v0.11.0 にて 16-bit RGB565 色量子化 SIMD 前処理、端末保護固定画像 ID 方式、動的描画ゴーストを排除する全画面標準更新、v0.12.0 にて純粋 Rust 製ゼロアロケーション Baseline JPEG エンコーダ、Kitty Graphics `f=101` 拡張ストリーミング、動的プローブ検知と透過安全フォールバック、v0.13.0 にて Wayland コンポジタ即時フレーム通知による 50ms ポーリング遅延解消、JPEG 固定小数点逆数乗算による除算完全排除、境界バイパス走査、品質適正化、v0.14.0 にてイベントループのペーシング精度向上・clean_skipタイマー保持・早期フレームコールバックによる 30fps クロック完全同期、Polkit 親切エラー案内を実装）。
+`termway` は単一バイナリの Smithay ベース自立型 Wayland コンポジタとして設計されており、以下の 5 つの疎結合なコアレイヤーで構成されています（v0.6.0 にてレガシー Xvfb エンジンを廃止し Smithay + XWayland アーキテクチャへ一本化、v0.7.0 にてコンポジタのモジュール分割とストリーム最適化、v0.8.0 にて aarch64/ARM NEON 最適化、v0.9.0 にて Kitty 部分プレースメント転送および Wayland Fractional Scale/HiDPI 制御、v0.10.0 にて OSC 22 マウスカーソル同期、Kitty Keyboard Protocol (CSI u)、Wayland Primary Selection、OSC 2 端末タブタイトル動的同期、v0.11.0 にて 16-bit RGB565 色量子化 SIMD 前処理、端末保護固定画像 ID 方式、動的描画ゴーストを排除する全画面標準更新、v0.12.0 にて純粋 Rust 製ゼロアロケーション Baseline JPEG エンコーダ、Kitty Graphics `f=101` 拡張ストリーミング、動的プローブ検知と透過安全フォールバック、v0.13.0 にて Wayland コンポジタ即時フレーム通知による 50ms ポーリング遅延解消、JPEG 固定小数点逆数乗算による除算完全排除、境界バイパス走査、品質適正化、v0.14.0 にてイベントループのペーシング精度向上・clean_skipタイマー保持・早期フレームコールバックによる 30fps クロック完全同期、Polkit 親切エラー案内、v0.15.0 にて SGR-Pixels (DEC 1016h) 1px 高精度マウストラッキング、ワンショット Polkit 初期化による起動遅延根絶、単一バッファアトミック write_all、制御文字サニタイズ & OSC 52 1MB 制限、2D 隣接タイル結合、SIMD タイルハッシュ拡散強化、タスクバー CJK カラム幅対応、p95 レイテンシヒストグラムを実装）。
 
 ```text
 src/
@@ -458,14 +458,14 @@ stateDiagram-v2
 
 ### 2.4 マウスイベントのヒットテスト・ルーティング優先順位
 
-ターミナルから受信した SGR マウスイベントは、`src/compositor/input.rs` の `dispatch_mouse_event` において以下の優先順位（Z-order の手前側優先）でルーティングされます。
+ターミナルから受信した SGR マウスイベント（標準 SGR 1006 セル単位、または DECSET 1016h SGR-Pixels ピクセル単位）は、`src/compositor/input.rs` の `dispatch_mouse_event` において以下の優先順位（Z-order の手前側優先）でルーティングされます。
 
 ```mermaid
 flowchart TD
-    MouseEv["SGR 1006 マウスイベント受信<br/>(col, row, button, action)"] --> CheckTaskbar{"1. 最下行 (row == term_rows)<br/>タスクバーチップ上の左クリック？"}
+    MouseEv["SGR 1006 / 1016h マウスイベント受信<br/>(col, row, button, action)"] --> CheckTaskbar{"1. 最下行<br/>タスクバーチップ上の左クリック？"}
 
     CheckTaskbar -->|"Yes"| TaskbarAction["対象ウィンドウが Minimized なら Unminimize & Raise<br/>Active なら Minimize<br/>非Active なら Raise & Focus"]
-    CheckTaskbar -->|"No"| MapCoord["セル座標 (col, row) を<br/>コンポジタピクセル座標 (px, py) へ変換"]
+    CheckTaskbar -->|"No"| MapCoord["セル座標 (col, row) または<br/>ピクセル座標 (col-1, row-1) を<br/>コンポジタピクセル座標 (px, py) へ変換"]
 
     MapCoord --> CheckDrag{"2. ドラッグ中？<br/>(WindowDragState::Moving / Resizing)"}
     CheckDrag -->|"Yes (Drag)"| UpdateDrag["ウィンドウ位置 / サイズ更新<br/>(画面境界クランプ + Wayland/X11 Configure)"]

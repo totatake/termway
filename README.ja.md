@@ -13,8 +13,8 @@
 - **ターミナル画面内でのGUI実行**:
   - **Kitty Graphics Protocol** および **Sixel Graphics Protocol** を使用し、端末内に高精細な画像としてインライン描画。Windows Terminal や Mac の iTerm2 にも対応！
   - SSH の単一ポート（PTY 1本）のみが通る踏み台環境やクラウド、tmux セッション内でも、追加のポートフォワーディングやクライアント側XサーバーなしでGUIツールが利用可能。
-- **フルマウス＆キーボード対話 (ホバー・リサイズ・カーソル形状対応)**:
-  - **xterm SGR 1006 マウスプロトコル (Any-event 1003h)** により、クリック、ドラッグ、ホイールスクロールに加えてマウスカーソルの移動（ホバー追従）を完全検知。
+- **フルマウス＆キーボード対話 (ホバー・リサイズ・カーソル形状同期 & 1px精度追従)**:
+  - **xterm SGR 1006 マウスプロトコル (Any-event 1003h)** および **SGR-Pixels (DECSET 1016h)** に対応：Kitty、WezTerm、Foot、Ghostty などの対応端末では 1 ピクセル単位の高精度マウストラッキングを自動有効化し、YouTube のシークバーやスライダーなどの極小 UI も正確にクリック・ドラッグ可能！クリック、ドラッグ、ホイールスクロールに加えてマウスカーソルの移動（ホバー追従）を完全検知。
   - 端末起動時に **SGR 14t（Report text area size in pixels）** を自動送信してターミナルの物理フォントピクセルサイズをミリ秒単位で厳密に取得。Sixel時の1:1アスペクト比描画とピクセルパーフェクトな座標同期（ドリフト防止）を実現！
   - **OSC 22 マウスカーソル形状同期**: ウィンドウの枠線やリサイズハンドル（`nwse-resize`）、タイトルバードラッグ（`grab`）、ボタン（`pointer`）など、ホバー対象に応じてターミナルのマウスカーソル形状を動的に同期（`\x1b]22;<name>\x07`）。
   - **Kitty Keyboard Protocol**: プログレッシブなキーボード拡張（`\x1b[>1u`）をサポートし、標準端末との互換性を保ちながら修飾キーの組み合わせやエスケープシーケンスの曖昧性を解消。
@@ -345,6 +345,8 @@ TERMWAY_PROFILE_FILE=/tmp/profile.json ./target/release/termway --profile -- fir
 | `--jpeg` | - | Kitty Graphics Protocol JPEG 拡張 (`f=101`) を明示的に有効化 | 自動プローブ判定 |
 | `--no-jpeg` | - | Kitty Graphics Protocol JPEG 拡張を無効化（標準 zlib `f=32,o=z` を強制） | 自動プローブ判定 |
 | `--jpeg-quality` | `<1-100>` | JPEG 圧縮品質 (1〜100) を設定 | `75` |
+| `--pixel-mouse` | - | SGR-Pixels (DEC 1016h) 1px 精度マウストラッキングを明示的に有効化 | 自動検出 |
+| `--no-pixel-mouse` | - | SGR-Pixels を無効化（標準セル単位モードを強制） | 自動検出 |
 | `--cell-size` | `<WxH>` | フォントセル寸法（幅x高さ）をピクセル単位で明示指定 (例: `10x22`) | SGR 14t 自動測定 |
 | `--width` | `<PIXELS>` | 仮想ディスプレイ解像度の幅 | 端末サイズから自動算出 |
 | `--height` | `<PIXELS>` | 仮想ディスプレイ解像度の高さ | 端末サイズから自動算出 |

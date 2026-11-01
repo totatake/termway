@@ -13,8 +13,8 @@
 - **In-Terminal GUI Execution**:
   - High-definition inline rendering using **Kitty Graphics Protocol** and **Sixel Graphics Protocol**. Works with terminals on Linux, macOS (iTerm2, Ghostty, Kitty), and Windows Terminal!
   - Run full graphical tools over a single standard SSH connection (single PTY), even in bastion hosts, air-gapped environments, or cloud VMs where port forwarding (`AllowTcpForwarding no`) is blocked.
-- **Full Mouse & Keyboard Interaction (Hover, Resize & Cursor Shape Support)**:
-  - Supports **xterm SGR 1006 mouse protocol (Any-event 1003h)**: Detects left/middle/right clicks, dragging, scrolling, and cursor hover motion.
+- **Full Mouse & Keyboard Interaction (Hover, Resize, Cursor Shape & 1px Precision Tracking)**:
+  - Supports **xterm SGR 1006 mouse protocol (Any-event 1003h)** and **SGR-Pixels (DECSET 1016h)**: Automatically enables 1-pixel precision mouse tracking on supported terminals (Kitty, WezTerm, Foot, Ghostty) for sub-millimeter control over tiny UI elements like YouTube seek bars and sliders. Detects left/middle/right clicks, dragging, scrolling, and cursor hover motion.
   - Automatically queries **SGR 14t (Report text area size in pixels)** on startup to calculate exact font cell dimensions, achieving 1:1 pixel-perfect cursor tracking and aspect ratio with zero coordinate drift.
   - **OSC 22 Mouse Cursor Shape Synchronization**: Dynamically synchronizes terminal mouse cursor shapes (`\x1b]22;<name>\x07`) to reflect window borders, resize handles (`nwse-resize`), titlebar drag (`grab`), and buttons (`pointer`).
   - **Kitty Keyboard Protocol**: Supports progressive keyboard enhancement (`\x1b[>1u`), providing unambiguous modifier combinations and special escape sequences without breaking standard terminals.
@@ -343,6 +343,8 @@ Example JSON schema:
 | `--jpeg` | - | Force-enable Kitty Graphics Protocol JPEG extension (`f=101`) | Auto-probed |
 | `--no-jpeg` | - | Force-disable JPEG extension (use standard zlib `f=32,o=z`) | Auto-probed |
 | `--jpeg-quality` | `<1-100>` | Set JPEG compression quality (1..=100) | `75` |
+| `--pixel-mouse` | - | Force-enable SGR-Pixels (DEC 1016h) 1px precision mouse tracking | Auto-detected |
+| `--no-pixel-mouse` | - | Force-disable SGR-Pixels (use standard cell mode) | Auto-detected |
 | `--cell-size` | `<WxH>` | Specify font cell dimensions in pixels (e.g. `10x22`) | Auto-detected via SGR 14t |
 | `--width` | `<PIXELS>` | Virtual display resolution width | Auto-calculated from terminal |
 | `--height` | `<PIXELS>` | Virtual display resolution height | Auto-calculated from terminal |
