@@ -63,17 +63,29 @@ fn main() -> Result<()> {
         } else if arg == "--width" {
             i += 1;
             if i >= args.len() {
-                eprintln!("Error: --width requires a numeric argument");
+                eprintln!("Error: --width requires a numeric argument >= 320");
                 std::process::exit(1);
             }
-            config.width = Some(args[i].parse()?);
+            match args[i].parse::<u32>() {
+                Ok(w) if w >= 320 => config.width = Some(w),
+                _ => {
+                    eprintln!("Error: --width must be an integer >= 320");
+                    std::process::exit(1);
+                }
+            }
         } else if arg == "--height" {
             i += 1;
             if i >= args.len() {
-                eprintln!("Error: --height requires a numeric argument");
+                eprintln!("Error: --height requires a numeric argument >= 240");
                 std::process::exit(1);
             }
-            config.height = Some(args[i].parse()?);
+            match args[i].parse::<u32>() {
+                Ok(h) if h >= 240 => config.height = Some(h),
+                _ => {
+                    eprintln!("Error: --height must be an integer >= 240");
+                    std::process::exit(1);
+                }
+            }
         } else if arg == "--cell-size" {
             i += 1;
             if i >= args.len() {
@@ -81,10 +93,15 @@ fn main() -> Result<()> {
                 std::process::exit(1);
             }
             let val = &args[i];
-            let parts: Vec<&str> = val.split('x').collect();
+            let parts: Vec<&str> = val.split(['x', 'X']).collect();
             if parts.len() == 2 {
                 if let (Ok(w), Ok(h)) = (parts[0].parse::<u16>(), parts[1].parse::<u16>()) {
-                    config.cell_size = Some((w, h));
+                    if w > 0 && h > 0 {
+                        config.cell_size = Some((w, h));
+                    } else {
+                        eprintln!("Error: --cell-size dimensions must be greater than zero");
+                        std::process::exit(1);
+                    }
                 } else {
                     eprintln!("Error: --cell-size format must be WxH (e.g. 10x20)");
                     std::process::exit(1);
@@ -96,10 +113,16 @@ fn main() -> Result<()> {
         } else if arg == "--fps" {
             i += 1;
             if i >= args.len() {
-                eprintln!("Error: --fps requires a numeric argument");
+                eprintln!("Error: --fps requires a numeric argument between 1 and 240");
                 std::process::exit(1);
             }
-            config.fps = args[i].parse()?;
+            match args[i].parse::<u32>() {
+                Ok(fps) if (1..=240).contains(&fps) => config.fps = fps,
+                _ => {
+                    eprintln!("Error: --fps must be an integer between 1 and 240");
+                    std::process::exit(1);
+                }
+            }
         } else if arg == "--scale" {
             i += 1;
             if i >= args.len() {
@@ -152,8 +175,11 @@ fn main() -> Result<()> {
             i += 1;
             config.command = args[i..].to_vec();
             break;
+        } else if arg.starts_with('-') {
+            eprintln!("Error: unrecognized option '{}'. Run 'termway --help' for usage.", arg);
+            std::process::exit(1);
         } else {
-            // Unrecognized argument, treat as command
+            // Non-option argument, treat as start of command
             config.command = args[i..].to_vec();
             break;
         }
@@ -166,6 +192,9 @@ fn main() -> Result<()> {
     // 3. 指定がない場合 -> query_graphics_protocol() で環境変数および実機プローブ判定
     if explicit_sixel {
         config.use_sixel = true;
+        if config.use_jpeg == Some(true) || config.jpeg_quality.is_some() {
+            eprintln!("Warning: --jpeg / --jpeg-quality is only applicable to Kitty graphics protocol and is ignored with --sixel.");
+        }
     } else if explicit_kitty {
         config.use_sixel = false;
     } else {

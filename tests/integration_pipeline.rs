@@ -259,5 +259,80 @@ fn test_query_kitty_jpeg_support_env_and_fallback() {
     let _ = query_kitty_jpeg_support();
 }
 
+#[test]
+fn test_cli_argument_validation() {
+    let binary = env!("CARGO_BIN_EXE_termway");
+
+    // 1. Unrecognized flag should fail with explicit error message, not treated as command
+    let output = std::process::Command::new(binary)
+        .arg("--typo-flag")
+        .output()
+        .expect("execute termway with typo flag");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("unrecognized option '--typo-flag'"), "stderr: {}", stderr);
+
+    // 2. Invalid width (non-numeric or < 320)
+    let output = std::process::Command::new(binary)
+        .args(["--width", "abc"])
+        .output()
+        .expect("execute termway with invalid width");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("--width must be an integer >= 320"), "stderr: {}", stderr);
+
+    let output = std::process::Command::new(binary)
+        .args(["--width", "100"])
+        .output()
+        .expect("execute termway with too small width");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("--width must be an integer >= 320"), "stderr: {}", stderr);
+
+    // 3. Invalid height (< 240)
+    let output = std::process::Command::new(binary)
+        .args(["--height", "100"])
+        .output()
+        .expect("execute termway with too small height");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("--height must be an integer >= 240"), "stderr: {}", stderr);
+
+    // 4. Invalid fps (0 or > 240)
+    let output = std::process::Command::new(binary)
+        .args(["--fps", "0"])
+        .output()
+        .expect("execute termway with fps 0");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("--fps must be an integer between 1 and 240"), "stderr: {}", stderr);
+
+    let output = std::process::Command::new(binary)
+        .args(["--fps", "300"])
+        .output()
+        .expect("execute termway with fps 300");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("--fps must be an integer between 1 and 240"), "stderr: {}", stderr);
+
+    // 5. Invalid cell-size (0x0 or invalid format)
+    let output = std::process::Command::new(binary)
+        .args(["--cell-size", "0x0"])
+        .output()
+        .expect("execute termway with cell-size 0x0");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("--cell-size dimensions must be greater than zero"), "stderr: {}", stderr);
+
+    // 6. Help flag should succeed
+    let output = std::process::Command::new(binary)
+        .arg("--help")
+        .output()
+        .expect("execute termway --help");
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("USAGE:"), "stdout: {}", stdout);
+}
+
 
 
