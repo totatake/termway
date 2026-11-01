@@ -129,3 +129,29 @@ fn test_damage_tracker_rgb565_noise_filtering() {
     assert_eq!(damage_high.len(), 1, "Significant color change must trigger damage");
 }
 
+#[test]
+fn test_damage_tracker_adjacent_and_sparse_coalescing() {
+    // 320x320 with 32px tile size -> 10x10 = 100 tiles
+    let mut tracker = DamageTracker::new(320, 320, 32);
+    let mut frame = vec![0u8; 320 * 320 * 4];
+    let _ = tracker.track_damage(&frame);
+
+    // Modify a 2x2 contiguous tile block at (0, 0) -> (tile x: 0..2, y: 0..2)
+    // and a separate 1x1 tile at bottom right (tile x: 9, y: 9)
+    for y in 0..64 {
+        for x in 0..64 {
+            frame[(y * 320 + x) * 4] = 200;
+        }
+    }
+    frame[((9 * 32 * 320) + (9 * 32)) * 4] = 200;
+
+    let damage = tracker.track_damage(&frame);
+    // Before this fix (>16 threshold or no 2D merging), disjoint tiles would either stay unmerged or inflate.
+    // Here, the 2x2 contiguous tiles should be merged into a single 64x64 rect,
+    // and the bottom-right tile remains a separate 32x32 rect (total 2 rects, NOT inflated to full screen).
+    assert_eq!(damage.len(), 2, "Expected 2 coalesced damage rectangles");
+    assert!(damage.iter().any(|r| r.x == 0 && r.y == 0 && r.width == 64 && r.height == 64));
+    assert!(damage.iter().any(|r| r.x == 288 && r.y == 288 && r.width == 32 && r.height == 32));
+}
+
+

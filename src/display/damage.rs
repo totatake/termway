@@ -279,7 +279,8 @@ impl DamageTracker {
             }
         }
 
-        Self::coalesce_rects(dirty_tiles)
+        let total_tiles = (self.tiles_x * self.tiles_y) as usize;
+        Self::coalesce_rects(dirty_tiles, total_tiles)
     }
 
     /// Reset tracked state (forces all tiles to be considered dirty on next check)
@@ -287,14 +288,16 @@ impl DamageTracker {
         self.prev_tile_hashes.fill(0);
     }
 
-    /// Coalesce adjacent dirty tiles into larger rectangles to minimize escape sequence overhead
-    fn coalesce_rects(dirty_tiles: Vec<DamageRect>) -> Vec<DamageRect> {
+    /// Coalesce dirty tiles into merged bounding rectangles.
+    /// Combines horizontally contiguous tiles on the same row, then vertically merges identical column runs.
+    /// Only falls back to a single screen-wide bounding box when >= 50% of total tiles are dirty.
+    fn coalesce_rects(dirty_tiles: Vec<DamageRect>, total_tiles: usize) -> Vec<DamageRect> {
         if dirty_tiles.is_empty() {
             return Vec::new();
         }
 
-        // If more than 50% of screen is dirty, coalesce into a single full update
-        if dirty_tiles.len() > 16 {
+        // If >= 50% of the screen tiles are dirty, coalesce into a single bounding box
+        if dirty_tiles.len() >= total_tiles / 2 {
             let mut min_x = u32::MAX;
             let mut min_y = u32::MAX;
             let mut max_x = 0;
@@ -315,6 +318,37 @@ impl DamageTracker {
             }];
         }
 
-        dirty_tiles
+        // 1. Horizontal merge: combine adjacent tiles on the same row
+        let mut row_merged: Vec<DamageRect> = Vec::with_capacity(dirty_tiles.len());
+        for tile in dirty_tiles {
+            if let Some(last) = row_merged.last_mut() {
+                if last.y == tile.y && last.height == tile.height && last.x + last.width == tile.x {
+                    last.width += tile.width;
+                    continue;
+                }
+            }
+            row_merged.push(tile);
+        }
+
+        // 2. Vertical merge: combine contiguous rows with matching X span
+        let mut merged: Vec<DamageRect> = Vec::with_capacity(row_merged.len());
+        for rect in row_merged {
+            let mut merged_vertically = false;
+            for existing in &mut merged {
+                if existing.x == rect.x
+                    && existing.width == rect.width
+                    && existing.y + existing.height == rect.y
+                {
+                    existing.height += rect.height;
+                    merged_vertically = true;
+                    break;
+                }
+            }
+            if !merged_vertically {
+                merged.push(rect);
+            }
+        }
+
+        merged
     }
 }
