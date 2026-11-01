@@ -13,6 +13,16 @@ pub struct Taskbar {
 }
 
 impl Taskbar {
+    /// Formats the right-aligned bottom row overlay status string (e.g. `[Kitty-JPEG] [F12: Shot] [Ctrl-Q: Exit]`).
+    pub fn format_overlay_text(backend_name: &str) -> String {
+        format!(" [{}] [F12: Shot] [Ctrl-Q: Exit]", backend_name)
+    }
+
+    /// Computes the terminal display column width of the overlay text.
+    pub fn overlay_width(backend_name: &str) -> usize {
+        crate::terminal::str_column_width(&Self::format_overlay_text(backend_name))
+    }
+
     pub fn new() -> Self {
         Self {
             chips: Vec::new(),
@@ -32,7 +42,7 @@ impl Taskbar {
             return None;
         }
 
-        let overlay_len = backend_name.len() + 30;
+        let overlay_len = Self::overlay_width(backend_name);
         let overlay_col = term_cols
             .saturating_sub(overlay_len as u16)
             .saturating_add(1)
@@ -57,10 +67,11 @@ impl Taskbar {
             } else {
                 &sanitized
             };
-            let short_title: String = raw_title.chars().take(8).collect();
+            // Limit title display width to 8 terminal columns (handles CJK wide characters accurately)
+            let short_title = crate::terminal::truncate_to_column_width(raw_title, 8);
             let state_suffix = if win.is_minimized { " _" } else { "" };
             let chip_label = format!("[{}: {}{}]", win.id, short_title, state_suffix);
-            let chip_len = chip_label.chars().count() as u16;
+            let chip_len = crate::terminal::str_column_width(&chip_label) as u16;
 
             if cur_col + chip_len > max_cols {
                 break;

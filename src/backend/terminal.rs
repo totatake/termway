@@ -158,11 +158,8 @@ impl TerminalBackend {
                         stat_start = std::time::Instant::now();
                     }
 
-                    let visible_overlay = format!(
-                        " [{}] [F12: Shot] [Ctrl-Q: Exit]",
-                        mode_desc
-                    );
-                    let overlay_len = visible_overlay.chars().count();
+                    let visible_overlay = crate::compositor::Taskbar::format_overlay_text(mode_desc);
+                    let overlay_len = crate::compositor::Taskbar::overlay_width(mode_desc);
                     let overlay_row = job.term_rows;
                     let overlay_col = job
                         .term_cols
