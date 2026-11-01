@@ -130,7 +130,29 @@ fn test_damage_tracker_rgb565_noise_filtering() {
 }
 
 #[test]
+fn test_damage_tracker_symmetric_pattern_collision_resistance() {
+    let mut tracker = DamageTracker::new(64, 64, 32);
+    let mut frame1 = vec![0u8; 64 * 64 * 4];
+    // Baseline
+    let _ = tracker.track_damage(&frame1);
+
+    // Frame with symmetric two-pixel modification in tile 0 at row 1 and row 2
+    frame1[(1 * 64 + 1) * 4] = 200;
+    frame1[(2 * 64 + 1) * 4] = 200;
+    let damage1 = tracker.track_damage(&frame1);
+    assert_eq!(damage1.len(), 1, "Must detect damage on symmetric pixel changes");
+
+    // Frame with inverted rows
+    let mut frame2 = vec![0u8; 64 * 64 * 4];
+    frame2[(1 * 64 + 2) * 4] = 200;
+    frame2[(2 * 64 + 2) * 4] = 200;
+    let damage2 = tracker.track_damage(&frame2);
+    assert_eq!(damage2.len(), 1, "Must detect damage on symmetric column shift");
+}
+
+#[test]
 fn test_damage_tracker_adjacent_and_sparse_coalescing() {
+
     // 320x320 with 32px tile size -> 10x10 = 100 tiles
     let mut tracker = DamageTracker::new(320, 320, 32);
     let mut frame = vec![0u8; 320 * 320 * 4];

@@ -86,6 +86,10 @@ impl DamageTracker {
             let mut ptr = base_ptr.add(row_start);
             let mut rem = row_bytes;
 
+            // Mix row index y into accumulators to break symmetric row pattern collisions
+            let y_mix = _mm256_set1_epi64x((y as u64).wrapping_mul(0x9e3779b97f4a7c15u64) as i64);
+            acc0 = _mm256_xor_si256(acc0, y_mix);
+
             while rem >= 64 {
                 let v0 = _mm256_and_si256(_mm256_loadu_si256(ptr as *const __m256i), mask);
                 let v1 = _mm256_and_si256(_mm256_loadu_si256(ptr.add(32) as *const __m256i), mask);
@@ -145,6 +149,10 @@ impl DamageTracker {
             let row_start = (rect_y + y) * stride + rect_x * 4;
             let mut ptr = base_ptr.add(row_start);
             let mut rem = row_bytes;
+
+            // Mix row index y into accumulators to break symmetric row pattern collisions
+            let y_mix = vdupq_n_u64((y as u64).wrapping_mul(0x9e3779b97f4a7c15u64));
+            acc0 = veorq_u64(acc0, y_mix);
 
             while rem >= 64 {
                 let v0 = vandq_u32(vld1q_u32(ptr as *const u32), mask);
