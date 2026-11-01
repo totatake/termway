@@ -203,9 +203,12 @@ impl SelectionHandler for TermwayState {
                     std::thread::spawn(move || {
                         use std::io::{Read, Write};
                         use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
-                        let mut file = std::fs::File::from(read_fd);
+                        // Limit clipboard reading to 1MB to prevent OOM, pipe blocking, or massive Base64 PTY flooding
+                        const MAX_CLIPBOARD_BYTES: u64 = 1024 * 1024;
+                        let file = std::fs::File::from(read_fd);
+                        let mut take_reader = file.take(MAX_CLIPBOARD_BYTES);
                         let mut data = Vec::new();
-                        if file.read_to_end(&mut data).is_ok() {
+                        if take_reader.read_to_end(&mut data).is_ok() {
                             if let Ok(text) = std::str::from_utf8(&data) {
                                 if !text.is_empty() {
                                     let b64 = BASE64.encode(text);

@@ -235,10 +235,11 @@ impl TermwayState {
     /// Dynamically synchronizes host terminal mouse cursor shape via OSC 22 (`\x1b]22;<name>\x07`).
     /// Deduplicates emissions to avoid unnecessary terminal I/O when cursor shape is unchanged.
     pub fn update_cursor_shape(&mut self, shape: &str) {
-        if self.current_cursor_shape != shape {
-            self.current_cursor_shape = shape.to_string();
+        let safe_shape = crate::terminal::sanitize_terminal_text(shape);
+        if self.current_cursor_shape != safe_shape {
+            self.current_cursor_shape = safe_shape.clone();
             let mut stdout = std::io::stdout();
-            let _ = write!(stdout, "\x1b]22;{}\x07", shape);
+            let _ = write!(stdout, "\x1b]22;{}\x07", safe_shape);
             let _ = stdout.flush();
         }
     }
@@ -246,7 +247,7 @@ impl TermwayState {
     /// Dynamically synchronizes active window title to the host terminal tab/titlebar via OSC 2 (`\x1b]2;<title>\x07`).
     /// Deduplicates emissions so that escape sequences are only sent when the title actually changes.
     pub fn update_active_window_title(&mut self) {
-        let title = self
+        let raw_title = self
             .wm
             .windows
             .iter()
@@ -254,6 +255,9 @@ impl TermwayState {
             .find(|w| !w.is_minimized)
             .map(|w| w.title.trim())
             .unwrap_or("");
+
+        let sanitized_title = crate::terminal::sanitize_terminal_text(raw_title);
+        let title = sanitized_title.trim();
 
         let new_title = if title.is_empty() {
             "termway".to_string()

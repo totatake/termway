@@ -51,10 +51,11 @@ impl Taskbar {
         sorted_windows.sort_by_key(|w| w.id);
 
         for win in &sorted_windows {
-            let raw_title = if win.title.trim().is_empty() {
+            let sanitized = crate::terminal::sanitize_terminal_text(win.title.trim());
+            let raw_title = if sanitized.is_empty() {
                 "Window"
             } else {
-                win.title.trim()
+                &sanitized
             };
             let short_title: String = raw_title.chars().take(8).collect();
             let state_suffix = if win.is_minimized { " _" } else { "" };
