@@ -136,6 +136,8 @@ flowchart LR
 | **FR-38** | OSC 2 端末ウィンドウ/タブタイトル動的同期 | アクティブな GUI ウィンドウのタイトルを検知し、ホスト端末のウィンドウ/タブタイトルへ動的同期（`\x1b]2;termway: <Title>\x07`）すること（終了時に安全復元）。 | `tests/unit_compositor.rs` | **PASS** |
 | **FR-39** | Kitty Graphics JPEG 拡張 (`f=101`) & 30fps 即時フレームフラッシュ | 純粋 Rust によるフルスクラッチ Baseline JPEG (YCbCr 4:2:0) エンコーダと Kitty `f=101` 拡張をサポートし、固定小数点逆数乗算による除算排除やフレームバッファ直読み境界バイパス高速化を行うこと。Wayland コンポジタ描画直後に `flush_clients()` を行い、クライアントの `wl_callback.done` 待ちによる 50ms ポーリング遅延を解消して 30fps 以上の高フレームレートを実現すること。未対応端末では自動的に標準 Kitty (`f=32`) へフォールバックすること。 | `src/lib.rs`<br/>`tests/unit_kitty_encoder.rs`<br/>`tests/integration_pipeline.rs`<br/>`tests/unit_compositor.rs` | **PASS** |
 | **FR-40** | SGR-Pixels 高精度 1px マウストラッキング (`\x1b[?1016h`) | 対応端末（Kitty, WezTerm, Foot, Ghostty）の自動検知および `--pixel-mouse` / `--no-pixel-mouse` CLI 制御に対応し、セル単位（10〜30px）の量子化を排除して端末から受信した 1-based ピクセル座標を Wayland ポインタへ 1px 単位でダイレクトマッピングすること。YouTube シークバー等の極小 UI 要素の正確なクリック・ドラッグ操作を保証すること。 | `src/terminal/raw.rs`<br/>`src/terminal/query.rs`<br/>`tests/unit_sgr_mouse.rs`<br/>`tests/unit_compositor.rs`<br/>`tests/integration_pipeline.rs` | **PASS** |
+| **FR-41** | シグナル安全 & パニック安全な端末復元 | SIGINT/SIGTERM/SIGHUP 受信時および万が一の panic 発生時に、端末 raw モード、マウス追従、タイトル、Kitty キーボードプロトコル、および同期描画モード（`\x1b[?2026l`）を確実に復元・解除すること。 | `src/terminal/raw.rs`<br/>`src/compositor/env.rs`<br/>`tests/unit_terminal.rs` | **PASS** |
+| **FR-42** | 端末機能診断 (`--query`) & 拡張プロファイル (p99) | `--query` フラグにより端末解像度、グラフィックスプロトコル、Kitty JPEG、マウストラッキング、XWayland、D-Bus、Polkit の対応状況を即時表示すること。`TERMWAY_NO_CURSOR_SHAPE` による OSC 22 抑制、`TERMWAY_FPS` による環境変数フレームレート指定、および `--profile` での p99 レイテンシ集計・JSON 出力をサポートすること。 | `src/main.rs`<br/>`src/compositor/profile.rs`<br/>`tests/integration_pipeline.rs`<br/>`tests/unit_compositor.rs` | **PASS** |
 
 ### 2.2 非機能要件 (Non-Functional Requirements)
 
@@ -153,16 +155,16 @@ flowchart LR
 | テストターゲット | テスト数 | 検証内容 |
 | :--- | :---: | :--- |
 | `src/lib.rs` | 8 | 純粋 Rust Baseline JPEG (YCbCr 4:2:0) エンコーダ（SOF0, DQT, DHT, SOS）、任意ストライド部分矩形抽出、奇数解像度、1x1〜1080p 色再現性・高解像度ベンチマーク、固定小数点逆数乗算テーブル、端末テキストサニタイズ、CJK 文字カラム幅計算 |
-| `tests/unit_compositor.rs` | 37 | `TermwayState` / `WindowManager` ドメイン操作、SSD/CSD 装飾、最大化・80%中央復元・最小化、動的リサイズ (`SIGWINCH`)、OSC 52 クリップボード送信、マウスホイール、スプラッシュ描画・消去、JSON 状態ダンプ、UTF-8 日本語入力、Fractional Scale / Viewporter / HiDPI スケールレンダリング、OSC 22 カーソル形状同期、Wayland Primary Selection、OSC 2 端末タブタイトル同期、SGR-Pixels (1016h) 1px 精度マウスディスパッチ検証 |
+| `tests/unit_compositor.rs` | 39 | `TermwayState` / `WindowManager` ドメイン操作、SSD/CSD 装飾、最大化・80%中央復元・最小化、動的リサイズ (`SIGWINCH`)、OSC 52 クリップボード送信、マウスホイール、スプラッシュ描画・消去、JSON 状態ダンプ、UTF-8 日本語入力、Fractional Scale / Viewporter / HiDPI スケールレンダリング、OSC 22 カーソル形状同期、Wayland Primary Selection、OSC 2 端末タブタイトル同期、SGR-Pixels (1016h) 1px 精度マウスディスパッチ、`TERMWAY_NO_CURSOR_SHAPE` オプトアウト、`TERMWAY_FPS`、`LatencyHistogram` p95/p99 レイテンシ検証 |
 | `tests/unit_session.rs` | 7 | ハイブリッド D-Bus セッション起動、Snap コマンド判定・PATH シムルーティング、Polkit エージェント検出、コマンド存在性検証、`/tmp/.X11-unix` 書込検査 |
 | `tests/unit_kitty_encoder.rs` | 20 | Kitty フルスクリーン RFC 1950 zlib 圧縮 (`o=z`)・4096B チャンク分割・ラウンドトリップ解凍検証、累積バウンディングボックス部分矩形プレースメント転送・デコード検証、大面積更新時フルフレームフォールバック、定点動画の無制限連続部分転送、解像度変更ガード、端末合成シミュレータによるピクセルレベル残像完全ゼロ検証、Kitty-JPEG (`f=101`) フルスクリーン/部分プレースメント/透過ダミー保護検証、品質設定検証、1080x720 パフォーマンス検証 |
 | `tests/unit_sixel_encoder.rs` | 7 | Sixel AVX2 / ARM NEON SIMD 減色・6行バンド走査・単色バンド高速パス・RLE 圧縮・非8倍数幅エッジケース、6行バンド差分キャッシュ (`SixelStreamEncoder`)、1080x720 パフォーマンス検証 |
 | `tests/unit_damage_tracker.rs` | 9 | 32x32 タイル FNV-1a ハッシュ比較、AVX2 / ARM NEON SIMD 端数タイル一致検証、RGB565 量子化マスクノイズ除去検証、リセット・リサイズ検証、2D 隣接タイル結合 & 50% 閾値、SIMD タイルハッシュ拡散強化検証 |
 | `tests/unit_sgr_mouse.rs` | 7 | SGR 1006 クリック・ドラッグ・リリース・ホイール・修飾キー・高値座標パース・不正シーケンス耐性検証 |
-| `tests/integration_pipeline.rs` | 9 | Framebuffer → DamageTracker → Kitty エンコード結合検証、マウス座標変換、プロトコル自動検出、Kitty-JPEG 自動プローブおよびフォールバック検証、SGR-Pixels (1016h) 端末サポート検出、`--version` / `-V` 検証 |
+| `tests/integration_pipeline.rs` | 11 | Framebuffer → DamageTracker → Kitty エンコード結合検証、マウス座標変換、プロトコル自動検出、Kitty-JPEG 自動プローブおよびフォールバック検証、SGR-Pixels (1016h) 端末サポート検出、`--version` / `-V` 検証、CLI 引数バリデーション検証、`--query` 診断レポート出力検証 |
 | `tests/unit_keyboard.rs` | 6 | UTF-8 文字、矢印キー、Ctrl 制御文字、Shift/Ctrl 修飾キー付きカーソル・選択キー、日本語 UTF-8 複数バイト解析、Kitty Keyboard Protocol (CSI u) 解析検証 |
 | `tests/unit_secret_bridge.rs` | 4 | D-Bus Secret Service (`org.freedesktop.secrets`) メッセージエンディアン解析・双方向リレー検証 |
-| `tests/unit_terminal.rs` | 5 | 端末サイズフォールバック、セル→ピクセル変換、TerminalBackend モード名検証、`RawModeGuard` RAII 安全性検証 |
+| `tests/unit_terminal.rs` | 6 | 端末サイズフォールバック、セル→ピクセル変換、TerminalBackend モード名検証、`RawModeGuard` RAII 安全性検証、シグナル終了フラグ & 生端末復元検証 |
 | `tests/system_e2e_gui.rs` | 2 | Smithay コンポジタ描画 → DamageTracker → Kitty エンコード → SIMD BGRX 変換 E2E パイプライン検証、テストドライバ JSON ダンプ検証 |
 | `tests/perf_pipeline.rs` | 1 | 1080x720 擬似ウィンドウ描画・DamageTracker 差分検出・Kitty/Sixel エンコード総合パイプラインのベースライン性能ベンチマーク検証 |
 
@@ -175,10 +177,10 @@ $ cargo test
    Compiling termway v0.15.0 (/path/to/termway)
     Finished `test` profile [unoptimized + debuginfo] target(s)
      Running unittests src/lib.rs (8 tests) ... ok
-     Running tests/integration_pipeline.rs (9 tests) ... ok
+     Running tests/integration_pipeline.rs (11 tests) ... ok
      Running tests/perf_pipeline.rs (1 test) ... ok
      Running tests/system_e2e_gui.rs (2 tests) ... ok
-     Running tests/unit_compositor.rs (37 tests) ... ok
+     Running tests/unit_compositor.rs (39 tests) ... ok
      Running tests/unit_damage_tracker.rs (9 tests) ... ok
      Running tests/unit_keyboard.rs (6 tests) ... ok
      Running tests/unit_kitty_encoder.rs (20 tests) ... ok
@@ -186,9 +188,9 @@ $ cargo test
      Running tests/unit_session.rs (7 tests) ... ok
      Running tests/unit_sgr_mouse.rs (7 tests) ... ok
      Running tests/unit_sixel_encoder.rs (7 tests) ... ok
-     Running tests/unit_terminal.rs (5 tests) ... ok
+     Running tests/unit_terminal.rs (6 tests) ... ok
 
-test result: ok. 122 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 28.5s
+test result: ok. 127 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 28.5s
 ```
-全 122 テストが 100% 成功し、すべての要件定義項目が検証されました。
+全 127 テストが 100% 成功し、すべての要件定義項目が検証されました。
 
