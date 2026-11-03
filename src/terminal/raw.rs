@@ -1,5 +1,9 @@
 use std::io::{self, Write};
 use std::os::fd::AsRawFd;
+use std::sync::{Mutex, Once};
+
+static PANIC_HOOK_SET: Once = Once::new();
+static EMERGENCY_STATE: Mutex<Option<(i32, Option<libc::termios>, bool)>> = Mutex::new(None);
 
 /// RAII guard that configures the terminal into raw mode with mouse tracking,
 /// and restores the original terminal state upon drop (even if panicking).
@@ -44,6 +48,32 @@ impl RawModeGuard {
             active: true,
             pixel_mouse,
         };
+
+        if let Ok(mut state) = EMERGENCY_STATE.lock() {
+            *state = Some((stdin_fd, original_termios, pixel_mouse));
+        }
+
+        PANIC_HOOK_SET.call_once(|| {
+            let default_hook = std::panic::take_hook();
+            std::panic::set_hook(Box::new(move |info| {
+                if let Ok(mut state) = EMERGENCY_STATE.lock() {
+                    if let Some((fd, orig, pixel_mouse)) = state.take() {
+                        let reset_seq: &[u8] = if pixel_mouse {
+                            b"\x1b[?2026l\x1b]2;\x07\x1b[<u\x1b]22;\x07\x1b[?2004l\x1b[?1016l\x1b[?1006l\x1b[?1003l\x1b[?1000l\x1b[?7h\x1b[?25h\x1b[?1049l\n"
+                        } else {
+                            b"\x1b[?2026l\x1b]2;\x07\x1b[<u\x1b]22;\x07\x1b[?2004l\x1b[?1006l\x1b[?1003l\x1b[?1000l\x1b[?7h\x1b[?25h\x1b[?1049l\n"
+                        };
+                        unsafe {
+                            libc::write(1, reset_seq.as_ptr() as *const libc::c_void, reset_seq.len());
+                            if let Some(orig) = orig {
+                                libc::tcsetattr(fd, libc::TCSAFLUSH, &orig);
+                            }
+                        }
+                    }
+                }
+                default_hook(info);
+            }));
+        });
 
         guard.setup_terminal_sequences()?;
         Ok(guard)
@@ -93,8 +123,12 @@ impl RawModeGuard {
         }
         self.active = false;
 
+        if let Ok(mut state) = EMERGENCY_STATE.lock() {
+            *state = None;
+        }
+
         let mut stdout = io::stdout();
-        // Reset terminal title (OSC 2), restore keyboard flags (\x1b[<u), reset mouse cursor shape (OSC 22), disable bracketed paste, disable SGR pixel & cell mouse tracking, enable auto-wrap, show cursor, leave alternate screen
+        // Reset synchronized update (?2026l), terminal title (OSC 2), restore keyboard flags (\x1b[<u), reset mouse cursor shape (OSC 22), disable bracketed paste, disable SGR pixel & cell mouse tracking, enable auto-wrap, show cursor, leave alternate screen
         let mouse_disable_seq = if self.pixel_mouse {
             "\x1b[?2004l\x1b[?1016l\x1b[?1006l\x1b[?1003l\x1b[?1000l"
         } else {
@@ -102,7 +136,7 @@ impl RawModeGuard {
         };
         let _ = write!(
             stdout,
-            "\x1b]2;\x07\x1b[<u\x1b]22;\x07{}\x1b[?7h\x1b[?25h\x1b[?1049l",
+            "\x1b[?2026l\x1b]2;\x07\x1b[<u\x1b]22;\x07{}\x1b[?7h\x1b[?25h\x1b[?1049l",
             mouse_disable_seq
         );
         let _ = stdout.flush();

@@ -66,3 +66,22 @@ fn test_terminal_backend_mode_names() {
     assert!(!kitty_jpeg_backend.is_sixel());
     assert!(kitty_jpeg_backend.is_jpeg());
 }
+
+#[test]
+fn test_signal_exit_flag_and_raw_mode_restore() {
+    use std::sync::atomic::Ordering;
+    use termway::compositor::env::{setup_signals, EXIT_REQUESTED};
+
+    setup_signals();
+    assert!(!EXIT_REQUESTED.swap(false, Ordering::Relaxed));
+
+    // Simulate SIGINT / exit flag
+    EXIT_REQUESTED.store(true, Ordering::Relaxed);
+    assert!(EXIT_REQUESTED.swap(false, Ordering::Relaxed));
+    assert!(!EXIT_REQUESTED.load(Ordering::Relaxed));
+
+    // Verify explicit restore and subsequent drop of RawModeGuard
+    let mut guard = RawModeGuard::dummy();
+    guard.restore();
+    drop(guard);
+}

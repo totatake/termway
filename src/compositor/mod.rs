@@ -13,7 +13,7 @@ pub mod profile;
 pub mod screenshot;
 
 pub use self::env::{
-    ensure_xdg_runtime_dir, free_x11_display_candidates, log_line, setup_test_signals,
+    ensure_xdg_runtime_dir, free_x11_display_candidates, log_line, setup_signals, setup_test_signals,
     CAPTURE_REQUESTED, STATE_DUMP_REQUESTED,
 };
 pub use self::profile::CompositorMetrics;
@@ -111,7 +111,7 @@ pub struct TermwayCompositor {
 
 impl TermwayCompositor {
     pub fn new(config: EngineConfig) -> Result<Self> {
-        setup_test_signals();
+        setup_signals();
         let mut term_size = TerminalSize::query().unwrap_or_else(|_| TerminalSize::fallback(80, 24));
         let cell_size_queried = config.cell_size.is_some();
         if let Some((cw, ch)) = config.cell_size {
@@ -437,6 +437,10 @@ impl TermwayCompositor {
             .checked_sub(self.target_frame_duration)
             .unwrap_or_else(std::time::Instant::now);
         while self.state.running {
+            if self::env::EXIT_REQUESTED.swap(false, std::sync::atomic::Ordering::Relaxed) {
+                log_line("[termway] Exit requested via signal, terminating main loop.");
+                break;
+            }
             loop_count += 1;
             
             // Dispatch calloop (processes XWM and other registered sources) with 0 timeout
@@ -776,6 +780,11 @@ impl TermwayCompositor {
                         }
                     }
                 }
+            }
+
+            if self::env::EXIT_REQUESTED.swap(false, std::sync::atomic::Ordering::Relaxed) {
+                log_line("[termway] Exit requested via signal, terminating main loop.");
+                break;
             }
 
             // D. Process terminal input events

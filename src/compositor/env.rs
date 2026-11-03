@@ -3,12 +3,20 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 pub static CAPTURE_REQUESTED: AtomicBool = AtomicBool::new(false);
 pub static STATE_DUMP_REQUESTED: AtomicBool = AtomicBool::new(false);
+pub static EXIT_REQUESTED: AtomicBool = AtomicBool::new(false);
 
-pub fn setup_test_signals() {
+pub fn setup_signals() {
     unsafe {
         libc::signal(libc::SIGUSR1, handle_sigusr1 as *const () as usize);
         libc::signal(libc::SIGUSR2, handle_sigusr2 as *const () as usize);
+        libc::signal(libc::SIGINT, handle_sigexit as *const () as usize);
+        libc::signal(libc::SIGTERM, handle_sigexit as *const () as usize);
+        libc::signal(libc::SIGHUP, handle_sigexit as *const () as usize);
     }
+}
+
+pub fn setup_test_signals() {
+    setup_signals();
 }
 
 extern "C" fn handle_sigusr1(_: libc::c_int) {
@@ -17,6 +25,10 @@ extern "C" fn handle_sigusr1(_: libc::c_int) {
 
 extern "C" fn handle_sigusr2(_: libc::c_int) {
     STATE_DUMP_REQUESTED.store(true, Ordering::Relaxed);
+}
+
+extern "C" fn handle_sigexit(_: libc::c_int) {
+    EXIT_REQUESTED.store(true, Ordering::Relaxed);
 }
 
 /// Helper to find Xwayland binary safely without invoking `which`
