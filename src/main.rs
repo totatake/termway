@@ -27,6 +27,7 @@ OPTIONS:
     --profile                 Enable performance profiling and latency breakdown
     --no-splash               Disable startup splash screen
     --demo                    Run built-in demo GUI application
+    --query                   Print diagnostic terminal capability report and exit
     -V, --version             Print version information
     -h, --help                Print this help information
 
@@ -38,6 +39,60 @@ EXAMPLES:
     termway -- xclock
 "#
     );
+}
+
+fn print_capability_report() -> Result<()> {
+    use termway::terminal::query::{query_graphics_protocol, query_kitty_jpeg_support, query_pixel_mouse_support, GraphicsProtocol};
+    use termway::terminal::TerminalSize;
+
+    let term_size = TerminalSize::query().unwrap_or_else(|_| TerminalSize::fallback(80, 24));
+    let proto = query_graphics_protocol();
+    let proto_str = match proto {
+        GraphicsProtocol::Kitty => "Kitty Graphics Protocol",
+        GraphicsProtocol::Sixel => "Sixel",
+        GraphicsProtocol::None => "None (Unsupported)",
+    };
+
+    let jpeg_support = if proto == GraphicsProtocol::Kitty {
+        if query_kitty_jpeg_support() { "Supported (f=101)" } else { "Unsupported / Disabled" }
+    } else {
+        "N/A (Sixel)"
+    };
+
+    let pixel_mouse = if query_pixel_mouse_support() {
+        "Supported (SGR-Pixels DECSET 1016)"
+    } else {
+        "Fallback (SGR Cell DECSET 1006)"
+    };
+
+    let xwayland_info = match termway::compositor::env::find_xwayland_binary() {
+        Some(path) => format!("Available ({})", path.display()),
+        None => "Not found in PATH (X11 clients disabled)".to_string(),
+    };
+
+    let dbus_info = match std::env::var("DBUS_SESSION_BUS_ADDRESS") {
+        Ok(addr) if !addr.is_empty() => format!("Connected ({})", addr),
+        _ => "Not set in environment".to_string(),
+    };
+
+    let polkit_agent = match termway::session::find_executable("polkit-gnome-authentication-agent-1")
+        .or_else(|| termway::session::find_executable("lxpolkit"))
+        .or_else(|| termway::session::find_executable("mate-polkit")) {
+        Some(p) => format!("Available ({})", p.display()),
+        None => "Not found in standard paths".to_string(),
+    };
+
+    println!("termway diagnostic capability report:");
+    println!("  Terminal Size     : {}x{} cells, font cell {}x{} px, total {}x{} px",
+        term_size.cols, term_size.rows, term_size.cell_width_px, term_size.cell_height_px, term_size.width_px, term_size.height_px);
+    println!("  Graphics Protocol : {}", proto_str);
+    println!("  Kitty JPEG Support: {}", jpeg_support);
+    println!("  Mouse Tracking    : {}", pixel_mouse);
+    println!("  XWayland Server   : {}", xwayland_info);
+    println!("  D-Bus Session     : {}", dbus_info);
+    println!("  Polkit Agent      : {}", polkit_agent);
+
+    Ok(())
 }
 
 fn main() -> Result<()> {
@@ -59,6 +114,9 @@ fn main() -> Result<()> {
             return Ok(());
         } else if arg == "-V" || arg == "--version" {
             println!("termway {}", env!("CARGO_PKG_VERSION"));
+            return Ok(());
+        } else if arg == "--query" {
+            print_capability_report()?;
             return Ok(());
         } else if arg == "--width" {
             i += 1;

@@ -121,6 +121,7 @@ pub struct TermwayState {
     pub current_cursor_shape: String,
     pub current_terminal_title: String,
     pub pixel_mouse: bool,
+    pub enable_cursor_shape: bool,
 }
 
 impl TermwayState {
@@ -229,6 +230,7 @@ impl TermwayState {
             current_cursor_shape: String::from("default"),
             current_terminal_title: String::from("termway"),
             pixel_mouse: false,
+            enable_cursor_shape: std::env::var("TERMWAY_NO_CURSOR_SHAPE").is_err(),
         };
         state.init_unicode_keymap_cache();
         state
@@ -237,6 +239,9 @@ impl TermwayState {
     /// Dynamically synchronizes host terminal mouse cursor shape via OSC 22 (`\x1b]22;<name>\x07`).
     /// Deduplicates emissions to avoid unnecessary terminal I/O when cursor shape is unchanged.
     pub fn update_cursor_shape(&mut self, shape: &str) {
+        if !self.enable_cursor_shape {
+            return;
+        }
         let safe_shape = crate::terminal::sanitize_terminal_text(shape);
         if self.current_cursor_shape != safe_shape {
             self.current_cursor_shape = safe_shape.clone();

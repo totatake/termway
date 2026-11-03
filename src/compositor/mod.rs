@@ -60,11 +60,17 @@ pub struct EngineConfig {
 
 impl Default for EngineConfig {
     fn default() -> Self {
+        let fps = std::env::var("TERMWAY_FPS")
+            .ok()
+            .and_then(|v| v.parse::<u32>().ok())
+            .filter(|&f| (1..=240).contains(&f))
+            .unwrap_or(30);
+
         Self {
             width: None,
             height: None,
             cell_size: None,
-            fps: 30,
+            fps,
             scale: 1.0,
             enable_wm: true,
             use_sixel: false,

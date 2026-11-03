@@ -339,5 +339,21 @@ fn test_cli_argument_validation() {
     assert!(stdout.contains("USAGE:"), "stdout: {}", stdout);
 }
 
+#[test]
+fn test_cli_query_capability_report() {
+    let binary = env!("CARGO_BIN_EXE_termway");
+    let output = std::process::Command::new(binary)
+        .arg("--query")
+        .output()
+        .expect("execute termway --query");
+    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("termway diagnostic capability report:"), "stdout: {}", stdout);
+    assert!(stdout.contains("Terminal Size"), "stdout: {}", stdout);
+    assert!(stdout.contains("Graphics Protocol"), "stdout: {}", stdout);
+    assert!(stdout.contains("Mouse Tracking"), "stdout: {}", stdout);
+    assert!(stdout.contains("XWayland Server"), "stdout: {}", stdout);
+}
+
 
 

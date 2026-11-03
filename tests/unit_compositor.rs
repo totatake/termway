@@ -1242,3 +1242,23 @@ fn test_compositor_window_title_synchronization() {
     state.restore_window(win2_id);
     assert_eq!(state.current_terminal_title, "termway: Web Browser");
 }
+
+#[test]
+fn test_cursor_shape_opt_out_and_fps_env() {
+    let display = smithay::reexports::wayland_server::Display::<TermwayState>::new()
+        .expect("Failed to create Wayland Display");
+    let dh = display.handle();
+
+    let mut state = TermwayState::new(&dh, 800, 600, true);
+    assert!(state.enable_cursor_shape);
+    state.enable_cursor_shape = false;
+    // update_cursor_shape should be a no-op when disabled
+    state.update_cursor_shape("pointer");
+    assert_ne!(state.current_cursor_shape, "pointer");
+
+    // EngineConfig default respects TERMWAY_FPS
+    std::env::set_var("TERMWAY_FPS", "60");
+    let config = termway::compositor::EngineConfig::default();
+    assert_eq!(config.fps, 60);
+    std::env::remove_var("TERMWAY_FPS");
+}
