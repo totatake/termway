@@ -16,7 +16,7 @@ pub use self::env::{
     ensure_xdg_runtime_dir, free_x11_display_candidates, log_line, setup_signals, setup_test_signals,
     CAPTURE_REQUESTED, STATE_DUMP_REQUESTED,
 };
-pub use self::profile::CompositorMetrics;
+pub use self::profile::{CompositorMetrics, LatencyHistogram};
 pub use self::taskbar::{Taskbar, TaskbarChip};
 
 use std::io::{self, Read};

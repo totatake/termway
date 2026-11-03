@@ -114,8 +114,11 @@ impl CompositorMetrics {
         let total_bytes = b_metrics.total_bytes_written.load(Ordering::Relaxed);
 
         let p95_encode_ms = b_metrics.percentile_encode(95.0);
+        let p99_encode_ms = b_metrics.percentile_encode(99.0);
         let p95_write_ms = b_metrics.percentile_write(95.0);
+        let p99_write_ms = b_metrics.percentile_write(99.0);
         let p95_render_ms = self.render_hist.percentile(95.0);
+        let p99_render_ms = self.render_hist.percentile(99.0);
 
         let elapsed_secs = start_time.elapsed().as_secs_f64();
         let avg_render_ms = if self.render_frames > 0 {
@@ -150,22 +153,22 @@ impl CompositorMetrics {
             self.render_frames, self.clean_skips);
         eprintln!("Backend Async Jobs:    {} submitted, {} rendered ({} partial), {} dropped",
             jobs_submitted, jobs_rendered, partial_frames, frames_dropped);
-        eprintln!("Latency Breakdown (avg / p95 / max):");
-        eprintln!("  1. Pixman Render:    avg = {:>6.2} ms,  p95 = {:>6.2} ms,  max = {:>6.2} ms",
-            avg_render_ms, p95_render_ms, self.render_max_us as f64 / 1000.0);
+        eprintln!("Latency Breakdown (avg / p95 / p99 / max):");
+        eprintln!("  1. Pixman Render:    avg = {:>6.2} ms,  p95 = {:>6.2} ms,  p99 = {:>6.2} ms,  max = {:>6.2} ms",
+            avg_render_ms, p95_render_ms, p99_render_ms, self.render_max_us as f64 / 1000.0);
         eprintln!("  2. Damage Tracker:   avg = {:>6.1} μs,                     max = {:>6.1} μs",
             avg_damage_us, self.damage_max_us as f64);
-        eprintln!("  3. Protocol Encode:  avg = {:>6.2} ms,  p95 = {:>6.2} ms,  max = {:>6.2} ms ({})",
-            avg_encode_ms, p95_encode_ms, max_encode_us as f64 / 1000.0, backend.name());
-        eprintln!("  4. Terminal Write:   avg = {:>6.2} ms,  p95 = {:>6.2} ms,  max = {:>6.2} ms",
-            avg_write_ms, p95_write_ms, max_write_us as f64 / 1000.0);
+        eprintln!("  3. Protocol Encode:  avg = {:>6.2} ms,  p95 = {:>6.2} ms,  p99 = {:>6.2} ms,  max = {:>6.2} ms ({})",
+            avg_encode_ms, p95_encode_ms, p99_encode_ms, max_encode_us as f64 / 1000.0, backend.name());
+        eprintln!("  4. Terminal Write:   avg = {:>6.2} ms,  p95 = {:>6.2} ms,  p99 = {:>6.2} ms,  max = {:>6.2} ms",
+            avg_write_ms, p95_write_ms, p99_write_ms, max_write_us as f64 / 1000.0);
         eprintln!("Output Data Bandwidth: total = {:.2} MB, throughput = {:.1} KB/s",
             total_bytes as f64 / (1024.0 * 1024.0), kb_per_sec);
         eprintln!("============================================================================================\n");
 
         if let Ok(path) = std::env::var("TERMWAY_PROFILE_FILE") {
             let report = format!(
-                r#"{{"duration_sec":{:.3},"render_frames":{},"clean_skips":{},"jobs_submitted":{},"jobs_rendered":{},"partial_frames":{},"frames_dropped":{},"avg_render_ms":{:.3},"p95_render_ms":{:.3},"max_render_ms":{:.3},"avg_damage_us":{:.3},"max_damage_us":{:.3},"avg_encode_ms":{:.3},"p95_encode_ms":{:.3},"max_encode_ms":{:.3},"avg_write_ms":{:.3},"p95_write_ms":{:.3},"max_write_ms":{:.3},"total_bytes":{},"kb_per_sec":{:.2}}}"#,
+                r#"{{"duration_sec":{:.3},"render_frames":{},"clean_skips":{},"jobs_submitted":{},"jobs_rendered":{},"partial_frames":{},"frames_dropped":{},"avg_render_ms":{:.3},"p95_render_ms":{:.3},"p99_render_ms":{:.3},"max_render_ms":{:.3},"avg_damage_us":{:.3},"max_damage_us":{:.3},"avg_encode_ms":{:.3},"p95_encode_ms":{:.3},"p99_encode_ms":{:.3},"max_encode_ms":{:.3},"avg_write_ms":{:.3},"p95_write_ms":{:.3},"p99_write_ms":{:.3},"max_write_ms":{:.3},"total_bytes":{},"kb_per_sec":{:.2}}}"#,
                 elapsed_secs,
                 self.render_frames,
                 self.clean_skips,
@@ -175,14 +178,17 @@ impl CompositorMetrics {
                 frames_dropped,
                 avg_render_ms,
                 p95_render_ms,
+                p99_render_ms,
                 self.render_max_us as f64 / 1000.0,
                 avg_damage_us,
                 self.damage_max_us as f64,
                 avg_encode_ms,
                 p95_encode_ms,
+                p99_encode_ms,
                 max_encode_us as f64 / 1000.0,
                 avg_write_ms,
                 p95_write_ms,
+                p99_write_ms,
                 max_write_us as f64 / 1000.0,
                 total_bytes,
                 kb_per_sec,

@@ -1262,3 +1262,29 @@ fn test_cursor_shape_opt_out_and_fps_env() {
     assert_eq!(config.fps, 60);
     std::env::remove_var("TERMWAY_FPS");
 }
+
+#[test]
+fn test_latency_histogram_p95_and_p99() {
+    use termway::compositor::LatencyHistogram;
+
+    let mut hist = LatencyHistogram::new();
+    assert_eq!(hist.percentile(95.0), 0.0);
+    assert_eq!(hist.percentile(99.0), 0.0);
+
+    // Record 100 samples: 95 samples of 5ms (5000 us), 4 samples of 20ms (20000 us), 1 sample of 100ms (100000 us)
+    for _ in 0..95 {
+        hist.record(5_000);
+    }
+    for _ in 0..4 {
+        hist.record(20_000);
+    }
+    hist.record(100_000);
+
+    let p95 = hist.percentile(95.0);
+    let p99 = hist.percentile(99.0);
+
+    // p95 should fall within the 5ms bucket (5.5)
+    assert_eq!(p95, 5.5);
+    // p99 should fall within the 20ms bucket (20.5)
+    assert_eq!(p99, 20.5);
+}
