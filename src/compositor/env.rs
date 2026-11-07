@@ -15,10 +15,6 @@ pub fn setup_signals() {
     }
 }
 
-pub fn setup_test_signals() {
-    setup_signals();
-}
-
 extern "C" fn handle_sigusr1(_: libc::c_int) {
     CAPTURE_REQUESTED.store(true, Ordering::Relaxed);
 }

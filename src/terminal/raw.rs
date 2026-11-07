@@ -15,11 +15,6 @@ pub struct RawModeGuard {
 }
 
 impl RawModeGuard {
-    /// Enter raw mode, enable alternate screen and mouse tracking (default: SGR cell mode).
-    pub fn enter() -> io::Result<Self> {
-        Self::enter_with_options(false)
-    }
-
     /// Enter raw mode with explicit pixel mouse tracking configuration.
     /// When `pixel_mouse` is true, enables DECSET 1016 (SGR-Pixels) for 1px coordinate precision.
     pub fn enter_with_options(pixel_mouse: bool) -> io::Result<Self> {

@@ -13,7 +13,7 @@ pub mod profile;
 pub mod screenshot;
 
 pub use self::env::{
-    ensure_xdg_runtime_dir, free_x11_display_candidates, log_line, setup_signals, setup_test_signals,
+    ensure_xdg_runtime_dir, free_x11_display_candidates, log_line, setup_signals,
     CAPTURE_REQUESTED, STATE_DUMP_REQUESTED,
 };
 pub use self::profile::{CompositorMetrics, LatencyHistogram};

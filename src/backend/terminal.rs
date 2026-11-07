@@ -1,4 +1,4 @@
-use crate::display::{DamageRect, Framebuffer};
+use crate::display::DamageRect;
 use crate::protocol::{KittyStreamEncoder, SixelStreamEncoder};
 use crate::terminal::TerminalSize;
 use std::io::{self, Write};
@@ -387,23 +387,6 @@ impl TerminalBackend {
 
     pub fn metrics(&self) -> &Arc<BackendMetrics> {
         &self.metrics
-    }
-
-    pub fn render_damage(&mut self, fb: &Framebuffer, damage: &[DamageRect]) -> io::Result<()> {
-        if damage.is_empty() {
-            return Ok(());
-        }
-        self.render_pixels_with_damage(&fb.pixels, fb.width, fb.height, None, Some(damage.to_vec()))
-    }
-
-    pub fn render_pixels(
-        &mut self,
-        pixels: &[u8],
-        width: u32,
-        height: u32,
-        taskbar: Option<&str>,
-    ) -> io::Result<()> {
-        self.render_pixels_with_damage(pixels, width, height, taskbar, None)
     }
 
     pub fn render_pixels_with_damage(
