@@ -122,7 +122,7 @@ termway supports both high-speed inline graphics protocols (**Kitty** & **Sixel*
 | | **Ghostty** | Linux, macOS | Full support with GPU acceleration |
 | | **WezTerm** | Windows, Linux, macOS | Full Kitty graphics support |
 | | **Foot** | Linux (Wayland) | High performance Wayland terminal |
-| **Sixel Graphics** | **Windows Terminal** | Windows | Supported in Windows Terminal Preview (`--sixel`) |
+| **Sixel Graphics** | **Windows Terminal** | Windows | Supported via `--sixel` |
 | | **WezTerm** | Windows, Linux, macOS | Supports both Kitty & Sixel |
 | | **Foot** | Linux (Wayland) | Supports both Kitty & Sixel |
 | | **iTerm2** | macOS | Full Sixel & 24-bit TrueColor support |
@@ -256,8 +256,8 @@ For compatible terminals such as specially extended Noctty (an experimental fork
 > **Terminal Requirements & Stability Notes (Noctty / Ghostty)**
 > 1. **Kitty JPEG Mode (`f=101`) Requirement**:
 >    To utilize `f=101` JPEG streaming, a **specially extended build of Noctty (an experimental branch/fork not yet merged upstream) is required**. Official releases of Noctty, Ghostty, and Kitty do not support `f=101`; on these terminals, `termway` automatically falls back to standard `f=32,o=z` (zlib compression).
-> 2. **High-Load / Video Playback Crashes on Upstream Noctty & Ghostty**:
->    In official releases of Noctty and Ghostty, receiving continuous high-frequency graphic streams (such as YouTube video playback) can trigger terminal crashes (SIGSEGV/aborts) due to internal GPU texture management and multi-threaded rendering queue pressure under heavy throughput. An **experimental build of Noctty with patches for this crash issue exists (not yet merged upstream)**. For sustained high-FPS video streaming, using this patched Noctty build is strongly recommended.
+> 2. **Video Playback Stability on Noctty / Ghostty**:
+>    In earlier versions of Noctty and Ghostty, receiving continuous high-frequency graphic streams (such as YouTube video playback) could trigger terminal crashes (SIGSEGV/aborts) due to internal GPU texture management and multi-threaded rendering queue pressure. **This issue has been resolved in Noctty 1.3.136**, enabling sustained high-FPS video streaming to run stably. Updating to Noctty 1.3.136 or later is recommended (on unpatched terminals such as Ghostty, continuous heavy graphic streams may still cause instability).
 
 - CLI Options:
   - `--jpeg`: Force-enable Kitty `f=101` JPEG extension (auto-probing is recommended for non-supporting terminals)

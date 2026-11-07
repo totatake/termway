@@ -122,7 +122,7 @@ termway は高速グラフィックスプロトコル（**Kitty** および **Si
 | | **Ghostty** | Linux, macOS | GPU 加速による超高速描画 |
 | | **WezTerm** | Windows, Linux, macOS | Kitty グラフィックス完全対応 |
 | | **Foot** | Linux (Wayland) | 高速 Wayland ネイティブ端末 |
-| **Sixel Graphics** | **Windows Terminal** | Windows | Windows Terminal Preview で対応 (`--sixel`) |
+| **Sixel Graphics** | **Windows Terminal** | Windows | `--sixel` で対応 |
 | | **WezTerm** | Windows, Linux, macOS | Kitty / Sixel 両対応 |
 | | **Foot** | Linux (Wayland) | Kitty / Sixel 両対応 |
 | | **iTerm2** | macOS | Sixel 24-bit TrueColor フル対応 |
@@ -257,8 +257,8 @@ termway は起動時に端末エミュレータのプロトコル対応状況を
 > **端末側の独自拡張と安定性に関する注意点 (Noctty / Ghostty)**
 > 1. **Kitty JPEG モード (`f=101`) の利用要件**:
 >    `f=101` による JPEG ストリーミングを利用するには、**専用に Kitty Graphics Protocol を拡張した Noctty（本家 upstream に未マージの実験的ブランチ/フォーク）が必要**です。公式リリースの Noctty や Ghostty、Kitty 本家では `f=101` が未サポートのため、termway は自動プローブにより安全に標準の `f=32,o=z`（zlib 圧縮）へフォールバックして動作します。
-> 2. **公式 Noctty / Ghostty での動画再生時クラッシュ問題と試験的修正版**:
->    公式リリースの Noctty や Ghostty を使用して動画再生（YouTube 等）のような高負荷・高スループットな画像転送を連続して行うと、端末側の内部テクスチャ管理や描画キューの競合により、**端末エミュレータ自体が突然クラッシュ（SIGSEGV / 異常終了）する既知の課題**が存在します。これに対し、**このクラッシュ問題を試験的に修正した Noctty（※こちらも本家 upstream に未マージの実験的修正版）が存在**します。高フレームレートでの長時間の安定した動画ストリーミングを行うには、この修正が適用された Noctty の利用を推奨します。
+> 2. **Noctty / Ghostty での動画再生時クラッシュ問題と修正状況**:
+>    以前のバージョンの Noctty や Ghostty では、動画再生（YouTube 等）のような高負荷・高スループットな画像転送を連続して行うと、内部テクスチャ管理や描画キューの競合により**端末エミュレータ自体が突然クラッシュ（SIGSEGV / 異常終了）する課題**が存在していました。**Noctty ではバージョン 1.3.136 にてこの問題が修正済み**となっており、長時間の高フレームレート動画ストリーミングも安定して動作します。Noctty 利用時はバージョン 1.3.136 以降へのアップデートを推奨します（※Ghostty 等の未修正端末では引き続き高負荷時のクラッシュにご注意ください）。
 
 - CLI オプション:
   - `--jpeg`: Kitty `f=101` JPEG 拡張を強制有効化（非対応端末では画面が乱れる可能性があるため通常は自動検知を推奨）
