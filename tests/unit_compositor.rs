@@ -230,6 +230,38 @@ fn test_window_clamping_logic() {
     assert!(win.loc.x >= min_x && win.loc.x <= max_x);
     assert!(win.loc.y >= min_y && win.loc.y <= max_y);
 
+    // Verify ManagedWindow::clamp_content_loc helper directly
+    let clamped_helper = ManagedWindow::clamp_content_loc(
+        Point::from((-50, -50)),
+        win.size,
+        win.has_ssd,
+        screen_w as u32,
+        screen_h as u32,
+    );
+    assert_eq!(clamped_helper.x, min_x);
+    assert_eq!(clamped_helper.y, min_y);
+
+    let clamped_bottom_right = ManagedWindow::clamp_content_loc(
+        Point::from((1000, 1000)),
+        win.size,
+        win.has_ssd,
+        screen_w as u32,
+        screen_h as u32,
+    );
+    assert_eq!(clamped_bottom_right.x, max_x);
+    assert_eq!(clamped_bottom_right.y, max_y);
+
+    // CSD window (no SSD) clamps to 0..=screen - size
+    let csd_clamped = ManagedWindow::clamp_content_loc(
+        Point::from((-10, -10)),
+        Size::from((100, 100)),
+        false,
+        screen_w as u32,
+        screen_h as u32,
+    );
+    assert_eq!(csd_clamped.x, 0);
+    assert_eq!(csd_clamped.y, 0);
+
     // Frame geometry should be entirely within screen bounds
     let fg = win.frame_geometry();
     assert!(fg.loc.x >= 0);

@@ -10,7 +10,7 @@ use smithay::{
 use std::process::Child;
 
 use super::state::TermwayState;
-use super::window::{WindowDragState, WindowSurface, BORDER_WIDTH, TITLEBAR_HEIGHT};
+use super::window::{ManagedWindow, WindowDragState, WindowSurface, BORDER_WIDTH};
 use crate::protocol::{KeyCode, MouseAction, MouseButton, MouseEvent};
 
 /// Map KeyCode / Char to Linux evdev scancode and modifier requirements (need_shift, need_ctrl).
@@ -561,14 +561,14 @@ pub fn dispatch_mouse_event(
                         state.wm.last_titlebar_click = None;
                     }
                     if let Some(top_win) = state.wm.windows.last_mut() {
-                        let min_x = if top_win.has_ssd { BORDER_WIDTH } else { 0 };
-                        let max_x = (state.width as i32 - top_win.size.w - min_x).max(min_x);
-                        let min_y = if top_win.has_ssd { TITLEBAR_HEIGHT + BORDER_WIDTH } else { 0 };
-                        let max_y = (state.height as i32 - top_win.size.h - min_x).max(min_y);
-
-                        let new_x = (start_window_pos.0 + dx).clamp(min_x, max_x);
-                        let new_y = (start_window_pos.1 + dy).clamp(min_y, max_y);
-                        top_win.set_loc(Point::from((new_x, new_y)));
+                        let new_loc = ManagedWindow::clamp_content_loc(
+                            Point::from(((start_window_pos.0 + dx), (start_window_pos.1 + dy))),
+                            top_win.size,
+                            top_win.has_ssd,
+                            state.width,
+                            state.height,
+                        );
+                        top_win.set_loc(new_loc);
                         state.dirty = true;
                     }
                     return;

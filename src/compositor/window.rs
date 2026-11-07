@@ -196,6 +196,24 @@ impl ManagedWindow {
         Rectangle::new(self.loc, self.size)
     }
 
+    /// Clamps a window's client content origin `(loc.x, loc.y)` so that its outer frame
+    /// (including the SSD titlebar on top and `BORDER_WIDTH` on left, right, and bottom)
+    /// remains within `[0, screen_w] × [0, screen_h]`.
+    pub fn clamp_content_loc(
+        loc: Point<i32, Logical>,
+        size: Size<i32, Logical>,
+        has_ssd: bool,
+        screen_w: u32,
+        screen_h: u32,
+    ) -> Point<i32, Logical> {
+        let border = if has_ssd { BORDER_WIDTH } else { 0 };
+        let min_x = border;
+        let min_y = if has_ssd { TITLEBAR_HEIGHT + border } else { 0 };
+        let max_x = (screen_w as i32 - size.w - border).max(min_x);
+        let max_y = (screen_h as i32 - size.h - border).max(min_y);
+        Point::from((loc.x.clamp(min_x, max_x), loc.y.clamp(min_y, max_y)))
+    }
+
     /// Titlebar geometry
     pub fn titlebar_geometry(&self) -> Rectangle<i32, Logical> {
         if self.has_ssd {

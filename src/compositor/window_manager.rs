@@ -150,6 +150,7 @@ impl WindowManager {
     /// Updates geometries and constraints of managed windows when terminal/screen resolution changes.
     pub fn update_layout_for_resize(&mut self, width: u32, height: u32) {
         use super::window::{BORDER_WIDTH, TITLEBAR_HEIGHT};
+        use smithay::utils::Size;
 
         for m_win in &mut self.windows {
             if m_win.is_maximized {
@@ -162,14 +163,13 @@ impl WindowManager {
                 let new_w = m_win.size.w.min(max_w);
                 let new_h = m_win.size.h.min(max_h);
 
-                let min_x = if m_win.has_ssd { BORDER_WIDTH } else { 0 };
-                let max_x = (width as i32 - new_w - min_x).max(min_x);
-                let min_y = if m_win.has_ssd { TITLEBAR_HEIGHT + BORDER_WIDTH } else { 0 };
-                let max_y = (height as i32 - new_h - min_x).max(min_y);
-                let new_loc = smithay::utils::Point::from((
-                    m_win.loc.x.clamp(min_x, max_x),
-                    m_win.loc.y.clamp(min_y, max_y),
-                ));
+                let new_loc = ManagedWindow::clamp_content_loc(
+                    m_win.loc,
+                    Size::from((new_w, new_h)),
+                    m_win.has_ssd,
+                    width,
+                    height,
+                );
 
                 let loc_changed = m_win.loc != new_loc;
                 let size_changed = new_w != m_win.size.w || new_h != m_win.size.h;
