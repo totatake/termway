@@ -142,11 +142,6 @@ impl CompositorHandler for TermwayState {
         }
 
         let mut tracked = false;
-        for w in &self.toplevels {
-            if w.wl_surface() == surface {
-                tracked = true; break;
-            }
-        }
         for w in &self.x11_windows {
             if let Some(s) = w.wl_surface() {
                 if &s == surface {

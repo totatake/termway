@@ -12,7 +12,7 @@ fn test_compositor_state_init() {
     assert_eq!(state.height, 600);
     assert!(state.dirty);
     assert!(state.running);
-    assert!(state.toplevels.is_empty());
+    assert!(state.wm.windows.is_empty());
 }
 
 #[test]

@@ -30,7 +30,7 @@ use smithay::{
             data_device::DataDeviceState,
             primary_selection::PrimarySelectionState,
         },
-        shell::xdg::{decoration::XdgDecorationState, ToplevelSurface, XdgShellState},
+        shell::xdg::{decoration::XdgDecorationState, XdgShellState},
         shm::ShmState,
     },
     reexports::wayland_protocols::wp::text_input::zv3::server::{
@@ -90,9 +90,6 @@ pub struct TermwayState {
     pub unicode_key_slots: Vec<UnicodeKeySlot>,
     pub unicode_slot_cursor: usize,
 
-    /// Raw xdg toplevels known to the compositor (used when the built-in WM is disabled
-    /// and for liveness tracking). Managed window state lives in `wm`.
-    pub toplevels: Vec<ToplevelSurface>,
     pub x11_windows: Vec<smithay::xwayland::X11Surface>,
     /// Window management domain (Z-order, activation, minimize, drag interaction).
     pub wm: WindowManager,
@@ -201,7 +198,6 @@ impl TermwayState {
             base_keymap_string: String::new(),
             unicode_key_slots: Vec::new(),
             unicode_slot_cursor: 0,
-            toplevels: Vec::new(),
             x11_windows: Vec::new(),
             wm: WindowManager::new(),
             unassociated_surfaces: Vec::new(),

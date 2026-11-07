@@ -70,7 +70,6 @@ impl XdgShellHandler for TermwayState {
 
         let wl = surface.wl_surface().clone();
         self.unassociated_surfaces.retain(|s| s != &wl);
-        self.toplevels.push(surface.clone());
 
         self.wm.deactivate_all();
         // Wayland clients default to CSD unless ServerSide is negotiated via zxdg_decoration
@@ -225,7 +224,6 @@ impl XdgShellHandler for TermwayState {
     }
 
     fn toplevel_destroyed(&mut self, surface: ToplevelSurface) {
-        self.toplevels.retain(|w| w != &surface);
         self.wm.remove_toplevel(&surface);
         self.focus_top_window();
         self.dirty = true;

@@ -544,7 +544,6 @@ impl TermwayCompositor {
             }
 
             // Clean up destroyed windows/surfaces
-            self.state.toplevels.retain(|w| w.alive() && smithay::reexports::wayland_server::Resource::is_alive(w.wl_surface()));
             let prev_count = self.state.wm.windows.len();
             self.state.wm.windows.retain(|w| {
                 match &w.surface {
@@ -577,17 +576,6 @@ impl TermwayCompositor {
                     || class.contains("policykit")
             };
 
-            let is_wayland_polkit = |surface: &smithay::wayland::shell::xdg::ToplevelSurface| -> bool {
-                let title = smithay::wayland::compositor::with_states(surface.wl_surface(), |states| {
-                    states
-                        .data_map
-                        .get::<smithay::wayland::shell::xdg::XdgToplevelSurfaceData>()
-                        .and_then(|d| d.lock().ok())
-                        .and_then(|attrs| attrs.title.clone())
-                }).unwrap_or_default().to_lowercase();
-                title.contains("authentication") || title.contains("polkit") || title.contains("policykit")
-            };
-
             let is_unmanaged_real_x11 = |w: &smithay::xwayland::X11Surface| -> bool {
                 let is_managed = self.state.wm.windows.iter().any(|mw| matches!(&mw.surface, WindowSurface::X11(x) if x == w));
                 let geo = w.geometry();
@@ -595,11 +583,9 @@ impl TermwayCompositor {
             };
 
             let active_window_count = self.state.wm.windows.len()
-                + self.state.toplevels.len()
                 + self.state.x11_windows.iter().filter(|w| is_unmanaged_real_x11(w)).count();
 
             let client_window_count = self.state.wm.windows.iter().filter(|w| !w.is_polkit(polkit_pid)).count()
-                + self.state.toplevels.iter().filter(|w| !is_wayland_polkit(w)).count()
                 + self.state.x11_windows.iter().filter(|w| !is_x11_polkit(w) && is_unmanaged_real_x11(w)).count();
 
             if client_window_count > 0 {
@@ -842,9 +828,6 @@ impl TermwayCompositor {
                             }
                         }
                     }
-                    for window in &self.state.toplevels {
-                        send_frames_surface_tree(window.wl_surface(), time);
-                    }
                     for window in &self.state.x11_windows {
                         if let Some(surface) = self.state.surface_for_x11(window) {
                             send_frames_surface_tree(&surface, time);
@@ -963,13 +946,17 @@ impl TermwayCompositor {
         if self.state.enable_wm {
             self.state.wm.update_layout_for_resize(self.state.width, self.state.height);
         } else {
-            for window in &self.state.toplevels {
-                window.with_pending_state(|state| {
-                    state.states.set(xdg_toplevel::State::Activated);
-                    state.states.set(xdg_toplevel::State::Maximized);
-                    state.size = Some((self.state.width as i32, self.state.height as i32).into());
-                });
-                window.send_configure();
+            for m_win in &mut self.state.wm.windows {
+                if let WindowSurface::Wayland(ref window) = m_win.surface {
+                    window.with_pending_state(|state| {
+                        state.states.set(xdg_toplevel::State::Activated);
+                        state.states.set(xdg_toplevel::State::Maximized);
+                        state.size = Some((self.state.width as i32, self.state.height as i32).into());
+                    });
+                    window.send_configure();
+                }
+                m_win.loc = (0, 0).into();
+                m_win.size = (self.state.width as i32, self.state.height as i32).into();
             }
             for xwin in &self.state.x11_windows {
                 let rect = smithay::utils::Rectangle::new(
@@ -977,10 +964,6 @@ impl TermwayCompositor {
                     (self.state.width as i32, self.state.height as i32).into(),
                 );
                 let _ = xwin.configure(rect);
-            }
-            for m_win in &mut self.state.wm.windows {
-                m_win.loc = (0, 0).into();
-                m_win.size = (self.state.width as i32, self.state.height as i32).into();
             }
         }
 
