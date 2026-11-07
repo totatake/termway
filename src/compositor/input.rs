@@ -665,7 +665,11 @@ pub fn dispatch_mouse_event(
                 pointer.button(state, &btn_ev);
                 pointer.frame(state);
 
-                // xdg_popup にはキーボードフォーカスを移さない (state.rs new_popup 参照)
+                // NOTE: Do not move keyboard focus to xdg_popup surfaces.
+                // Qt/GTK menus and combo popups expect keyboard focus to stay on the parent toplevel;
+                // moving focus to the popup causes Qt to assume the main window lost active focus,
+                // triggering spontaneous menu dismissal when sub-menus open.
+                // Non-xdg popups (e.g. text input / IME candidate windows) retain focus transfer.
                 let is_xdg_popup = smithay::wayland::compositor::get_role(&popup_surface)
                     == Some(smithay::wayland::shell::xdg::XDG_POPUP_ROLE);
                 if !is_xdg_popup {

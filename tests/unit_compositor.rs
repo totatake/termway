@@ -1164,6 +1164,49 @@ fn test_utf8_japanese_input_xkb_keymap_and_text_input_v3() {
 }
 
 #[test]
+fn test_utf8_xkb_keymap_multi_batch_slot_rollover() {
+    use smithay::reexports::wayland_server::Display;
+    use termway::compositor::input::dispatch_utf8_text;
+    use termway::compositor::state::TermwayState;
+
+    let display = Display::<TermwayState>::new().expect("Failed to create Wayland Display");
+    let dh = display.handle();
+
+    let mut state = TermwayState::new(&dh, 800, 600, true);
+    let total_slots = state.unicode_key_slots.len();
+    assert!(total_slots >= 32, "Expected at least 32 slots, got {}", total_slots);
+
+    // Build a test payload with more distinct non-ASCII characters than total available slots (e.g. 80 chars)
+    // to force multiple batch flushes and slot cursor rollover.
+    let mut chars: Vec<char> = Vec::new();
+    for i in 0..80u32 {
+        // Use consecutive CJK Unified Ideographs starting at U+4E00
+        if let Some(ch) = char::from_u32(0x4E00 + i) {
+            chars.push(ch);
+        }
+    }
+    assert_eq!(chars.len(), 80);
+    let large_text: String = chars.iter().collect();
+
+    // Must not panic on slot exhaustion and cleanly complete across multiple batches
+    dispatch_utf8_text(&mut state, &large_text);
+
+    // After processing 80 characters across slots (e.g. 64 slots), the cursor must have rolled over
+    assert!(state.unicode_slot_cursor < total_slots);
+
+    // The trailing batch of characters must be present in mapped slots
+    let remaining_batch_count = 80 % total_slots;
+    let last_chars = &chars[chars.len() - remaining_batch_count..];
+    for &ch in last_chars {
+        assert!(
+            state.unicode_key_slots.iter().any(|s| s.mapped_char == Some(ch)),
+            "Expected trailing batch character {:?} to remain in active Unicode key slots",
+            ch
+        );
+    }
+}
+
+#[test]
 fn test_fractional_scale_state_and_output_scale() {
     let display = smithay::reexports::wayland_server::Display::<TermwayState>::new()
         .expect("Failed to create Wayland Display");
