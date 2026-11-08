@@ -321,11 +321,46 @@ TERMWAY_PROFILE_FILE=/tmp/profile.json ./target/release/termway --profile -- fir
   "avg_write_ms": 0.850,
   "max_write_ms": 2.100,
   "total_bytes": 1258291,
-  "kb_per_sec": 99.55
+  "kb_per_sec": 99.55,
+  "trace_file": "/tmp/termway_trace.json"
 }
 ```
 
-### 6. ショートカットキーと便利機能
+### 6. タイムライン・トレーシングと Perfetto 可視化 (`--trace`, `TERMWAY_TRACE_FILE`)
+
+ナノ〜マイクロ秒単位のパイプライン挙動やフレームドロップ原因の特定のため、ゼロアロケーション（ホットパスでのヒープ確保 0 回）のタイムライントレーサーを内蔵しています。イベントはスレッド毎の固定長リングバッファ（1 イベント 32 バイト固定）に記録され、終了時やシグナル受信時に Perfetto（[ui.perfetto.dev](https://ui.perfetto.dev)）で開ける Chrome Trace Event JSON として出力されます。
+
+- **CLI オプション**:
+  - `--trace`: タイムライントレースを有効化（Chrome Trace Event 形式）。
+  - `--trace-file <PATH>`: トレース JSON の出力先（`.gz` 指定時は自動 gzip 圧縮。未指定時は `/tmp/termway_trace.json`）。
+  - `--trace-buffer <N>`: スレッド毎のリングバッファ容量（例: `64k`, `256k`, `1m`。デフォルト: `65536`）。
+  - `--trace-flush-secs <N>`: N 秒毎にトレーススナップショットを連番ファイル（例: `/tmp/termway_trace.1.json`）へローテート保存。
+  - `--trace-no-input`: 高頻度なマウス移動でリングが溢れるのを防ぐため、入力系イベントの記録を無効化。
+- **環境変数**:
+  - `TERMWAY_TRACE=1`: トレース有効化（`--trace` と等価）。
+  - `TERMWAY_TRACE_FILE=<PATH>`: 出力先パス（指定時は暗黙にトレース有効化）。
+  - `TERMWAY_TRACE_BUFFER=64k`: リング容量。
+  - `TERMWAY_TRACE_FLUSH_SECS=10`: 定期スナップショット間隔（秒）。
+  - `TERMWAY_TRACE_NO_INPUT=1`: 入力イベント記録を抑制。
+
+```bash
+# 集計サマリーとタイムラインを同時採取
+TERMWAY_PROFILE_FILE=/tmp/profile.json \
+TERMWAY_TRACE_FILE=/tmp/termway_trace.json.gz \
+  ./target/release/termway --profile --trace -- firefox
+
+# ブラウザで https://ui.perfetto.dev を開き、/tmp/termway_trace.json.gz をドラッグ＆ドロップ
+# - frame_id による Render -> EnqueueSubmit -> BackendEncode -> BackendWrite の矢印 flow を追跡
+# - ウィンドウ状態遷移カウンタトラック (win_{id}_state: 0=最小化, 1=フローティング, 2=最大化)
+# - PTY 送信キュー滞留バイト数 (TIOCOUTQ) とインプレース共結成された高頻度マウス移動
+```
+
+**リアルタイム・事後解析スナップショット**:
+- `SIGUSR1` または `SIGUSR2` 送信時（`kill -USR1 $(pgrep termway)`）に、その時点の連番スナップショット（`/tmp/termway_trace.1.json` 等）を出力。
+- 万が一の panic 発生時にも、端末安全復元フックが端末を正常状態に戻した直後にトレースバッファを自動ダンプ。
+- `--hud` と `--trace` を併用すると、HUD 上にリング溢れ件数 `Ovf` がリアルタイム表示されます。
+
+### 7. ショートカットキーと便利機能
 
 | キー操作 | 機能 | 説明 |
 | :--- | :--- | :--- |
@@ -352,8 +387,13 @@ TERMWAY_PROFILE_FILE=/tmp/profile.json ./target/release/termway --profile -- fir
 | `--height` | `<PIXELS>` | 仮想ディスプレイ解像度の高さ | 端末サイズから自動算出 |
 | `--fps` | `<FPS>` | 目標フレームレート | `30` |
 | `--scale` | `<FACTOR>` | Wayland 出力スケール係数 (HiDPI / Fractional Scale 制御, 例: `1.25`, `1.5`, `2.0`) | `1.0` |
-| `--hud` | - | 画面上部にリアルタイムパフォーマンスインジケータ（FPS・エンコード時間・帯域・Damageタイル数）を表示 | 無効 |
+| `--hud` | - | 画面上部にリアルタイムパフォーマンスインジケータ（FPS・エンコード時間・帯域・Damageタイル数・トレースリング溢れ `Ovf`）を表示 | 無効 |
 | `--profile` | - | 終了時にパイプライン各段（描画・差分検出・エンコード・端末書込）のレイテンシと帯域統計を stderr に表示（`TERMWAY_PROFILE=1` でも有効化可。`TERMWAY_PROFILE_FILE=<PATH>` で JSON 出力可） | 無効 |
+| `--trace` | - | ゼロアロケーション・タイムライントレースを有効化（Perfetto 互換 Chrome Trace Event JSON） | 無効 |
+| `--trace-file` | `<PATH>` | トレース出力先パス（`.gz` 指定時は自動圧縮。未指定時は `/tmp/termway_trace.json`） | `/tmp/termway_trace.json` |
+| `--trace-buffer` | `<N>` | スレッド毎のトレースリング容量（例: `64k`, `256k`, `1m`） | `65536` |
+| `--trace-flush-secs` | `<N>` | N 秒毎に連番スナップショットを出力・ローテーション | `0` (無効) |
+| `--trace-no-input` | - | 高頻度マウス移動からリングを守るため入力系イベントの記録を無効化 | 無効 |
 | `--no-splash` | - | 起動時のアニメーションスプラッシュ画面を非表示にする | 無効 |
 | `--demo` | - | 内蔵 GTK3 デモアプリを起動 | - |
 | `--query` | - | 端末の機能診断レポート（解像度・グラフィックス・マウス・XWayland等）を表示して終了 | - |
@@ -421,7 +461,8 @@ cargo test --release
 
 - **[システムアーキテクチャ詳細設計書 (`docs/ARCHITECTURE.md`)](docs/ARCHITECTURE.md)**: 静的構造（レイヤー構成・クラス図・責務分割）および動的構造（起動シーケンス・非同期レンダリングパイプライン・ウィンドウ状態遷移・ヒットテスト優先順位）。
 - **[要求仕様およびテスト仕様書 (`docs/SPECIFICATION.md`)](docs/SPECIFICATION.md)**: 機能要件・非機能要件と全 127 テストのトレーサビリティマトリクス。
-- **[Architecture Decision Records (`docs/adr/`)](docs/adr/README.md)**: 設計上の意思決定とトレードオフの記録（[ADR-0001: ハイブリッド D-Bus セッションルーティング](docs/adr/0001-hybrid-dbus-session-routing.md) 等）。
+- **[Architecture Decision Records (`docs/adr/`)](docs/adr/README.md)**: 設計上の意思決定とトレードオフの記録（[ADR-0001: ハイブリッド D-Bus セッションルーティング](docs/adr/0001-hybrid-dbus-session-routing.md), [ADR-0003: ゼロアロケーション・タイムライントレーサー](docs/adr/0003-zero-allocation-time-line-tracer.md) 等）。
+- **[タイムライン・トレーシング設計仕様 (`docs/trace/`)](docs/trace/README.md)**: 32B 固定長イベント、スレッド独立リング、Chrome Trace JSON 変換、Perfetto 可視化クックブック。
 - **[エンジニアリング・ロードマップ (`docs/ROADMAP.md`)](docs/ROADMAP.md)**: パフォーマンス刷新・ドメイン分割・エンジン統合の達成状況と今後の計画。
 
 ---

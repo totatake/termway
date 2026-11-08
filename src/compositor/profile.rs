@@ -167,7 +167,9 @@ impl CompositorMetrics {
         eprintln!("============================================================================================\n");
 
         if let Ok(path) = std::env::var("TERMWAY_PROFILE_FILE") {
-            let trace_file_entry = if let Ok(t_path) = std::env::var("TERMWAY_TRACE_FILE") {
+            let trace_file_entry = if let Some(t_path) = crate::trace::trace_file_path() {
+                format!(r#","trace_file":{:?}"#, t_path)
+            } else if let Ok(t_path) = std::env::var("TERMWAY_TRACE_FILE") {
                 format!(r#","trace_file":{:?}"#, t_path)
             } else if crate::trace::enabled() {
                 String::from(r#","trace_file":"/tmp/termway_trace.json""#)
@@ -207,8 +209,9 @@ impl CompositorMetrics {
 
         // If trace is enabled, dump trace events
         if crate::trace::enabled() {
-            let trace_path = std::env::var("TERMWAY_TRACE_FILE")
-                .unwrap_or_else(|_| "/tmp/termway_trace.json".to_string());
+            let trace_path = crate::trace::trace_file_path()
+                .or_else(|| std::env::var("TERMWAY_TRACE_FILE").ok())
+                .unwrap_or_else(|| "/tmp/termway_trace.json".to_string());
             let _ = crate::trace::writer::dump_to_file(&trace_path);
         }
     }

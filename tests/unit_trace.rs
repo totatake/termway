@@ -343,3 +343,81 @@ fn test_window_state_counter_track() {
 
     ring::reset_rings();
 }
+
+#[test]
+fn test_snapshot_rotation_and_cli_parsing() {
+    let _lock = TRACE_TEST_MUTEX.lock().unwrap();
+
+    // 1. Buffer capacity parser
+    assert_eq!(trace::parse_buffer_capacity("4k"), Some(4096));
+    assert_eq!(trace::parse_buffer_capacity("64K"), Some(65536));
+    assert_eq!(trace::parse_buffer_capacity("1m"), Some(1048576));
+    assert_eq!(trace::parse_buffer_capacity("2M"), Some(2097152));
+    assert_eq!(trace::parse_buffer_capacity("500"), Some(500));
+    assert_eq!(trace::parse_buffer_capacity("invalid"), None);
+
+    // 2. Snapshot path formatter
+    assert_eq!(
+        termway::trace::writer::format_snapshot_path("/tmp/test.json", 1),
+        "/tmp/test.1.json"
+    );
+    assert_eq!(
+        termway::trace::writer::format_snapshot_path("/tmp/test.json.gz", 2),
+        "/tmp/test.2.json.gz"
+    );
+    assert_eq!(
+        termway::trace::writer::format_snapshot_path("/tmp/test.gz", 3),
+        "/tmp/test.3.gz"
+    );
+    assert_eq!(
+        termway::trace::writer::format_snapshot_path("/tmp/test_custom", 4),
+        "/tmp/test_custom.4"
+    );
+
+    // 3. Trace file path get/set
+    trace::set_trace_file_path(Some("/tmp/my_custom_trace.json".into()));
+    assert_eq!(trace::trace_file_path().as_deref(), Some("/tmp/my_custom_trace.json"));
+
+    // 4. Sequential snapshot dumps
+    termway::trace::writer::reset_snapshot_index();
+    trace::init(true, true, 64);
+
+    trace::slice(
+        ThreadRole::Main,
+        EventId::Render,
+        trace::now_us(),
+        1000,
+        1,
+        1,
+        800,
+        600,
+    );
+
+    let base_path = format!("/tmp/test_snap_rot_{}.json", std::process::id());
+    let snap1 = termway::trace::writer::dump_snapshot(&base_path).expect("dump snap 1");
+    assert_eq!(snap1, format!("{}.1.json", base_path.strip_suffix(".json").unwrap()));
+    assert!(std::path::Path::new(&snap1).exists());
+    let c1 = std::fs::read_to_string(&snap1).unwrap();
+    assert!(c1.contains("\"Render\""));
+    let _ = std::fs::remove_file(&snap1);
+
+    // Emit more events and dump snapshot 2
+    trace::slice(
+        ThreadRole::AsyncRender,
+        EventId::BackendEncode,
+        trace::now_us(),
+        500,
+        2,
+        2048,
+        1,
+        0,
+    );
+    let snap2 = termway::trace::writer::dump_snapshot(&base_path).expect("dump snap 2");
+    assert_eq!(snap2, format!("{}.2.json", base_path.strip_suffix(".json").unwrap()));
+    assert!(std::path::Path::new(&snap2).exists());
+    let c2 = std::fs::read_to_string(&snap2).unwrap();
+    assert!(c2.contains("\"BackendEncode\""));
+    let _ = std::fs::remove_file(&snap2);
+
+    ring::reset_rings();
+}

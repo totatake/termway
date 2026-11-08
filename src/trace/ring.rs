@@ -14,6 +14,11 @@ pub struct ThreadRing {
 
 pub static TOTAL_OVERFLOW: AtomicU64 = AtomicU64::new(0);
 
+#[inline]
+pub fn total_overflow() -> u64 {
+    TOTAL_OVERFLOW.load(Ordering::Relaxed)
+}
+
 static MAIN_RING: Mutex<Option<ThreadRing>> = Mutex::new(None);
 static WORKER_RING: Mutex<Option<ThreadRing>> = Mutex::new(None);
 

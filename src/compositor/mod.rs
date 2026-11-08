@@ -55,6 +55,11 @@ pub struct EngineConfig {
     pub profile: bool,
     pub no_splash: bool,
     pub pixel_mouse: Option<bool>,
+    pub trace: bool,
+    pub trace_file: Option<String>,
+    pub trace_buffer: Option<usize>,
+    pub trace_flush_secs: Option<u64>,
+    pub trace_no_input: bool,
     pub command: Vec<String>,
 }
 
@@ -65,6 +70,17 @@ impl Default for EngineConfig {
             .and_then(|v| v.parse::<u32>().ok())
             .filter(|&f| (1..=240).contains(&f))
             .unwrap_or(30);
+
+        let trace = std::env::var("TERMWAY_TRACE").is_ok()
+            || std::env::var("TERMWAY_TRACE_FILE").is_ok();
+        let trace_file = std::env::var("TERMWAY_TRACE_FILE").ok();
+        let trace_buffer = std::env::var("TERMWAY_TRACE_BUFFER")
+            .ok()
+            .and_then(|s| crate::trace::parse_buffer_capacity(&s));
+        let trace_flush_secs = std::env::var("TERMWAY_TRACE_FLUSH_SECS")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok());
+        let trace_no_input = std::env::var("TERMWAY_TRACE_NO_INPUT").is_ok();
 
         Self {
             width: None,
@@ -80,6 +96,11 @@ impl Default for EngineConfig {
             profile: false,
             no_splash: false,
             pixel_mouse: None,
+            trace,
+            trace_file,
+            trace_buffer,
+            trace_flush_secs,
+            trace_no_input,
             command: Vec::new(),
         }
     }
@@ -113,11 +134,32 @@ pub struct TermwayCompositor {
     target_frame_duration: std::time::Duration,
     profile_enabled: bool,
     metrics: CompositorMetrics,
+    trace_file: Option<String>,
+    trace_flush_secs: u64,
+    last_trace_flush: Option<std::time::Instant>,
 }
 
 impl TermwayCompositor {
     pub fn new(config: EngineConfig) -> Result<Self> {
         setup_signals();
+
+        let trace_enabled = config.trace
+            || config.trace_file.is_some()
+            || std::env::var("TERMWAY_TRACE").is_ok()
+            || std::env::var("TERMWAY_TRACE_FILE").is_ok();
+        let input_enabled = !config.trace_no_input && std::env::var("TERMWAY_TRACE_NO_INPUT").is_err();
+        let buffer_cap = config.trace_buffer
+            .or_else(|| std::env::var("TERMWAY_TRACE_BUFFER").ok().and_then(|s| crate::trace::parse_buffer_capacity(&s)))
+            .unwrap_or(65536);
+        let trace_file = config.trace_file.clone()
+            .or_else(|| std::env::var("TERMWAY_TRACE_FILE").ok())
+            .or_else(|| if trace_enabled { Some("/tmp/termway_trace.json".to_string()) } else { None });
+        let trace_flush_secs = config.trace_flush_secs
+            .or_else(|| std::env::var("TERMWAY_TRACE_FLUSH_SECS").ok().and_then(|s| s.parse::<u64>().ok()))
+            .unwrap_or(0);
+
+        crate::trace::set_trace_file_path(trace_file.clone());
+        crate::trace::init(trace_enabled, input_enabled, buffer_cap);
         let mut term_size = TerminalSize::query().unwrap_or_else(|_| TerminalSize::fallback(80, 24));
         let cell_size_queried = config.cell_size.is_some();
         if let Some((cw, ch)) = config.cell_size {
@@ -359,6 +401,9 @@ impl TermwayCompositor {
                 ),
                 profile_enabled: config.profile || std::env::var("TERMWAY_PROFILE").is_ok(),
                 metrics: CompositorMetrics::new(),
+                trace_file,
+                trace_flush_secs,
+                last_trace_flush: None,
             })
     }
 
@@ -943,6 +988,10 @@ impl TermwayCompositor {
                     std::env::remove_var("TERMWAY_TEST_CAPTURE_NOW");
                 }
                 screenshot::save_screenshot(&mut self.renderer, &self.state);
+                if crate::trace::enabled() {
+                    let base_path = self.trace_file.as_deref().unwrap_or("/tmp/termway_trace.json");
+                    let _ = crate::trace::writer::dump_snapshot(base_path);
+                }
             }
 
             if state_requested || std::env::var("TERMWAY_TEST_STATE_NOW").is_ok() {
@@ -954,11 +1003,32 @@ impl TermwayCompositor {
                 let json = self.state.dump_state_json();
                 let _ = std::fs::write(&state_file, json);
                 log_line(format!("[test] Dumped GUI state to {}", state_file));
+                if crate::trace::enabled() {
+                    let base_path = self.trace_file.as_deref().unwrap_or("/tmp/termway_trace.json");
+                    let _ = crate::trace::writer::dump_snapshot(base_path);
+                }
+            }
+
+            // Periodic trace snapshot rotation if configured
+            if self.trace_flush_secs > 0 && crate::trace::enabled() {
+                let now = std::time::Instant::now();
+                if let Some(last) = self.last_trace_flush {
+                    if now.duration_since(last).as_secs() >= self.trace_flush_secs {
+                        let base_path = self.trace_file.as_deref().unwrap_or("/tmp/termway_trace.json");
+                        let _ = crate::trace::writer::dump_snapshot(base_path);
+                        self.last_trace_flush = Some(now);
+                    }
+                } else {
+                    self.last_trace_flush = Some(now);
+                }
             }
         }
 
         if self.profile_enabled {
             self.metrics.print_summary(&self.backend, self.state.start_time);
+        } else if crate::trace::enabled() {
+            let trace_path = self.trace_file.as_deref().unwrap_or("/tmp/termway_trace.json");
+            let _ = crate::trace::writer::dump_to_file(trace_path);
         }
 
         Ok(())

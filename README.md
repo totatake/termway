@@ -319,11 +319,46 @@ Example JSON schema:
   "avg_write_ms": 0.850,
   "max_write_ms": 2.100,
   "total_bytes": 1258291,
-  "kb_per_sec": 99.55
+  "kb_per_sec": 99.55,
+  "trace_file": "/tmp/termway_trace.json"
 }
 ```
 
-### 6. Shortcuts & Built-in Features
+### 6. Timeline Tracing & Perfetto Visualization (`--trace`, `TERMWAY_TRACE_FILE`)
+
+Termway features an ultra-low-overhead, zero-allocation timeline tracer designed for nanosecond-to-microsecond pipeline diagnostics. Events are recorded into thread-local, fixed-size ring buffers (32 bytes per event) without heap allocation on the hot path, and exported upon exit or signal as standard Chrome Trace Event JSON (compatible with [ui.perfetto.dev](https://ui.perfetto.dev)).
+
+- **CLI Options**:
+  - `--trace`: Enable timeline tracing (Chrome Trace Event format).
+  - `--trace-file <PATH>`: Destination path (supports `.gz` automatic gzip compression; defaults to `/tmp/termway_trace.json`).
+  - `--trace-buffer <N>`: Per-thread ring capacity (e.g. `64k`, `256k`, `1m`; default `65536`).
+  - `--trace-flush-secs <N>`: Periodically rotate and dump numbered snapshots every N seconds (e.g. `/tmp/termway_trace.1.json`).
+  - `--trace-no-input`: Suppress mouse and key event tracing to protect against buffer overflow under high-frequency pointer movement.
+- **Environment Variables**:
+  - `TERMWAY_TRACE=1`: Enable timeline tracer (equivalent to `--trace`).
+  - `TERMWAY_TRACE_FILE=<PATH>`: Output trace path (also implicitly enables tracing).
+  - `TERMWAY_TRACE_BUFFER=64k`: Set ring capacity.
+  - `TERMWAY_TRACE_FLUSH_SECS=10`: Periodic snapshot flush interval in seconds.
+  - `TERMWAY_TRACE_NO_INPUT=1`: Disable input event tracing.
+
+```bash
+# Capture combined summary metrics and full timeline trace simultaneously
+TERMWAY_PROFILE_FILE=/tmp/profile.json \
+TERMWAY_TRACE_FILE=/tmp/termway_trace.json.gz \
+  ./target/release/termway --profile --trace -- firefox
+
+# Open https://ui.perfetto.dev in your browser and drag & drop /tmp/termway_trace.json.gz
+# - Trace frame_id arrows across Render -> EnqueueSubmit -> BackendEncode -> BackendWrite
+# - Inspect per-window state counter tracks (win_{id}_state: 0=minimized, 1=floating, 2=maximized)
+# - View PTY write buffer congestion (TIOCOUTQ) and in-place coalesced pointer motions
+```
+
+**Real-Time & Post-Mortem Snapshots**:
+- Sending `SIGUSR1` or `SIGUSR2` (`kill -USR1 $(pgrep termway)`) automatically writes a numbered trace snapshot (e.g. `/tmp/termway_trace.1.json`).
+- If an unexpected panic occurs, Termway's emergency hook cleanly restores the terminal first, then safely flushes the trace buffer to disk for post-mortem analysis.
+- When `--hud` and `--trace` are active simultaneously, the HUD overlay displays `Ovf` (dropped event count).
+
+### 7. Shortcuts & Built-in Features
 
 | Shortcut | Action | Description |
 | :--- | :--- | :--- |
@@ -350,8 +385,13 @@ Example JSON schema:
 | `--height` | `<PIXELS>` | Virtual display resolution height | Auto-calculated from terminal |
 | `--fps` | `<FPS>` | Target frame rate limit | `30` |
 | `--scale` | `<FACTOR>` | Wayland output scale factor for HiDPI / fractional scaling (e.g. `1.25`, `1.5`, `2.0`) | `1.0` |
-| `--hud` | - | Show real-time performance HUD overlay (FPS, encode time, bandwidth, damage tiles) | Disabled |
+| `--hud` | - | Show real-time performance HUD overlay (FPS, encode time, bandwidth, damage tiles, and trace buffer overflow `Ovf`) | Disabled |
 | `--profile` | - | Print stage-by-stage performance profiling report to stderr on exit (also enabled via `TERMWAY_PROFILE=1`; set `TERMWAY_PROFILE_FILE=<PATH>` for JSON output) | Disabled |
+| `--trace` | - | Enable zero-allocation timeline tracing (Chrome Trace Event JSON compatible with Perfetto) | Disabled |
+| `--trace-file` | `<PATH>` | Trace output file destination (supports `.gz`; defaults to `/tmp/termway_trace.json`) | `/tmp/termway_trace.json` |
+| `--trace-buffer` | `<N>` | Per-thread trace ring capacity (e.g. `64k`, `256k`, `1m`) | `65536` |
+| `--trace-flush-secs` | `<N>` | Periodically rotate and dump numbered trace snapshots every N seconds | `0` (Disabled) |
+| `--trace-no-input` | - | Suppress mouse/keyboard event tracing to protect buffer against high-frequency input | Disabled |
 | `--no-splash` | - | Disable the animated startup splash screen while waiting for the first window | Disabled |
 | `--demo` | - | Launch built-in GTK3 Wayland demo application | - |
 | `--query` | - | Print diagnostic terminal capability report and exit | - |
@@ -418,7 +458,8 @@ Traditional remote GUI solutions (X11 Forwarding via `ssh -X`, VNC, RDP, or web-
 
 - **[System Architecture & Design (`docs/ARCHITECTURE.md`)](docs/ARCHITECTURE.md)**: Static structure (module layering, class/ownership diagrams) and dynamic structure (startup sequence, async render pipeline, window state machine, hit-test routing).
 - **[Requirements & Test Specification (`docs/SPECIFICATION.md`)](docs/SPECIFICATION.md)**: Functional/non-functional requirements and traceability matrix across all 127 tests.
-- **[Architecture Decision Records (`docs/adr/`)](docs/adr/README.md)**: Key architectural decisions and trade-offs (e.g. [ADR-0001: Hybrid D-Bus Session Routing](docs/adr/0001-hybrid-dbus-session-routing.md)).
+- **[Architecture Decision Records (`docs/adr/`)](docs/adr/README.md)**: Key architectural decisions and trade-offs (e.g. [ADR-0001: Hybrid D-Bus Session Routing](docs/adr/0001-hybrid-dbus-session-routing.md), [ADR-0003: Zero-Allocation Timeline Tracer](docs/adr/0003-zero-allocation-time-line-tracer.md)).
+- **[Timeline Tracing Guide (`docs/trace/`)](docs/trace/README.md)**: Zero-allocation tracer architecture, Chrome Trace Event JSON specification, and Perfetto visualization cookbook.
 - **[Engineering Roadmap (`docs/ROADMAP.md`)](docs/ROADMAP.md)**: Completed optimization phases and future milestones.
 
 ---

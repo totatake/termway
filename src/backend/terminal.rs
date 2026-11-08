@@ -270,7 +270,7 @@ impl TerminalBackend {
                             clear_seq.push_str("\x1b[2J\x1b[H\x1b_Ga=d,d=i,i=2\x1b\\");
                         }
                     } else if prev_hud_shown && !job.show_hud {
-                        for r in 2..=5 {
+                        for r in 2..=6 {
                             clear_seq.push_str(&format!("\x1b[{};1H\x1b[2K", r));
                         }
                     }
@@ -278,12 +278,16 @@ impl TerminalBackend {
 
                     let hud_seq = if job.show_hud && job.term_cols >= 20 && job.term_rows >= 6 {
                         let res_str = format!("{}x{}", job.width, job.height);
-                        let lines = [
+                        let mut lines = vec![
                             format!(" {:>8.1} FPS ", fps),
                             format!(" {:>12} ", res_str),
                             format!(" {:>7.1} KB/s ", kb_per_sec),
                             format!(" {:>9.1} ms ", last_encode_ms),
                         ];
+                        if crate::trace::enabled() {
+                            let ovf = crate::trace::ring::total_overflow();
+                            lines.push(format!(" Ovf:{:>7} ", ovf));
+                        }
                         let mut seq = String::from("\x1b[?7l");
                         for (idx, line) in lines.iter().enumerate() {
                             let row = 2 + idx as u16;

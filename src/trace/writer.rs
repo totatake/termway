@@ -224,3 +224,32 @@ pub fn dump_to_file(path: &str) -> io::Result<()> {
 
     Ok(())
 }
+
+static SNAPSHOT_INDEX: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
+
+/// Resets the snapshot index counter to 1 (used in tests).
+pub fn reset_snapshot_index() {
+    SNAPSHOT_INDEX.store(1, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Formats a numbered snapshot filename from a base path (e.g. `/tmp/trace.1.json`).
+pub fn format_snapshot_path(base_path: &str, idx: u32) -> String {
+    if let Some(prefix) = base_path.strip_suffix(".json.gz") {
+        format!("{}.{}.json.gz", prefix, idx)
+    } else if let Some(prefix) = base_path.strip_suffix(".gz") {
+        format!("{}.{}.gz", prefix, idx)
+    } else if let Some(prefix) = base_path.strip_suffix(".json") {
+        format!("{}.{}.json", prefix, idx)
+    } else {
+        format!("{}.{}", base_path, idx)
+    }
+}
+
+/// Dumps a numbered snapshot of the trace buffer (e.g. `/tmp/termway_trace.1.json`).
+/// Returns the path of the created snapshot file.
+pub fn dump_snapshot(base_path: &str) -> io::Result<String> {
+    let idx = SNAPSHOT_INDEX.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let snapshot_path = format_snapshot_path(base_path, idx);
+    dump_to_file(&snapshot_path)?;
+    Ok(snapshot_path)
+}

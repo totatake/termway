@@ -38,6 +38,7 @@ flowchart LR
         FR38["FR-38: OSC 2 端末タブタイトル動的同期"]
         FR39["FR-39: Kitty Graphics JPEG 拡張 (f=101) & 30fps 即時フレームフラッシュ"]
         FR40["FR-40: SGR-Pixels 高精度 1px マウストラッキング (DECSET 1016h)"]
+        FR43["FR-43: ゼロアロケーション・タイムライントレーシング (--trace)"]
     end
 
     subgraph Verification["テスト検証 (Verification)"]
@@ -52,6 +53,7 @@ flowchart LR
         T_Sess["unit_session<br/>(単体テスト: 7件)"]
         T_Secret["unit_secret_bridge<br/>(単体テスト: 4件)"]
         T_Sixel["unit_sixel_encoder<br/>(単体テスト: 7件)"]
+        T_Trace["unit_trace<br/>(単体テスト: 8件)"]
         T_Perf["perf_pipeline<br/>(性能ベンチマーク: 1件)"]
     end
 
@@ -138,6 +140,7 @@ flowchart LR
 | **FR-40** | SGR-Pixels 高精度 1px マウストラッキング (`\x1b[?1016h`) | 対応端末（Kitty, WezTerm, Foot, Ghostty）の自動検知および `--pixel-mouse` / `--no-pixel-mouse` CLI 制御に対応し、セル単位（10〜30px）の量子化を排除して端末から受信した 1-based ピクセル座標を Wayland ポインタへ 1px 単位でダイレクトマッピングすること。YouTube シークバー等の極小 UI 要素の正確なクリック・ドラッグ操作を保証すること。 | `src/terminal/raw.rs`<br/>`src/terminal/query.rs`<br/>`tests/unit_sgr_mouse.rs`<br/>`tests/unit_compositor.rs`<br/>`tests/integration_pipeline.rs` | **PASS** |
 | **FR-41** | シグナル安全 & パニック安全な端末復元 | SIGINT/SIGTERM/SIGHUP 受信時および万が一の panic 発生時に、端末 raw モード、マウス追従、タイトル、Kitty キーボードプロトコル、および同期描画モード（`\x1b[?2026l`）を確実に復元・解除すること。 | `src/terminal/raw.rs`<br/>`src/compositor/env.rs`<br/>`tests/unit_terminal.rs` | **PASS** |
 | **FR-42** | 端末機能診断 (`--query`) & 拡張プロファイル (p99) | `--query` フラグにより端末解像度、グラフィックスプロトコル、Kitty JPEG、マウストラッキング、XWayland、D-Bus、Polkit の対応状況を即時表示すること。`TERMWAY_NO_CURSOR_SHAPE` による OSC 22 抑制、`TERMWAY_FPS` による環境変数フレームレート指定、および `--profile` での p99 レイテンシ集計・JSON 出力をサポートすること。 | `src/main.rs`<br/>`src/compositor/profile.rs`<br/>`tests/integration_pipeline.rs`<br/>`tests/unit_compositor.rs` | **PASS** |
+| **FR-43** | ゼロアロケーション・タイムライントレーシング (`--trace`, Perfetto) | `--trace`, `--trace-file`, `--trace-buffer`, `--trace-flush-secs`, `--trace-no-input` オプションおよび対応環境変数をサポートし、32バイト固定長イベントとスレッド独立リングバッファによるホットパスヒープ確保ゼロのタイムライン記録、Chrome Trace Event JSON (および `.gz`) 出力、`frame_id` 非同期フロー追跡、インプレースマウス共結成、連番スナップショット、panic 時安全ダンプ、HUD 溢れ表示 (`Ovf`) を保証すること。 | `src/trace/`<br/>`tests/unit_trace.rs` | **PASS** |
 
 ### 2.2 非機能要件 (Non-Functional Requirements)
 
@@ -165,6 +168,7 @@ flowchart LR
 | `tests/unit_keyboard.rs` | 6 | UTF-8 文字、矢印キー、Ctrl 制御文字、Shift/Ctrl 修飾キー付きカーソル・選択キー、日本語 UTF-8 複数バイト解析、Kitty Keyboard Protocol (CSI u) 解析検証 |
 | `tests/unit_secret_bridge.rs` | 4 | D-Bus Secret Service (`org.freedesktop.secrets`) メッセージエンディアン解析・双方向リレー検証 |
 | `tests/unit_terminal.rs` | 6 | 端末サイズフォールバック、セル→ピクセル変換、TerminalBackend モード名検証、`RawModeGuard` RAII 安全性検証、シグナル終了フラグ & 生端末復元検証 |
+| `tests/unit_trace.rs` | 8 | 32B 固定長構造体検証 (TRC-001)、リングバッファ overflow & drop-oldest 順序検証 (TRC-001)、Chrome Trace Event JSON および `.gz` 圧縮出力 (TRC-001)、`frame_id` 跨スレッド非同期フロー & `BackendDrop` 原因追跡 (TRC-002)、高頻度マウスインプレース共結成 & `--trace-no-input` ゲート (TRC-003)、連番スナップショットローテーション & CLI パース (TRC-004)、WM 状態遷移カウンタトラック (`win_{id}_state`: 1→2→0→1) およびライフサイクルイベント (TRC-005) |
 | `tests/system_e2e_gui.rs` | 2 | Smithay コンポジタ描画 → DamageTracker → Kitty エンコード → SIMD BGRX 変換 E2E パイプライン検証、テストドライバ JSON ダンプ検証 |
 | `tests/perf_pipeline.rs` | 1 | 1080x720 擬似ウィンドウ描画・DamageTracker 差分検出・Kitty/Sixel エンコード総合パイプラインのベースライン性能ベンチマーク検証 |
 

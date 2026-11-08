@@ -66,6 +66,16 @@ impl RawModeGuard {
                         }
                     }
                 }
+                // If tracing is enabled, dump remaining events upon panic
+                if crate::trace::enabled() {
+                    static PANIC_TRACE_DUMP: Once = Once::new();
+                    PANIC_TRACE_DUMP.call_once(|| {
+                        let path = crate::trace::trace_file_path()
+                            .or_else(|| std::env::var("TERMWAY_TRACE_FILE").ok())
+                            .unwrap_or_else(|| "/tmp/termway_trace.json".to_string());
+                        let _ = crate::trace::writer::dump_to_file(&path);
+                    });
+                }
                 default_hook(info);
             }));
         });

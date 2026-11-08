@@ -14,6 +14,19 @@ pub use event::{EventId, Phase, ThreadRole, TraceEvent};
 pub static ENABLED: AtomicBool = AtomicBool::new(false);
 pub static INPUT_ENABLED: AtomicBool = AtomicBool::new(true);
 static SESSION_START: OnceLock<Instant> = OnceLock::new();
+static TRACE_FILE_PATH: std::sync::RwLock<Option<String>> = std::sync::RwLock::new(None);
+
+/// Sets the configured trace output file path.
+pub fn set_trace_file_path(path: Option<String>) {
+    if let Ok(mut lock) = TRACE_FILE_PATH.write() {
+        *lock = path;
+    }
+}
+
+/// Returns the configured trace output file path, if any.
+pub fn trace_file_path() -> Option<String> {
+    TRACE_FILE_PATH.read().ok().and_then(|lock| lock.clone())
+}
 
 /// Initializes tracing configuration from CLI options or environment variables.
 pub fn init(enabled: bool, input_enabled: bool, buffer_capacity: usize) {
@@ -31,6 +44,10 @@ pub fn init(enabled: bool, input_enabled: bool, buffer_capacity: usize) {
 pub fn init_from_env() {
     let trace_enabled = std::env::var("TERMWAY_TRACE").is_ok()
         || std::env::var("TERMWAY_TRACE_FILE").is_ok();
+    let trace_file = std::env::var("TERMWAY_TRACE_FILE").ok();
+    if trace_file.is_some() {
+        set_trace_file_path(trace_file);
+    }
     let input_enabled = std::env::var("TERMWAY_TRACE_NO_INPUT").is_err();
     let buffer_capacity = std::env::var("TERMWAY_TRACE_BUFFER")
         .ok()

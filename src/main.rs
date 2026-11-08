@@ -25,6 +25,11 @@ OPTIONS:
     --no-pixel-mouse          Disable SGR-Pixels mouse tracking (use standard cell mode)
     --hud                     Enable real-time performance HUD indicator
     --profile                 Enable performance profiling and latency breakdown
+    --trace                   Enable zero-allocation timeline tracing (Chrome Trace JSON)
+    --trace-file <PATH>       Output path for trace JSON (supports .gz; default: /tmp/termway_trace.json)
+    --trace-buffer <N>        Per-thread trace ring capacity (e.g. 64k, 256k, 1m; default: 65536)
+    --trace-flush-secs <N>    Rotate trace snapshots every N seconds (default: 0 = disabled)
+    --trace-no-input          Disable input event tracing to prevent buffer overflow
     --no-splash               Disable startup splash screen
     --demo                    Run built-in demo GUI application
     --query                   Print diagnostic terminal capability report and exit
@@ -116,6 +121,16 @@ fn main() -> Result<()> {
             println!("termway {}", env!("CARGO_PKG_VERSION"));
             return Ok(());
         } else if arg == "--query" {
+            let has_trace_arg = args.iter().any(|a| {
+                a == "--trace"
+                    || a == "--trace-file"
+                    || a == "--trace-buffer"
+                    || a == "--trace-flush-secs"
+                    || a == "--trace-no-input"
+            });
+            if has_trace_arg {
+                eprintln!("Warning: --trace options are ignored with --query diagnostic mode.");
+            }
             print_capability_report()?;
             return Ok(());
         } else if arg == "--width" {
@@ -225,6 +240,44 @@ fn main() -> Result<()> {
             config.hud = true;
         } else if arg == "--profile" {
             config.profile = true;
+        } else if arg == "--trace" {
+            config.trace = true;
+        } else if arg == "--trace-file" {
+            i += 1;
+            if i >= args.len() {
+                eprintln!("Error: --trace-file requires a path argument");
+                std::process::exit(1);
+            }
+            config.trace = true;
+            config.trace_file = Some(args[i].clone());
+        } else if arg == "--trace-buffer" {
+            i += 1;
+            if i >= args.len() {
+                eprintln!("Error: --trace-buffer requires a capacity argument (e.g. 64k)");
+                std::process::exit(1);
+            }
+            match termway::trace::parse_buffer_capacity(&args[i]) {
+                Some(cap) if cap > 0 => config.trace_buffer = Some(cap),
+                _ => {
+                    eprintln!("Error: --trace-buffer must be a valid capacity (e.g. 4k, 64k, 256k, 1m)");
+                    std::process::exit(1);
+                }
+            }
+        } else if arg == "--trace-flush-secs" {
+            i += 1;
+            if i >= args.len() {
+                eprintln!("Error: --trace-flush-secs requires a numeric argument");
+                std::process::exit(1);
+            }
+            match args[i].parse::<u64>() {
+                Ok(s) => config.trace_flush_secs = Some(s),
+                Err(_) => {
+                    eprintln!("Error: --trace-flush-secs must be an integer");
+                    std::process::exit(1);
+                }
+            }
+        } else if arg == "--trace-no-input" {
+            config.trace_no_input = true;
         } else if arg == "--no-splash" {
             config.no_splash = true;
         } else if arg == "--demo" {
@@ -347,8 +400,6 @@ Gtk.main()
             std::process::exit(127);
         }
     }
-
-    termway::trace::init_from_env();
 
     let mut compositor = match TermwayCompositor::new(config) {
         Ok(c) => c,

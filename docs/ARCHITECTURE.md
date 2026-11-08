@@ -50,11 +50,17 @@ src/
 ├── session/                        # 【セッション管理・IPC ブリッジ層】
 │   ├── mod.rs                      # SessionManager: ハイブリッド D-Bus 管理、Snap シム生成、Polkit エージェント管理
 │   └── secret_bridge.rs            # SecretServiceBridge: org.freedesktop.secrets D-Bus 中継ブリッジ
-└── terminal/                       # 【端末制御・RAII 保護・解像度検出層】
-    ├── mod.rs
-    ├── raw.rs                      # RawModeGuard: termios Raw モード & Alternate Screen の RAII 復元保証
-    ├── winsize.rs                  # TerminalSize: TIOCGWINSZ & SGR 14t/16t セルピクセル寸法測定・SIGWINCH 捕捉
-    └── query.rs                    # GraphicsProtocol: 端末環境変数およびエスケープシーケンス応答によるプロトコル検出
+├── terminal/                       # 【端末制御・RAII 保護・解像度検出層】
+│   ├── mod.rs
+│   ├── raw.rs                      # RawModeGuard: termios Raw モード & Alternate Screen の RAII 復元保証
+│   ├── winsize.rs                  # TerminalSize: TIOCGWINSZ & SGR 14t/16t セルピクセル寸法測定・SIGWINCH 捕捉
+│   └── query.rs                    # GraphicsProtocol: 端末環境変数およびエスケープシーケンス応答によるプロトコル検出
+└── trace/                          # 【ゼロアロケーション・タイムライントレース層】
+    ├── mod.rs                      # トレース初期化、グローバル有効化フラグ、セッション時刻
+    ├── event.rs                    # TraceEvent (32B Copy)、Phase、ThreadRole、EventId
+    ├── ring.rs                     # ThreadRing (スレッド独立固定長リング、drop-oldest、共結成)
+    ├── frame.rs                    # frame_id 採番、パイプライン非同期フロー
+    └── writer.rs                   # Chrome Trace Event JSON / .gz 出力、連番スナップショット
 ```
 
 ---
@@ -572,4 +578,28 @@ stateDiagram-v2
 4. **整数/小数スケール適応描画**:
    - `TermwayRenderer` はサーフェスツリー描画時に `render_elements_from_surface_tree` に物理座標位置（`to_phys(window.loc)`）と `Scale<f64>` を指定。小数スケール対応クライアントの高精細バッファは等倍クリア描画され、非対応レガシーアプリはピクセル補正により正しい画面サイズでレンダリング。
    - タイトルバー・枠線・フォントレンダラ（`DecorationRenderer`）も指定スケール倍率（`scale`）を乗算して自動スケーリング。
+
+---
+
+### 3.5 ゼロアロケーション・タイムライントレーシング (`src/trace/`)
+
+パフォーマンス診断およびフレームドロップ・入力遅延のナノ〜マイクロ秒解析のため、ホットパスでのヒープ確保ゼロのタイムライントレーサーを内蔵しています（詳細は [docs/trace/README.md](trace/README.md) および [ADR-0003](adr/0003-zero-allocation-time-line-tracer.md) を参照）。
+
+1. **32バイト固定長イベントモデル (`TraceEvent`)**:
+   - `ts_us (8B)`, `dur_us (4B)`, `id (4B)`, `arg1 (4B)`, `arg2 (4B)`, `arg3 (2B)`, `lane (1B)`, `phase (1B)`, `thread_id (2B)`, `event_id (2B)` の計 32 バイト固定長 `Copy` 構造体。
+   - `Phase`（Complete, Instant, FlowStart, FlowEnd, Counter, Metadata）により Chrome Trace Event JSON 形式と 1-to-1 マッピング。
+2. **スレッド独立リングバッファ (`ThreadRing`)**:
+   - `Main` スレッドと `AsyncRender` ワーカースレッドそれぞれが独立した固定長リングバッファを持ち、平時は競合のない排他制御で超低オーバーヘッド書き込み。
+   - バッファ満杯時は `drop-oldest`（最新のイベントを常に保持）と `overflow` カウンタ加算を実施。
+3. **高頻度マウス移動のインプレース共結成 (Motion Coalescing)**:
+   - DECSET 1016h（SGR-Pixels）等の高頻度マウス移動イベントは、リング内の直前イベントが `InputMotionCoalesce` の場合にスロットを消費せずインプレース合算（カウント加算＋最新座標更新＋経過時間延長）。
+4. **跨スレッド `frame_id` 非同期フローと PTY 滞留監視**:
+   - メインスレッドの `EnqueueSubmit`（`ph:"s"`）からワーカースレッドの `FrameComplete`（`ph:"f"`）まで同一の `frame_id` で追跡可能。
+   - `BackendDrop` によりワーカースレッドのキュー滞留によるフレームドロップ原因（破棄フレーム ID・置換フレーム ID・待機時間）を可視化。
+   - `ioctl(STDOUT_FILENO, TIOCOUTQ)` により PTY 送信キューの滞留バイト数を取得し、ネットワークや端末側の読み取り遅延を分離測定。
+5. **ウィンドウ管理 (WM) カウンタトラック**:
+   - ウィンドウ状態遷移（0: Minimized, 1: Floating, 2: Maximized）をウィンドウ ID ごとのカウンタトラック（`win_{id}_state`, `ph:"C"`）として出力し、Perfetto 上でステップグラフとして可視化。
+6. **障害復元・事後解析連携**:
+   - `SIGUSR1` / `SIGUSR2` や `--trace-flush-secs` による連番スナップショット出力。
+   - panic 発生時、端末安全復元完了後に `Once` ガード付きでトレースバッファを自動ダンプ。
 
