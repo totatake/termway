@@ -810,6 +810,7 @@ impl TermwayCompositor {
                     self.term_cols,
                 );
                 let t_r0 = std::time::Instant::now();
+                let r_start_us = if crate::trace::enabled() { crate::trace::now_us() } else { 0 };
                 let render_res = self.renderer.render(&self.state);
                 let r_dur = t_r0.elapsed();
 
@@ -847,6 +848,29 @@ impl TermwayCompositor {
                     let d_dur = t_d0.elapsed();
                     let d_us = d_dur.as_micros() as u64;
                     self.metrics.record_render(r_us, d_us);
+
+                    if crate::trace::enabled() {
+                        crate::trace::slice(
+                            crate::trace::ThreadRole::Main,
+                            crate::trace::EventId::Render,
+                            r_start_us,
+                            r_us as u32,
+                            0,
+                            self.state.wm.windows.len() as u32,
+                            w,
+                            h as u16,
+                        );
+                        crate::trace::slice(
+                            crate::trace::ThreadRole::Main,
+                            crate::trace::EventId::DamageScan,
+                            r_start_us + r_us,
+                            d_us as u32,
+                            0,
+                            damage.len() as u32,
+                            0,
+                            0,
+                        );
+                    }
 
                     let taskbar_changed = taskbar != self.prev_taskbar;
                     self.prev_taskbar = taskbar.clone();

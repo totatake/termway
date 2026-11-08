@@ -5,6 +5,7 @@ pub mod display;
 pub mod backend;
 pub mod compositor;
 pub mod session;
+pub mod trace;
 
 pub use error::{Result, TermwayError};
 

@@ -167,8 +167,16 @@ impl CompositorMetrics {
         eprintln!("============================================================================================\n");
 
         if let Ok(path) = std::env::var("TERMWAY_PROFILE_FILE") {
+            let trace_file_entry = if let Ok(t_path) = std::env::var("TERMWAY_TRACE_FILE") {
+                format!(r#","trace_file":{:?}"#, t_path)
+            } else if crate::trace::enabled() {
+                String::from(r#","trace_file":"/tmp/termway_trace.json""#)
+            } else {
+                String::new()
+            };
+
             let report = format!(
-                r#"{{"duration_sec":{:.3},"render_frames":{},"clean_skips":{},"jobs_submitted":{},"jobs_rendered":{},"partial_frames":{},"frames_dropped":{},"avg_render_ms":{:.3},"p95_render_ms":{:.3},"p99_render_ms":{:.3},"max_render_ms":{:.3},"avg_damage_us":{:.3},"max_damage_us":{:.3},"avg_encode_ms":{:.3},"p95_encode_ms":{:.3},"p99_encode_ms":{:.3},"max_encode_ms":{:.3},"avg_write_ms":{:.3},"p95_write_ms":{:.3},"p99_write_ms":{:.3},"max_write_ms":{:.3},"total_bytes":{},"kb_per_sec":{:.2}}}"#,
+                r#"{{"duration_sec":{:.3},"render_frames":{},"clean_skips":{},"jobs_submitted":{},"jobs_rendered":{},"partial_frames":{},"frames_dropped":{},"avg_render_ms":{:.3},"p95_render_ms":{:.3},"p99_render_ms":{:.3},"max_render_ms":{:.3},"avg_damage_us":{:.3},"max_damage_us":{:.3},"avg_encode_ms":{:.3},"p95_encode_ms":{:.3},"p99_encode_ms":{:.3},"max_encode_ms":{:.3},"avg_write_ms":{:.3},"p95_write_ms":{:.3},"p99_write_ms":{:.3},"max_write_ms":{:.3},"total_bytes":{},"kb_per_sec":{:.2}{}}}"#,
                 elapsed_secs,
                 self.render_frames,
                 self.clean_skips,
@@ -192,8 +200,16 @@ impl CompositorMetrics {
                 max_write_us as f64 / 1000.0,
                 total_bytes,
                 kb_per_sec,
+                trace_file_entry,
             );
             let _ = std::fs::write(path, report);
+        }
+
+        // If trace is enabled, dump trace events
+        if crate::trace::enabled() {
+            let trace_path = std::env::var("TERMWAY_TRACE_FILE")
+                .unwrap_or_else(|_| "/tmp/termway_trace.json".to_string());
+            let _ = crate::trace::writer::dump_to_file(&trace_path);
         }
     }
 }

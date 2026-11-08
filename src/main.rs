@@ -348,6 +348,8 @@ Gtk.main()
         }
     }
 
+    termway::trace::init_from_env();
+
     let mut compositor = match TermwayCompositor::new(config) {
         Ok(c) => c,
         Err(e) => {

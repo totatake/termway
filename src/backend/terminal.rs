@@ -190,6 +190,8 @@ impl TerminalBackend {
                     };
 
                     let encode_start = std::time::Instant::now();
+                    let enc_start_us = if crate::trace::enabled() { crate::trace::now_us() } else { 0 };
+                    let mut is_partial_frame = false;
                     let bytes_encoded = if use_sixel {
                         sixel_stream.encode_frame_into(
                             &job.pixels,
@@ -215,6 +217,7 @@ impl TerminalBackend {
                         );
                         if is_partial {
                             metrics_clone.partial_frames.fetch_add(1, Ordering::Relaxed);
+                            is_partial_frame = true;
                         }
                         kitty_out.len()
                     };
@@ -323,6 +326,29 @@ impl TerminalBackend {
                     metrics_clone.total_write_us.fetch_add(write_us, Ordering::Relaxed);
                     metrics_clone.max_write_us.fetch_max(write_us, Ordering::Relaxed);
                     metrics_clone.record_write_us(write_us);
+
+                    if crate::trace::enabled() {
+                        crate::trace::slice(
+                            crate::trace::ThreadRole::AsyncRender,
+                            crate::trace::EventId::BackendEncode,
+                            enc_start_us,
+                            encode_us as u32,
+                            0,
+                            bytes_encoded as u32,
+                            job.damage.as_ref().map(|d| d.len() as u32).unwrap_or(0),
+                            is_partial_frame as u16,
+                        );
+                        crate::trace::slice(
+                            crate::trace::ThreadRole::AsyncRender,
+                            crate::trace::EventId::BackendWrite,
+                            enc_start_us + encode_us,
+                            write_us as u32,
+                            0,
+                            frame_buf.len() as u32,
+                            0,
+                            0,
+                        );
+                    }
 
                     let mut guard = lock.lock().unwrap();
                     guard.spare_buffer = Some(job.pixels);
