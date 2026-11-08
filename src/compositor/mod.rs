@@ -810,6 +810,7 @@ impl TermwayCompositor {
                     self.term_cols,
                 );
                 let t_r0 = std::time::Instant::now();
+                let fid = if crate::trace::enabled() { crate::trace::frame::alloc_frame_id() } else { 0 };
                 let r_start_us = if crate::trace::enabled() { crate::trace::now_us() } else { 0 };
                 let render_res = self.renderer.render(&self.state);
                 let r_dur = t_r0.elapsed();
@@ -855,7 +856,7 @@ impl TermwayCompositor {
                             crate::trace::EventId::Render,
                             r_start_us,
                             r_us as u32,
-                            0,
+                            fid,
                             self.state.wm.windows.len() as u32,
                             w,
                             h as u16,
@@ -865,10 +866,10 @@ impl TermwayCompositor {
                             crate::trace::EventId::DamageScan,
                             r_start_us + r_us,
                             d_us as u32,
-                            0,
+                            fid,
                             damage.len() as u32,
                             0,
-                            0,
+                            self.backend.needs_clear as u16,
                         );
                     }
 
@@ -884,9 +885,28 @@ impl TermwayCompositor {
                         let damage_arg = if self.backend.needs_clear {
                             None
                         } else {
-                            Some(damage)
+                            Some(damage.clone())
                         };
-                        let _ = self.backend.render_pixels_with_damage(pixels, w, h, taskbar.as_deref(), damage_arg);
+
+                        if crate::trace::enabled() {
+                            crate::trace::flow_start(
+                                crate::trace::ThreadRole::Main,
+                                crate::trace::EventId::EnqueueSubmit,
+                                crate::trace::now_us(),
+                                fid,
+                                damage.len() as u32,
+                                self.backend.needs_clear as u16,
+                            );
+                        }
+
+                        let _ = self.backend.render_pixels_with_damage_and_id(
+                            pixels,
+                            w,
+                            h,
+                            taskbar.as_deref(),
+                            damage_arg,
+                            fid,
+                        );
                     } else {
                         self.metrics.record_clean_skip();
                     }

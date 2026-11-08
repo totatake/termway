@@ -7,6 +7,8 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 
 struct RenderJob {
+    frame_id: u32,
+    enqueue_ts_us: u64,
     pixels: Vec<u8>,
     width: u32,
     height: u32,
@@ -299,7 +301,9 @@ impl TerminalBackend {
                         String::new()
                     };
 
-                    let write_start = std::time::Instant::now();
+                    let assemble_start = std::time::Instant::now();
+                    let assemble_start_us = if crate::trace::enabled() { crate::trace::now_us() } else { 0 };
+
                     // Assemble the entire frame into a single contiguous buffer before writing to stdout.
                     // This guarantees atomic output per frame and eliminates race conditions or interleaving
                     // with asynchronous OSC/control sequences.
@@ -317,6 +321,18 @@ impl TerminalBackend {
                     frame_buf.extend_from_slice(hud_seq.as_bytes());
                     frame_buf.extend_from_slice(b"\x1b[?2026l");
 
+                    let assemble_us = assemble_start.elapsed().as_micros() as u64;
+
+                    // Query kernel PTY queue backlog via TIOCOUTQ before write_all
+                    let mut tiocoutq: libc::c_int = 0;
+                    if crate::trace::enabled() {
+                        unsafe {
+                            let _ = libc::ioctl(libc::STDOUT_FILENO, libc::TIOCOUTQ, &mut tiocoutq);
+                        }
+                    }
+
+                    let write_start = std::time::Instant::now();
+                    let write_start_us = if crate::trace::enabled() { crate::trace::now_us() } else { 0 };
                     {
                         let mut out_guard = stdout.lock();
                         let _ = out_guard.write_all(&frame_buf);
@@ -333,21 +349,39 @@ impl TerminalBackend {
                             crate::trace::EventId::BackendEncode,
                             enc_start_us,
                             encode_us as u32,
-                            0,
+                            job.frame_id,
                             bytes_encoded as u32,
                             job.damage.as_ref().map(|d| d.len() as u32).unwrap_or(0),
                             is_partial_frame as u16,
                         );
                         crate::trace::slice(
                             crate::trace::ThreadRole::AsyncRender,
-                            crate::trace::EventId::BackendWrite,
-                            enc_start_us + encode_us,
-                            write_us as u32,
-                            0,
+                            crate::trace::EventId::FrameAssemble,
+                            assemble_start_us,
+                            assemble_us as u32,
+                            job.frame_id,
                             frame_buf.len() as u32,
                             0,
+                            job.show_hud as u16,
+                        );
+                        crate::trace::slice(
+                            crate::trace::ThreadRole::AsyncRender,
+                            crate::trace::EventId::BackendWrite,
+                            write_start_us,
+                            write_us as u32,
+                            job.frame_id,
+                            frame_buf.len() as u32,
+                            tiocoutq.max(0) as u32,
                             0,
                         );
+                        if job.frame_id > 0 {
+                            crate::trace::flow_end(
+                                crate::trace::ThreadRole::AsyncRender,
+                                crate::trace::EventId::FrameComplete,
+                                write_start_us + write_us,
+                                job.frame_id,
+                            );
+                        }
                     }
 
                     let mut guard = lock.lock().unwrap();
@@ -423,7 +457,21 @@ impl TerminalBackend {
         taskbar: Option<&str>,
         damage: Option<Vec<DamageRect>>,
     ) -> io::Result<()> {
+        let frame_id = if crate::trace::enabled() { crate::trace::frame::alloc_frame_id() } else { 0 };
+        self.render_pixels_with_damage_and_id(pixels, width, height, taskbar, damage, frame_id)
+    }
+
+    pub fn render_pixels_with_damage_and_id(
+        &mut self,
+        pixels: &[u8],
+        width: u32,
+        height: u32,
+        taskbar: Option<&str>,
+        damage: Option<Vec<DamageRect>>,
+        frame_id: u32,
+    ) -> io::Result<()> {
         self.metrics.jobs_submitted.fetch_add(1, Ordering::Relaxed);
+        let now_us = if crate::trace::enabled() { crate::trace::now_us() } else { 0 };
         let (lock, cvar) = &*self.async_state;
         let mut guard = lock.lock().unwrap();
 
@@ -434,6 +482,20 @@ impl TerminalBackend {
             // Worker is still busy encoding/flushing previous frame.
             // Drop outdated pending frame and replace with this latest frame (Frame Dropping!).
             self.metrics.frames_dropped.fetch_add(1, Ordering::Relaxed);
+            if crate::trace::enabled() {
+                let pending_age_us = now_us.saturating_sub(job.enqueue_ts_us) as u32;
+                crate::trace::instant(
+                    crate::trace::ThreadRole::Main,
+                    crate::trace::EventId::BackendDrop,
+                    now_us,
+                    job.frame_id,
+                    frame_id,
+                    pending_age_us,
+                    0,
+                );
+            }
+            job.frame_id = frame_id;
+            job.enqueue_ts_us = now_us;
             job.pixels.clear();
             job.pixels.extend_from_slice(pixels);
             job.width = width;
@@ -463,6 +525,8 @@ impl TerminalBackend {
             buf.clear();
             buf.extend_from_slice(pixels);
             guard.pending_job = Some(RenderJob {
+                frame_id,
+                enqueue_ts_us: now_us,
                 pixels: buf,
                 width,
                 height,

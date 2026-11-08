@@ -147,3 +147,76 @@ fn test_trace_disabled_zero_cost() {
 
     ring::reset_rings();
 }
+
+#[test]
+fn test_frame_id_async_flow_and_backend_drop() {
+    trace::init(true, true, 64);
+    assert!(trace::enabled());
+
+    let fid1 = trace::frame::alloc_frame_id();
+    let fid2 = trace::frame::alloc_frame_id();
+    assert_eq!(fid2, fid1 + 1);
+
+    let ts = trace::now_us();
+    // 1. Submit frame 1 (FlowStart)
+    trace::flow_start(ThreadRole::Main, EventId::EnqueueSubmit, ts, fid1, 4, 0);
+
+    // 2. Drop frame 1 due to frame 2 arriving before worker picked it up
+    trace::instant(
+        ThreadRole::Main,
+        EventId::BackendDrop,
+        ts + 500,
+        fid1,
+        fid2,
+        500,
+        0,
+    );
+
+    // 3. Frame 2 starts and completes on AsyncRender worker
+    trace::flow_start(ThreadRole::Main, EventId::EnqueueSubmit, ts + 600, fid2, 1, 0);
+    trace::slice(
+        ThreadRole::AsyncRender,
+        EventId::BackendEncode,
+        ts + 1000,
+        500,
+        fid2,
+        2048,
+        1,
+        0,
+    );
+    trace::slice(
+        ThreadRole::AsyncRender,
+        EventId::FrameAssemble,
+        ts + 1500,
+        50,
+        fid2,
+        2200,
+        0,
+        0,
+    );
+    trace::slice(
+        ThreadRole::AsyncRender,
+        EventId::BackendWrite,
+        ts + 1550,
+        400,
+        fid2,
+        2200,
+        1024,
+        0,
+    );
+    trace::flow_end(ThreadRole::AsyncRender, EventId::FrameComplete, ts + 1950, fid2);
+
+    let (events, _ovf) = ring::drain_all();
+    assert_eq!(events.len(), 7);
+
+    let json = build_json_string(&events, 0);
+    assert!(json.contains("\"ph\":\"s\""));
+    assert!(json.contains("\"ph\":\"f\""));
+    assert!(json.contains("\"BackendDrop\""));
+    assert!(json.contains("\"FrameAssemble\""));
+    assert!(json.contains("\"tiocoutq\":1024"));
+    assert!(json.contains(&format!("\"dropped_frame\":{}", fid1)));
+    assert!(json.contains(&format!("\"by_frame\":{}", fid2)));
+
+    ring::reset_rings();
+}
