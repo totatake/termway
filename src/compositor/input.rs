@@ -623,11 +623,57 @@ pub fn dispatch_mouse_event(
             // 2. Normal pointer motion: check popups, managed windows, and fallback
             let focus = find_pointer_focus(state, loc_i32);
             let motion = MotionEvent { location: loc, serial, time };
-            pointer.motion(state, focus, &motion);
+            pointer.motion(state, focus.clone(), &motion);
             pointer.frame(state);
+
+            if crate::trace::input_enabled() {
+                let coords = (((loc_x as i32) as u32) << 16) | (((loc_y as i32) as u32) & 0xFFFF);
+                if focus.is_some() {
+                    crate::trace::instant(
+                        crate::trace::ThreadRole::Main,
+                        crate::trace::EventId::InputMotionCoalesce,
+                        crate::trace::now_us(),
+                        0,
+                        1,
+                        coords,
+                        0,
+                    );
+                } else {
+                    crate::trace::instant(
+                        crate::trace::ThreadRole::Main,
+                        crate::trace::EventId::InputMotionSkip,
+                        crate::trace::now_us(),
+                        0,
+                        1,
+                        coords,
+                        0,
+                    );
+                }
+            }
         }
 
         MouseAction::Press => {
+            if crate::trace::input_enabled() {
+                let coords = (((loc_x as i32) as u32) << 16) | (((loc_y as i32) as u32) & 0xFFFF);
+                let btn_num = match ev.button {
+                    MouseButton::Left => 1,
+                    MouseButton::Middle => 2,
+                    MouseButton::Right => 3,
+                    MouseButton::WheelUp => 4,
+                    MouseButton::WheelDown => 5,
+                    _ => 0,
+                };
+                crate::trace::instant(
+                    crate::trace::ThreadRole::Main,
+                    crate::trace::EventId::InputMouse,
+                    crate::trace::now_us(),
+                    0,
+                    btn_num,
+                    coords,
+                    1, // Press
+                );
+            }
+
             // Handle mouse wheel scrolling (Wayland pointer axis scroll events)
             if matches!(ev.button, MouseButton::WheelUp | MouseButton::WheelDown) {
                 let focus = find_pointer_focus(state, loc_i32);
@@ -879,6 +925,25 @@ pub fn dispatch_mouse_event(
         }
 
         MouseAction::Release => {
+            if crate::trace::input_enabled() {
+                let coords = (((loc_x as i32) as u32) << 16) | (((loc_y as i32) as u32) & 0xFFFF);
+                let btn_num = match ev.button {
+                    MouseButton::Left => 1,
+                    MouseButton::Middle => 2,
+                    MouseButton::Right => 3,
+                    _ => 0,
+                };
+                crate::trace::instant(
+                    crate::trace::ThreadRole::Main,
+                    crate::trace::EventId::InputMouse,
+                    crate::trace::now_us(),
+                    0,
+                    btn_num,
+                    coords,
+                    0, // Release
+                );
+            }
+
             if matches!(ev.button, MouseButton::WheelUp | MouseButton::WheelDown) {
                 return;
             }

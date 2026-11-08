@@ -120,6 +120,9 @@ pub fn instant(
     if !enabled() {
         return;
     }
+    if event_id.category() == "input" && !input_enabled() {
+        return;
+    }
     ring::record(
         thread,
         TraceEvent {

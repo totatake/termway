@@ -220,3 +220,50 @@ fn test_frame_id_async_flow_and_backend_drop() {
 
     ring::reset_rings();
 }
+
+#[test]
+fn test_motion_coalescing_and_input_no_input_flag() {
+    trace::init(true, true, 64);
+    assert!(trace::input_enabled());
+
+    let ts = trace::now_us();
+    // Record 5 rapid motion events at ts, ts+10, ts+20, ts+30, ts+40
+    for i in 0..5 {
+        trace::instant(
+            ThreadRole::Main,
+            EventId::InputMotionCoalesce,
+            ts + i * 10,
+            0,
+            1,
+            (100 << 16) | (200 + i as u32),
+            0,
+        );
+    }
+
+    let (events, _ovf) = ring::drain_all();
+    // 5 consecutive motions must be coalesced in-place into 1 slot with count=5
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].event_id, EventId::InputMotionCoalesce);
+    assert_eq!(events[0].arg1, 5);
+    assert_eq!(events[0].dur_us, 40);
+
+    // Test input_enabled() gate with TERMWAY_TRACE_NO_INPUT flag
+    trace::init(true, false, 64);
+    assert!(trace::enabled());
+    assert!(!trace::input_enabled());
+
+    trace::instant(
+        ThreadRole::Main,
+        EventId::InputMouse,
+        trace::now_us(),
+        0,
+        1,
+        0,
+        1,
+    );
+    let (no_input_events, _) = ring::drain_all();
+    // When input is disabled, mouse events are not recorded
+    assert_eq!(no_input_events.len(), 0);
+
+    ring::reset_rings();
+}

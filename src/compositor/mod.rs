@@ -756,6 +756,17 @@ impl TermwayCompositor {
                         if revents.contains(nix::poll::PollFlags::POLLIN) {
                             if let Ok(n) = stdin.lock().read(&mut chunk) {
                                 if n > 0 {
+                                    if crate::trace::input_enabled() {
+                                        crate::trace::instant(
+                                            crate::trace::ThreadRole::Main,
+                                            crate::trace::EventId::InputRawRecv,
+                                            crate::trace::now_us(),
+                                            0,
+                                            n as u32,
+                                            0,
+                                            0,
+                                        );
+                                    }
                                     self.input_buffer.extend_from_slice(&chunk[..n]);
                                 }
                             }
