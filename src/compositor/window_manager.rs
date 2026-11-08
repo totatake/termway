@@ -74,8 +74,63 @@ impl WindowManager {
             .find(|w| matches!(&w.surface, WindowSurface::Wayland(t) if t == surface))
     }
 
+    /// Adds a managed window to the Z-order stack and emits WindowMap and initial WindowStateChange.
+    pub fn add_window(&mut self, win: ManagedWindow) {
+        let id = win.id as u32;
+        let w = win.size.w as u32;
+        let h = win.size.h as u32;
+        let is_max = win.is_maximized;
+        let state_num = win.state_num();
+        self.windows.push(win);
+        crate::trace::instant(
+            crate::trace::ThreadRole::Main,
+            crate::trace::EventId::WindowMap,
+            crate::trace::now_us(),
+            id,
+            w,
+            h,
+            is_max as u16,
+        );
+        crate::trace::counter(
+            crate::trace::ThreadRole::Main,
+            crate::trace::EventId::WindowStateChange,
+            crate::trace::now_us(),
+            id,
+            state_num,
+        );
+    }
+
+    /// Removes a managed window by ID, emitting WindowClose.
+    pub fn remove_window(&mut self, id: usize) -> Option<ManagedWindow> {
+        if let Some(pos) = self.windows.iter().position(|w| w.id == id) {
+            crate::trace::instant(
+                crate::trace::ThreadRole::Main,
+                crate::trace::EventId::WindowClose,
+                crate::trace::now_us(),
+                id as u32,
+                0,
+                0,
+                0,
+            );
+            Some(self.windows.remove(pos))
+        } else {
+            None
+        }
+    }
+
     /// Removes the managed window backing the given xdg toplevel.
     pub fn remove_toplevel(&mut self, surface: &ToplevelSurface) {
+        if let Some(id) = self.find_toplevel(surface).map(|w| w.id) {
+            crate::trace::instant(
+                crate::trace::ThreadRole::Main,
+                crate::trace::EventId::WindowClose,
+                crate::trace::now_us(),
+                id as u32,
+                0,
+                0,
+                0,
+            );
+        }
         self.windows
             .retain(|w| !matches!(&w.surface, WindowSurface::Wayland(t) if t == surface));
     }
@@ -104,6 +159,15 @@ impl WindowManager {
         self.deactivate_all();
         win.active = true;
         self.windows.push(win);
+        crate::trace::instant(
+            crate::trace::ThreadRole::Main,
+            crate::trace::EventId::WindowRaise,
+            crate::trace::now_us(),
+            id as u32,
+            0,
+            0,
+            0,
+        );
         true
     }
 
@@ -122,6 +186,14 @@ impl WindowManager {
         if minimized {
             win.active = false;
         }
+        let state_num = win.state_num();
+        crate::trace::counter(
+            crate::trace::ThreadRole::Main,
+            crate::trace::EventId::WindowStateChange,
+            crate::trace::now_us(),
+            id as u32,
+            state_num,
+        );
         let activated = !minimized;
         match &win.surface {
             WindowSurface::Wayland(toplevel) => {
@@ -177,6 +249,15 @@ impl WindowManager {
                 m_win.size = (new_w, new_h).into();
 
                 if loc_changed || size_changed {
+                    crate::trace::instant(
+                        crate::trace::ThreadRole::Main,
+                        crate::trace::EventId::WindowConfigure,
+                        crate::trace::now_us(),
+                        m_win.id as u32,
+                        new_w as u32,
+                        new_h as u32,
+                        m_win.is_maximized as u16,
+                    );
                     match &m_win.surface {
                         WindowSurface::Wayland(win) => {
                             if size_changed {

@@ -41,6 +41,24 @@ impl CompositorHandler for TermwayState {
             });
         });
         self.dirty = true;
+
+        if crate::trace::enabled() {
+            use smithay::reexports::wayland_server::Resource;
+            let surf_id = surface.id().protocol_id();
+            let matched_win_id = self.wm.windows.iter().find(|w| {
+                w.wl_surface().as_ref() == Some(surface)
+                    || self.surface_for_managed_window(w).as_ref() == Some(surface)
+            }).map(|w| w.id);
+            crate::trace::instant(
+                crate::trace::ThreadRole::Main,
+                crate::trace::EventId::ClientCommit,
+                crate::trace::now_us(),
+                matched_win_id.unwrap_or(0) as u32,
+                surf_id,
+                0,
+                0,
+            );
+        }
         
         // 破棄済みサーフェスをフォーカス・描画候補から除く
         self.unassociated_surfaces.retain(smithay::reexports::wayland_server::Resource::is_alive);

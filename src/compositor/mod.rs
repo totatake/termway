@@ -453,6 +453,15 @@ impl TermwayCompositor {
             let _ = event_loop.dispatch(Some(std::time::Duration::ZERO), &mut self.state);
             
             if WINCH_RECEIVED.swap(false, std::sync::atomic::Ordering::Relaxed) {
+                crate::trace::instant(
+                    crate::trace::ThreadRole::Main,
+                    crate::trace::EventId::Sigwinch,
+                    crate::trace::now_us(),
+                    0,
+                    0,
+                    0,
+                    0,
+                );
                 if let Ok(mut new_size) = TerminalSize::query() {
                     let old_size = self.backend.term_size();
                     if self.cell_size_queried {
@@ -1021,6 +1030,16 @@ impl TermwayCompositor {
                 let _ = xwin.configure(rect);
             }
         }
+
+        crate::trace::instant(
+            crate::trace::ThreadRole::Main,
+            crate::trace::EventId::ResizeApplied,
+            crate::trace::now_us(),
+            0,
+            phys_w,
+            phys_h,
+            0,
+        );
 
         self.state.dirty = true;
     }

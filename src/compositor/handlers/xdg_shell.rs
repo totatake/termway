@@ -76,7 +76,7 @@ impl XdgShellHandler for TermwayState {
         let mut win = ManagedWindow::new_wayland(id, surface, loc, init_window_size, false);
         win.is_maximized = is_maximized;
         win.saved_geometry = saved_geometry;
-        self.wm.windows.push(win);
+        self.wm.add_window(win);
         self.update_active_window_title();
 
         self.dismiss_splash();

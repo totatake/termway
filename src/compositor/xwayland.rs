@@ -35,6 +35,15 @@ impl XwmHandler for TermwayState {
 
     fn map_window_request(&mut self, _xwm: XwmId, window: X11Surface) {
         crate::compositor::log_line(format!("[xwayland] map_window_request id={:?} geo={:?}", window.window_id(), window.geometry()));
+        crate::trace::instant(
+            crate::trace::ThreadRole::Main,
+            crate::trace::EventId::X11MapRequest,
+            crate::trace::now_us(),
+            window.window_id(),
+            window.geometry().size.w as u32,
+            window.geometry().size.h as u32,
+            0,
+        );
         let _ = window.set_mapped(true);
         let _ = window.set_activated(true);
 
@@ -113,7 +122,7 @@ impl XwmHandler for TermwayState {
                 if is_maximized {
                     let _ = window.set_maximized(true);
                 }
-                self.wm.windows.push(win);
+                self.wm.add_window(win);
                 self.update_active_window_title();
 
                 if self.show_splash {
@@ -141,6 +150,17 @@ impl XwmHandler for TermwayState {
             self.unassociated_surfaces.retain(|s| s.id().protocol_id() != wid);
         }
         self.x11_windows.retain(|w| w != &window);
+        if let Some(id) = self.wm.windows.iter().find(|w| matches!(&w.surface, WindowSurface::X11(x) if x == &window)).map(|w| w.id) {
+            crate::trace::instant(
+                crate::trace::ThreadRole::Main,
+                crate::trace::EventId::WindowClose,
+                crate::trace::now_us(),
+                id as u32,
+                0,
+                0,
+                0,
+            );
+        }
         self.wm.windows.retain(|w| !matches!(&w.surface, WindowSurface::X11(x) if x == &window));
         if let Some(top) = self.wm.windows.last_mut() {
             top.active = true;
@@ -155,6 +175,17 @@ impl XwmHandler for TermwayState {
             self.unassociated_surfaces.retain(|s| s.id().protocol_id() != wid);
         }
         self.x11_windows.retain(|w| w != &window);
+        if let Some(id) = self.wm.windows.iter().find(|w| matches!(&w.surface, WindowSurface::X11(x) if x == &window)).map(|w| w.id) {
+            crate::trace::instant(
+                crate::trace::ThreadRole::Main,
+                crate::trace::EventId::WindowClose,
+                crate::trace::now_us(),
+                id as u32,
+                0,
+                0,
+                0,
+            );
+        }
         self.wm.windows.retain(|w| !matches!(&w.surface, WindowSurface::X11(x) if x == &window));
         if let Some(top) = self.wm.windows.last_mut() {
             top.active = true;
@@ -172,6 +203,15 @@ impl XwmHandler for TermwayState {
         h: Option<u32>,
         _reorder: Option<Reorder>,
     ) {
+        crate::trace::instant(
+            crate::trace::ThreadRole::Main,
+            crate::trace::EventId::X11ConfigureNotify,
+            crate::trace::now_us(),
+            window.window_id(),
+            w.unwrap_or(0),
+            h.unwrap_or(0),
+            0,
+        );
         crate::compositor::log_line(format!(
             "[xwayland] configure_request id={:?} req=({:?},{:?},{:?},{:?}) current={:?}",
             window.window_id(), x, y, w, h, window.geometry()

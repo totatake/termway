@@ -2,6 +2,9 @@ use termway::trace::event::{EventId, Phase, ThreadRole, TraceEvent};
 use termway::trace::ring::{self, ThreadRing};
 use termway::trace::writer::{build_json_string, dump_to_file};
 use termway::trace;
+use std::sync::Mutex;
+
+static TRACE_TEST_MUTEX: Mutex<()> = Mutex::new(());
 
 #[test]
 fn test_trace_event_size_is_exactly_32_bytes() {
@@ -49,6 +52,7 @@ fn test_thread_ring_push_overflow_drop_oldest() {
 
 #[test]
 fn test_chrome_trace_json_output_and_file_dump() {
+    let _lock = TRACE_TEST_MUTEX.lock().unwrap();
     trace::init(true, true, 64);
     assert!(trace::enabled());
 
@@ -127,6 +131,7 @@ fn test_chrome_trace_json_output_and_file_dump() {
 
 #[test]
 fn test_trace_disabled_zero_cost() {
+    let _lock = TRACE_TEST_MUTEX.lock().unwrap();
     trace::init(false, true, 64);
     assert!(!trace::enabled());
 
@@ -150,6 +155,7 @@ fn test_trace_disabled_zero_cost() {
 
 #[test]
 fn test_frame_id_async_flow_and_backend_drop() {
+    let _lock = TRACE_TEST_MUTEX.lock().unwrap();
     trace::init(true, true, 64);
     assert!(trace::enabled());
 
@@ -223,6 +229,7 @@ fn test_frame_id_async_flow_and_backend_drop() {
 
 #[test]
 fn test_motion_coalescing_and_input_no_input_flag() {
+    let _lock = TRACE_TEST_MUTEX.lock().unwrap();
     trace::init(true, true, 64);
     assert!(trace::input_enabled());
 
@@ -264,6 +271,75 @@ fn test_motion_coalescing_and_input_no_input_flag() {
     let (no_input_events, _) = ring::drain_all();
     // When input is disabled, mouse events are not recorded
     assert_eq!(no_input_events.len(), 0);
+
+    ring::reset_rings();
+}
+
+#[test]
+fn test_window_state_counter_track() {
+    let _lock = TRACE_TEST_MUTEX.lock().unwrap();
+    use smithay::utils::{Point, Size};
+    use termway::compositor::window::ManagedWindow;
+    use termway::compositor::window_manager::WindowManager;
+
+    trace::init(true, true, 64);
+    assert!(trace::enabled());
+
+    let mut wm = WindowManager::new();
+    let id = wm.alloc_id();
+
+    // 1. Window creation (Floating = 1)
+    let win = ManagedWindow::new_dummy(
+        id,
+        "TestWindow".into(),
+        Point::from((10, 10)),
+        Size::from((400, 300)),
+    );
+    wm.add_window(win);
+
+    // 2. Maximize window (Maximized = 2)
+    let win = wm.get_mut(id).unwrap();
+    win.maximize(1000, 800);
+
+    // 3. Minimize window (Minimized = 0)
+    wm.set_minimized(id, true);
+
+    // 4. Restore window to floating (1)
+    let win = wm.get_mut(id).unwrap();
+    win.is_maximized = false;
+    wm.set_minimized(id, false);
+
+    // 5. Window close
+    let _ = wm.remove_window(id);
+
+    let (events, _) = ring::drain_all();
+
+    // Verify counter transitions for win_{id}_state: 1 -> 2 -> 0 -> 1
+    let state_transitions: Vec<u32> = events
+        .iter()
+        .filter(|e| e.event_id == EventId::WindowStateChange && e.phase == Phase::Counter && e.id == id as u32)
+        .map(|e| e.arg1)
+        .collect();
+    assert_eq!(state_transitions, vec![1, 2, 0, 1]);
+
+    // Verify lifecycle instant events: WindowMap, WindowConfigure, WindowClose
+    let has_map = events.iter().any(|e| e.event_id == EventId::WindowMap && e.id == id as u32);
+    let has_configure = events.iter().any(|e| e.event_id == EventId::WindowConfigure && e.id == id as u32);
+    let has_close = events.iter().any(|e| e.event_id == EventId::WindowClose && e.id == id as u32);
+    assert!(has_map, "Must record WindowMap");
+    assert!(has_configure, "Must record WindowConfigure");
+    assert!(has_close, "Must record WindowClose");
+
+    // Verify JSON contains counter track win_{id}_state with ph:"C"
+    let json = build_json_string(&events, 0);
+    assert!(json.contains(&format!("\"name\":\"win_{}_state\"", id)));
+    assert!(json.contains("\"ph\":\"C\""));
+    assert!(json.contains("\"args\":{\"value\":1}"));
+    assert!(json.contains("\"args\":{\"value\":2}"));
+    assert!(json.contains("\"args\":{\"value\":0}"));
+    assert!(json.contains("\"WindowMap\""));
+    assert!(json.contains("\"WindowConfigure\""));
+    assert!(json.contains("\"WindowClose\""));
 
     ring::reset_rings();
 }

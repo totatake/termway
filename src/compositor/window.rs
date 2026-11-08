@@ -415,6 +415,18 @@ impl ManagedWindow {
         Rectangle::new(Point::from((loc_x, loc_y)), Size::from((w, h)))
     }
 
+    /// State number corresponding to Architecture §2.3:
+    /// 0: Minimized, 1: Floating, 2: Maximized.
+    pub fn state_num(&self) -> u32 {
+        if self.is_minimized {
+            0
+        } else if self.is_maximized {
+            2
+        } else {
+            1
+        }
+    }
+
     /// Maximize window to fill the available display area
     pub fn maximize(&mut self, screen_w: u32, screen_h: u32) {
         if self.is_maximized {
@@ -439,6 +451,23 @@ impl ManagedWindow {
 
         self.loc = new_loc;
         self.size = (new_w, new_h).into();
+
+        crate::trace::instant(
+            crate::trace::ThreadRole::Main,
+            crate::trace::EventId::WindowConfigure,
+            crate::trace::now_us(),
+            self.id as u32,
+            new_w as u32,
+            new_h as u32,
+            1,
+        );
+        crate::trace::counter(
+            crate::trace::ThreadRole::Main,
+            crate::trace::EventId::WindowStateChange,
+            crate::trace::now_us(),
+            self.id as u32,
+            2,
+        );
 
         match &self.surface {
             WindowSurface::Wayland(win) => {
@@ -516,6 +545,23 @@ impl ManagedWindow {
 
         self.loc = target_geo.loc;
         self.size = target_geo.size;
+
+        crate::trace::instant(
+            crate::trace::ThreadRole::Main,
+            crate::trace::EventId::WindowConfigure,
+            crate::trace::now_us(),
+            self.id as u32,
+            target_geo.size.w as u32,
+            target_geo.size.h as u32,
+            0,
+        );
+        crate::trace::counter(
+            crate::trace::ThreadRole::Main,
+            crate::trace::EventId::WindowStateChange,
+            crate::trace::now_us(),
+            self.id as u32,
+            1,
+        );
 
         match &self.surface {
             WindowSurface::Wayland(win) => {

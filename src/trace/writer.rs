@@ -43,11 +43,33 @@ fn format_args(ev: &TraceEvent) -> Option<String> {
             "\"count\":{},\"x\":{},\"y\":{}",
             ev.arg1, (ev.arg2 >> 16) as u16, (ev.arg2 & 0xFFFF) as u16
         )),
+        EventId::WindowMap | EventId::WindowConfigure => Some(format!(
+            "\"win_id\":{},\"w\":{},\"h\":{},\"maximized\":{}",
+            ev.id, ev.arg1, ev.arg2, ev.arg3
+        )),
+        EventId::WindowRaise | EventId::WindowClose => Some(format!(
+            "\"win_id\":{}",
+            ev.id
+        )),
+        EventId::ClientCommit => Some(format!(
+            "\"win_id\":{},\"surface_id\":{}",
+            ev.id, ev.arg1
+        )),
+        EventId::ResizeApplied => Some(format!(
+            "\"w\":{},\"h\":{}",
+            ev.arg1, ev.arg2
+        )),
+        EventId::X11MapRequest | EventId::X11ConfigureNotify => Some(format!(
+            "\"window_id\":{},\"w\":{},\"h\":{}",
+            ev.id, ev.arg1, ev.arg2
+        )),
         EventId::CounterRenderLatency
         | EventId::CounterEncodeLatency
         | EventId::CounterWriteLatency
         | EventId::CounterRingOverflow
-        | EventId::CounterWindowState => Some(format!("\"value\":{}", ev.arg1)),
+        | EventId::CounterWindowState
+        | EventId::WindowStateChange => Some(format!("\"value\":{}", ev.arg1)),
+        _ if ev.phase == Phase::Counter => Some(format!("\"value\":{}", ev.arg1)),
         _ => {
             if ev.arg1 > 0 || ev.arg2 > 0 || ev.arg3 > 0 {
                 Some(format!("\"arg1\":{},\"arg2\":{},\"arg3\":{}", ev.arg1, ev.arg2, ev.arg3))
@@ -145,10 +167,19 @@ pub fn build_json_string(events: &[TraceEvent], total_overflow: u64) -> String {
                 );
             }
             Phase::Counter => {
+                let name_buf;
+                let counter_name = if ev.event_id == EventId::WindowStateChange
+                    || ev.event_id == EventId::CounterWindowState
+                {
+                    name_buf = format!("win_{}_state", ev.id);
+                    &name_buf
+                } else {
+                    name
+                };
                 let _ = writeln!(
                     out,
                     r#"  {{"name":"{}","cat":"{}","ph":"C","pid":{},"tid":{},"ts":{}{}}}{}"#,
-                    name, cat, pid, tid, ts, args_part, comma
+                    counter_name, cat, pid, tid, ts, args_part, comma
                 );
             }
             Phase::Metadata => {
