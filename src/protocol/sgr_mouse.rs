@@ -6,6 +6,8 @@ pub enum MouseButton {
     Right,
     WheelUp,
     WheelDown,
+    WheelLeft,
+    WheelRight,
     None,
     Other(u16),
 }
@@ -72,9 +74,11 @@ impl SgrMouseParser {
         let base_btn = raw_btn & 3;
 
         let (button, action) = if is_wheel {
-            let btn = match raw_btn & 65 {
+            let btn = match raw_btn & 67 {
                 64 => MouseButton::WheelUp,
                 65 => MouseButton::WheelDown,
+                66 => MouseButton::WheelLeft,
+                67 => MouseButton::WheelRight,
                 _ => MouseButton::Other(raw_btn),
             };
             (btn, MouseAction::Press)

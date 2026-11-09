@@ -488,6 +488,17 @@ fn find_pointer_focus(
         }
         let content_geo = win.content_geometry();
         if content_geo.contains(loc_i32) {
+            if let WindowSurface::Wayland(ref toplevel) = win.surface {
+                let surface_loc = Point::from((win.loc.x, win.loc.y));
+                if let Some((surf, pt)) = smithay::desktop::utils::under_from_surface_tree(
+                    toplevel.wl_surface(),
+                    loc_i32.to_f64(),
+                    surface_loc,
+                    smithay::desktop::WindowSurfaceType::ALL,
+                ) {
+                    return Some((surf, pt.to_f64()));
+                }
+            }
             if let Some(surface) = state.surface_for_managed_window(win) {
                 return Some((surface, Point::from((win.loc.x as f64, win.loc.y as f64))));
             }
@@ -661,6 +672,8 @@ pub fn dispatch_mouse_event(
                     MouseButton::Right => 3,
                     MouseButton::WheelUp => 4,
                     MouseButton::WheelDown => 5,
+                    MouseButton::WheelLeft => 6,
+                    MouseButton::WheelRight => 7,
                     _ => 0,
                 };
                 crate::trace::instant(
@@ -675,18 +688,27 @@ pub fn dispatch_mouse_event(
             }
 
             // Handle mouse wheel scrolling (Wayland pointer axis scroll events)
-            if matches!(ev.button, MouseButton::WheelUp | MouseButton::WheelDown) {
+            if matches!(
+                ev.button,
+                MouseButton::WheelUp | MouseButton::WheelDown | MouseButton::WheelLeft | MouseButton::WheelRight
+            ) {
                 let focus = find_pointer_focus(state, loc_i32);
                 let motion = MotionEvent { location: loc, serial, time };
                 pointer.motion(state, focus, &motion);
+                pointer.frame(state);
 
-                let value = if matches!(ev.button, MouseButton::WheelUp) { -15.0 } else { 15.0 };
-                let v120 = if matches!(ev.button, MouseButton::WheelUp) { -120 } else { 120 };
+                let (axis, value, v120) = match ev.button {
+                    MouseButton::WheelUp => (Axis::Vertical, -15.0, -120),
+                    MouseButton::WheelDown => (Axis::Vertical, 15.0, 120),
+                    MouseButton::WheelLeft => (Axis::Horizontal, -15.0, -120),
+                    MouseButton::WheelRight => (Axis::Horizontal, 15.0, 120),
+                    _ => unreachable!(),
+                };
 
                 let frame = AxisFrame::new(time)
                     .source(AxisSource::Wheel)
-                    .value(Axis::Vertical, value)
-                    .v120(Axis::Vertical, v120);
+                    .value(axis, value)
+                    .v120(axis, v120);
                 pointer.axis(state, frame);
                 pointer.frame(state);
                 state.dirty = true;
@@ -944,7 +966,10 @@ pub fn dispatch_mouse_event(
                 );
             }
 
-            if matches!(ev.button, MouseButton::WheelUp | MouseButton::WheelDown) {
+            if matches!(
+                ev.button,
+                MouseButton::WheelUp | MouseButton::WheelDown | MouseButton::WheelLeft | MouseButton::WheelRight
+            ) {
                 return;
             }
 

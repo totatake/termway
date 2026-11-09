@@ -47,6 +47,16 @@ fn test_sgr_mouse_wheel() {
     let (down_event, _) = SgrMouseParser::parse(down_input).expect("Failed to parse wheel down");
     assert_eq!(down_event.button, MouseButton::WheelDown);
     assert_eq!(down_event.action, MouseAction::Press);
+
+    let left_input = "\x1b[<66;10;5M";
+    let (left_event, _) = SgrMouseParser::parse(left_input).expect("Failed to parse wheel left");
+    assert_eq!(left_event.button, MouseButton::WheelLeft);
+    assert_eq!(left_event.action, MouseAction::Press);
+
+    let right_input = "\x1b[<67;10;5M";
+    let (right_event, _) = SgrMouseParser::parse(right_input).expect("Failed to parse wheel right");
+    assert_eq!(right_event.button, MouseButton::WheelRight);
+    assert_eq!(right_event.action, MouseAction::Press);
 }
 
 #[test]

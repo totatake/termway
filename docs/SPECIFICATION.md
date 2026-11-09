@@ -39,6 +39,7 @@ flowchart LR
         FR39["FR-39: Kitty Graphics JPEG 拡張 (f=101) & 30fps 即時フレームフラッシュ"]
         FR40["FR-40: SGR-Pixels 高精度 1px マウストラッキング (DECSET 1016h)"]
         FR43["FR-43: ゼロアロケーション・タイムライントレーシング (--trace)"]
+        FR44["FR-44: Wayland ポインタフレーム分離 & 水平スクロール (GTK/Tauri 互換)"]
     end
 
     subgraph Verification["テスト検証 (Verification)"]
@@ -49,7 +50,7 @@ flowchart LR
         T_Term["unit_terminal<br/>(単体テスト: 5件)"]
         T_Damage["unit_damage_tracker<br/>(単体テスト: 9件)"]
         T_Key["unit_keyboard<br/>(単体テスト: 6件)"]
-        T_Comp["unit_compositor<br/>(単体テスト: 37件)"]
+        T_Comp["unit_compositor<br/>(単体テスト: 41件)"]
         T_Sess["unit_session<br/>(単体テスト: 7件)"]
         T_Secret["unit_secret_bridge<br/>(単体テスト: 4件)"]
         T_Sixel["unit_sixel_encoder<br/>(単体テスト: 7件)"]
@@ -99,6 +100,8 @@ flowchart LR
     FR40 --> T_Mouse
     FR40 --> T_Comp
     FR40 --> T_Integ
+    FR44 --> T_Mouse
+    FR44 --> T_Comp
 ```
 
 ---
@@ -141,6 +144,7 @@ flowchart LR
 | **FR-41** | シグナル安全 & パニック安全な端末復元 | SIGINT/SIGTERM/SIGHUP 受信時および万が一の panic 発生時に、端末 raw モード、マウス追従、タイトル、Kitty キーボードプロトコル、および同期描画モード（`\x1b[?2026l`）を確実に復元・解除すること。 | `src/terminal/raw.rs`<br/>`src/compositor/env.rs`<br/>`tests/unit_terminal.rs` | **PASS** |
 | **FR-42** | 端末機能診断 (`--query`) & 拡張プロファイル (p99) | `--query` フラグにより端末解像度、グラフィックスプロトコル、Kitty JPEG、マウストラッキング、XWayland、D-Bus、Polkit の対応状況を即時表示すること。`TERMWAY_NO_CURSOR_SHAPE` による OSC 22 抑制、`TERMWAY_FPS` による環境変数フレームレート指定、および `--profile` での p99 レイテンシ集計・JSON 出力をサポートすること。 | `src/main.rs`<br/>`src/compositor/profile.rs`<br/>`tests/integration_pipeline.rs`<br/>`tests/unit_compositor.rs` | **PASS** |
 | **FR-43** | ゼロアロケーション・タイムライントレーシング (`--trace`, Perfetto) | `--trace`, `--trace-file`, `--trace-buffer`, `--trace-flush-secs`, `--trace-no-input` オプションおよび対応環境変数をサポートし、32バイト固定長イベントとスレッド独立リングバッファによるホットパスヒープ確保ゼロのタイムライン記録、Chrome Trace Event JSON (および `.gz`) 出力、`frame_id` 非同期フロー追跡、インプレースマウス共結成、連番スナップショット、panic 時安全ダンプ、HUD 溢れ表示 (`Ovf`) を保証すること。 | `src/trace/`<br/>`tests/unit_trace.rs` | **PASS** |
+| **FR-44** | Wayland ポインタフレーム分離 & 水平スクロール (GTK/Tauri 互換) | SGR マウスシーケンスにおける水平スクロール（`66`/`67`）を `WheelLeft`/`WheelRight` としてパースし、Wayland `Axis::Horizontal` としてディスパッチすること。`wl_pointer.motion` と `wl_pointer.axis`（および `button`）を独立した論理フレーム（`wl_pointer.frame`）で分離送出することで、GTK3 / WebKitGTK / Tauri アプリ（openidea 等）におけるスクロールイベント早期破棄を防止すること。さらに `under_from_surface_tree` によりサブサーフェス（`wl_subsurface`）への正確なヒットテストを行うこと。 | `src/protocol/sgr_mouse.rs`<br/>`src/compositor/input.rs`<br/>`tests/unit_sgr_mouse.rs`<br/>`tests/unit_compositor.rs` | **PASS** |
 
 ### 2.2 非機能要件 (Non-Functional Requirements)
 
@@ -158,12 +162,12 @@ flowchart LR
 | テストターゲット | テスト数 | 検証内容 |
 | :--- | :---: | :--- |
 | `src/lib.rs` | 8 | 純粋 Rust Baseline JPEG (YCbCr 4:2:0) エンコーダ（SOF0, DQT, DHT, SOS）、任意ストライド部分矩形抽出、奇数解像度、1x1〜1080p 色再現性・高解像度ベンチマーク、固定小数点逆数乗算テーブル、端末テキストサニタイズ、CJK 文字カラム幅計算 |
-| `tests/unit_compositor.rs` | 39 | `TermwayState` / `WindowManager` ドメイン操作、SSD/CSD 装飾、最大化・80%中央復元・最小化、動的リサイズ (`SIGWINCH`)、OSC 52 クリップボード送信、マウスホイール、スプラッシュ描画・消去、JSON 状態ダンプ、UTF-8 日本語入力、Fractional Scale / Viewporter / HiDPI スケールレンダリング、OSC 22 カーソル形状同期、Wayland Primary Selection、OSC 2 端末タブタイトル同期、SGR-Pixels (1016h) 1px 精度マウスディスパッチ、`TERMWAY_NO_CURSOR_SHAPE` オプトアウト、`TERMWAY_FPS`、`LatencyHistogram` p95/p99 レイテンシ検証 |
+| `tests/unit_compositor.rs` | 41 | `TermwayState` / `WindowManager` ドメイン操作、SSD/CSD 装飾、最大化・80%中央復元・最小化、動的リサイズ (`SIGWINCH`)、OSC 52 クリップボード送信、マウスホイール（上下・左右ディスパッチ、Wayland ポインタフレーム分離）、スプラッシュ描画・消去、JSON 状態ダンプ、UTF-8 日本語入力、Fractional Scale / Viewporter / HiDPI スケールレンダリング、OSC 22 カーソル形状同期、Wayland Primary Selection、OSC 2 端末タブタイトル同期、SGR-Pixels (1016h) 1px 精度マウスディスパッチ、`TERMWAY_NO_CURSOR_SHAPE` オプトアウト、`TERMWAY_FPS`、`LatencyHistogram` p95/p99 レイテンシ検証 |
 | `tests/unit_session.rs` | 7 | ハイブリッド D-Bus セッション起動、Snap コマンド判定・PATH シムルーティング、Polkit エージェント検出、コマンド存在性検証、`/tmp/.X11-unix` 書込検査 |
 | `tests/unit_kitty_encoder.rs` | 20 | Kitty フルスクリーン RFC 1950 zlib 圧縮 (`o=z`)・4096B チャンク分割・ラウンドトリップ解凍検証、累積バウンディングボックス部分矩形プレースメント転送・デコード検証、大面積更新時フルフレームフォールバック、定点動画の無制限連続部分転送、解像度変更ガード、端末合成シミュレータによるピクセルレベル残像完全ゼロ検証、Kitty-JPEG (`f=101`) フルスクリーン/部分プレースメント/透過ダミー保護検証、品質設定検証、1080x720 パフォーマンス検証 |
 | `tests/unit_sixel_encoder.rs` | 7 | Sixel AVX2 / ARM NEON SIMD 減色・6行バンド走査・単色バンド高速パス・RLE 圧縮・非8倍数幅エッジケース、6行バンド差分キャッシュ (`SixelStreamEncoder`)、1080x720 パフォーマンス検証 |
 | `tests/unit_damage_tracker.rs` | 9 | 32x32 タイル FNV-1a ハッシュ比較、AVX2 / ARM NEON SIMD 端数タイル一致検証、RGB565 量子化マスクノイズ除去検証、リセット・リサイズ検証、2D 隣接タイル結合 & 50% 閾値、SIMD タイルハッシュ拡散強化検証 |
-| `tests/unit_sgr_mouse.rs` | 7 | SGR 1006 クリック・ドラッグ・リリース・ホイール・修飾キー・高値座標パース・不正シーケンス耐性検証 |
+| `tests/unit_sgr_mouse.rs` | 7 | SGR 1006 クリック・ドラッグ・リリース・垂直/水平ホイール（Up/Down/Left/Right）・修飾キー・高値座標パース・不正シーケンス耐性検証 |
 | `tests/integration_pipeline.rs` | 11 | Framebuffer → DamageTracker → Kitty エンコード結合検証、マウス座標変換、プロトコル自動検出、Kitty-JPEG 自動プローブおよびフォールバック検証、SGR-Pixels (1016h) 端末サポート検出、`--version` / `-V` 検証、CLI 引数バリデーション検証、`--query` 診断レポート出力検証 |
 | `tests/unit_keyboard.rs` | 6 | UTF-8 文字、矢印キー、Ctrl 制御文字、Shift/Ctrl 修飾キー付きカーソル・選択キー、日本語 UTF-8 複数バイト解析、Kitty Keyboard Protocol (CSI u) 解析検証 |
 | `tests/unit_secret_bridge.rs` | 4 | D-Bus Secret Service (`org.freedesktop.secrets`) メッセージエンディアン解析・双方向リレー検証 |

@@ -491,8 +491,14 @@ flowchart TD
     CheckButtons -->|"[-] 最小化ボタン"| MinAct["minimize_window(id)"]
     CheckButtons -->|"タイトルバー本体"| StartMove["WindowDragState::Moving 開始"]
     CheckButtons -->|"右下リサイズハンドル"| StartResize["WindowDragState::Resizing 開始"]
-    CheckButtons -->|"クライアント描画領域"| ForwardClient["クライアント相対座標 (sx, sy) を算出し<br/>Smithay PointerHandle (motion / button / axis) へ転送"]
+    CheckButtons -->|"クライアント描画領域"| ForwardClient["under_from_surface_tree によりサブサーフェスを探索<br/>クライアント相対座標 (sx, sy) を算出し<br/>Smithay PointerHandle (motion / button / axis) へ転送<br/>※Wayland規約に従い motion と axis/button を<br/>独立した wl_pointer.frame で分離送出"]
 ```
+
+> [!NOTE]
+> **Wayland ポインタフレーム分離と GTK3/WebKitGTK/Tauri 互換性**:
+> Wayland プロトコル（`wayland.xml` `wl_pointer.frame` v5+）では、`motion`・`button`・`axis` の各論理グループごとに `wl_pointer.frame` を送出することが規定されています。
+> GTK3 (`libgdk-3.so`) の内部実装（`gdk_wayland_seat_flush_frame_event`）では、同一フレーム内に `motion`（`frame->event`）と `axis`（`frame->delta`）が同居していると、`motion` イベントを配送した直後に早期リターンして後続のスクロールイベント生成をスキップする構造になっています。
+> `termway` では、ホイールイベント（垂直 `WheelUp`/`WheelDown` および水平 `WheelLeft`/`WheelRight`）受信時に `pointer.motion(...)` 送出直後に必ず `pointer.frame(state)` を発行し、その後に `pointer.axis(...)` と `pointer.frame(state)` を送出することで、GTK3 / Tauri アプリ（`openidea` 等）におけるスクロールイベントの完全な配送とスムーズな 2D スクロールを保証しています（詳細は [ADR-0004](adr/0004-wayland-pointer-frame-separation-and-horizontal-scroll.md) 参照）。
 
 ---
 

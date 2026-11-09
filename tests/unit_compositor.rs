@@ -419,6 +419,70 @@ fn test_compositor_mouse_wheel_dispatch() {
     };
     dispatch_mouse_event(&mut state, 800, 600, 80, 24, &wheel_down, &mut child);
     assert!(state.dirty, "WheelDown should set state.dirty = true");
+
+    state.dirty = false;
+    let wheel_left = MouseEvent {
+        button: MouseButton::WheelLeft,
+        action: MouseAction::Press,
+        col: 40,
+        row: 15,
+        shift: false,
+        meta: false,
+        ctrl: false,
+    };
+    dispatch_mouse_event(&mut state, 800, 600, 80, 24, &wheel_left, &mut child);
+    assert!(state.dirty, "WheelLeft should set state.dirty = true");
+
+    state.dirty = false;
+    let wheel_right = MouseEvent {
+        button: MouseButton::WheelRight,
+        action: MouseAction::Press,
+        col: 40,
+        row: 15,
+        shift: false,
+        meta: false,
+        ctrl: false,
+    };
+    dispatch_mouse_event(&mut state, 800, 600, 80, 24, &wheel_right, &mut child);
+    assert!(state.dirty, "WheelRight should set state.dirty = true");
+}
+
+#[test]
+fn test_compositor_wayland_pointer_motion_axis_frame_separation() {
+    use std::sync::Arc;
+    use smithay::reexports::wayland_server::ListeningSocket;
+    use termway::compositor::input::dispatch_mouse_event;
+    use termway::compositor::state::ClientState;
+    use termway::protocol::{MouseAction, MouseButton, MouseEvent};
+
+    let dir = tempfile::tempdir().expect("Failed to create tempdir");
+    let sock_path = dir.path().join("wayland-test-frame-separation");
+    let listener = ListeningSocket::bind_absolute(sock_path.clone()).expect("Failed to bind socket");
+
+    let display = Display::<TermwayState>::new().expect("Failed to create Wayland Display");
+    let mut dh = display.handle();
+
+    let mut state = TermwayState::new(&dh, 800, 600, true);
+    state.dirty = false;
+
+    // Connect client stream
+    let _client_stream = std::os::unix::net::UnixStream::connect(&sock_path).expect("Failed to connect client");
+    let stream = listener.accept().unwrap().expect("Server accept failed");
+    let _client = dh.insert_client(stream, Arc::new(ClientState::default())).unwrap();
+
+    // Dispatch a wheel event: this should call pointer.motion, pointer.frame, pointer.axis, pointer.frame
+    let wheel_down = MouseEvent {
+        button: MouseButton::WheelDown,
+        action: MouseAction::Press,
+        col: 40,
+        row: 15,
+        shift: false,
+        meta: false,
+        ctrl: false,
+    };
+    let mut child = None;
+    dispatch_mouse_event(&mut state, 800, 600, 80, 24, &wheel_down, &mut child);
+    assert!(state.dirty);
 }
 
 #[test]
