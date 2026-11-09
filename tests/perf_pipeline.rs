@@ -111,7 +111,7 @@ pub fn run_scenario(
     let mut sixel_stream = SixelStreamEncoder::new();
     let mut sixel_out = Vec::with_capacity((width * height) as usize / 2);
     let mut kitty_stream = KittyStreamEncoder::new();
-    let mut kitty_out = String::with_capacity((width * height) as usize / 2);
+    let mut kitty_out = Vec::with_capacity((width * height) as usize / 2);
 
     // Warmup initial frame
     sixel_stream.encode_frame_into(&base_frame, width, height, None, &mut sixel_out);

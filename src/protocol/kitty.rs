@@ -4,7 +4,7 @@ use base64::Engine;
 /// Kitty Graphics Protocol escape sequence generator.
 pub struct KittyEncoder;
 
-use std::fmt::Write;
+use std::io::Write;
 #[cfg(feature = "zlib-ng")]
 use flate2::{Compress, Compression, FlushCompress, Status};
 
@@ -398,7 +398,7 @@ impl KittyStreamEncoder {
         cell_height_px: u16,
         damage: Option<&[DamageRect]>,
         needs_clear: bool,
-        output: &mut String,
+        output: &mut Vec<u8>,
     ) -> bool {
         let total_area = (width as u64) * (height as u64);
 
@@ -546,7 +546,7 @@ impl KittyStreamEncoder {
         row: u16,
         cell_cols: u16,
         cell_rows: u16,
-        output: &mut String,
+        output: &mut Vec<u8>,
     ) {
         if self.use_jpeg {
             self.jpeg_encoder.encode_subimage_into(
@@ -634,13 +634,16 @@ impl KittyStreamEncoder {
                 }
                 first = false;
             } else if m_flag == 1 {
-                output.push_str("\x1b_Gm=1;");
+                output.extend_from_slice(b"\x1b_Gm=1;");
             } else {
-                output.push_str("\x1b_Gm=0;");
+                output.extend_from_slice(b"\x1b_Gm=0;");
             }
 
-            BASE64.encode_string(raw_chunk, output);
-            output.push_str("\x1b\\");
+            let curr_len = output.len();
+            let b64_len = base64::encoded_len(raw_chunk.len(), true).expect("base64 len overflow");
+            output.resize(curr_len + b64_len, 0);
+            BASE64.encode_slice(raw_chunk, &mut output[curr_len..]).expect("encode_slice failed");
+            output.extend_from_slice(b"\x1b\\");
 
             offset = next_offset;
         }
@@ -657,7 +660,7 @@ impl KittyStreamEncoder {
         term_cols: u16,
         term_rows: u16,
         image_id: u32,
-        output: &mut String,
+        output: &mut Vec<u8>,
     ) {
         self.encode_fullscreen_frame_into_with_cleanup(
             rgba, width, height, term_cols, term_rows, image_id, false, output,
@@ -675,7 +678,7 @@ impl KittyStreamEncoder {
         term_rows: u16,
         image_id: u32,
         clear_placements: bool,
-        output: &mut String,
+        output: &mut Vec<u8>,
     ) {
         if self.use_jpeg {
             self.jpeg_encoder.encode_subimage_into(
@@ -713,9 +716,9 @@ impl KittyStreamEncoder {
             // Overwrite i=2 with an invisible 1x1 transparent dummy pixel.
             // Never issue a=d (image delete) because it triggers a Use-After-Free race condition
             // in Ghostty/Noctty's multi-threaded GPU renderer.
-            output.push_str("\x1b[1;1H\x1b_Ga=T,q=2,i=2,p=1,C=1,f=32,s=1,v=1,c=1,r=1;AAAAAA==\x1b\\");
+            output.extend_from_slice(b"\x1b[1;1H\x1b_Ga=T,q=2,i=2,p=1,C=1,f=32,s=1,v=1,c=1,r=1;AAAAAA==\x1b\\");
         }
-        output.push_str("\x1b[H");
+        output.extend_from_slice(b"\x1b[H");
 
         let chunk_raw_size = 3072;
         let total_raw = self.compressed_buf.len();
@@ -744,13 +747,16 @@ impl KittyStreamEncoder {
                 }
                 first = false;
             } else if m_flag == 1 {
-                output.push_str("\x1b_Gm=1;");
+                output.extend_from_slice(b"\x1b_Gm=1;");
             } else {
-                output.push_str("\x1b_Gm=0;");
+                output.extend_from_slice(b"\x1b_Gm=0;");
             }
 
-            BASE64.encode_string(raw_chunk, output);
-            output.push_str("\x1b\\");
+            let curr_len = output.len();
+            let b64_len = base64::encoded_len(raw_chunk.len(), true).expect("base64 len overflow");
+            output.resize(curr_len + b64_len, 0);
+            BASE64.encode_slice(raw_chunk, &mut output[curr_len..]).expect("encode_slice failed");
+            output.extend_from_slice(b"\x1b\\");
 
             offset = next_offset;
         }
@@ -778,13 +784,13 @@ impl KittyEncoder {
         term_rows: u16,
         image_id: u32,
     ) -> String {
-        let mut output = String::new();
+        let mut output = Vec::new();
         THREAD_KITTY_STREAM.with(|stream| {
             stream.borrow_mut().encode_fullscreen_frame_into(
                 rgba, width, height, term_cols, term_rows, image_id, &mut output,
             );
         });
-        output
+        unsafe { String::from_utf8_unchecked(output) }
     }
 
     /// Encode a frame with automatic partial rectangular placement or full-screen fallback.
@@ -800,7 +806,7 @@ impl KittyEncoder {
         damage: Option<&[DamageRect]>,
         needs_clear: bool,
     ) -> String {
-        let mut output = String::new();
+        let mut output = Vec::new();
         THREAD_KITTY_STREAM.with(|stream| {
             stream.borrow_mut().encode_frame_into(
                 rgba,
@@ -815,7 +821,7 @@ impl KittyEncoder {
                 &mut output,
             );
         });
-        output
+        unsafe { String::from_utf8_unchecked(output) }
     }
 
     /// Optimized zero-allocation version reusing preallocated base64 and output string buffers.
@@ -833,9 +839,11 @@ impl KittyEncoder {
         output: &mut String,
     ) {
         THREAD_KITTY_STREAM.with(|stream| {
+            let mut byte_buf = std::mem::take(output).into_bytes();
             stream.borrow_mut().encode_fullscreen_frame_into(
-                rgba, width, height, term_cols, term_rows, image_id, output,
+                rgba, width, height, term_cols, term_rows, image_id, &mut byte_buf,
             );
+            *output = unsafe { String::from_utf8_unchecked(byte_buf) };
         });
     }
 

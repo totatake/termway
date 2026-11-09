@@ -1,7 +1,8 @@
+use crate::backend::vectored::writev_all;
 use crate::display::DamageRect;
 use crate::protocol::{KittyStreamEncoder, SixelStreamEncoder};
 use crate::terminal::TerminalSize;
-use std::io::{self, Write};
+use std::io::{self, IoSlice, Write};
 
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
@@ -167,8 +168,10 @@ impl TerminalBackend {
                 let mut kitty_stream = KittyStreamEncoder::new();
                 kitty_stream.set_use_jpeg(use_jpeg);
                 kitty_stream.set_jpeg_quality(jpeg_quality);
-                let mut kitty_out = String::new();
-                let mut frame_buf = Vec::with_capacity(256 * 1024);
+                let mut kitty_out = Vec::new();
+
+                let mut prefix_buf = Vec::with_capacity(512);
+                let mut suffix_buf = Vec::with_capacity(1024);
 
                 let mut stat_start = std::time::Instant::now();
                 let mut stat_frames: u32 = 0;
@@ -308,26 +311,23 @@ impl TerminalBackend {
                     let assemble_start = std::time::Instant::now();
                     let assemble_start_us = if crate::trace::enabled() { crate::trace::now_us() } else { 0 };
 
-                    // Assemble the entire frame into a single contiguous buffer before writing to stdout.
-                    // This guarantees atomic output per frame and eliminates race conditions or interleaving
-                    // with asynchronous OSC/control sequences.
-                    frame_buf.clear();
-                    frame_buf.extend_from_slice(b"\x1b[?2026h");
-                    frame_buf.extend_from_slice(clear_seq.as_bytes());
+                    // Prepare prefix and suffix control buffers with zero-copy vectored I/O.
+                    prefix_buf.clear();
+                    prefix_buf.extend_from_slice(b"\x1b[?2026h");
+                    prefix_buf.extend_from_slice(clear_seq.as_bytes());
                     if use_sixel {
-                        frame_buf.extend_from_slice(b"\x1b[H");
-                        frame_buf.extend_from_slice(&sixel_out);
-                    } else {
-                        frame_buf.extend_from_slice(kitty_out.as_bytes());
+                        prefix_buf.extend_from_slice(b"\x1b[H");
                     }
-                    frame_buf.extend_from_slice(taskbar_seq.as_bytes());
-                    frame_buf.extend_from_slice(overlay_seq.as_bytes());
-                    frame_buf.extend_from_slice(hud_seq.as_bytes());
-                    frame_buf.extend_from_slice(b"\x1b[?2026l");
+
+                    suffix_buf.clear();
+                    suffix_buf.extend_from_slice(taskbar_seq.as_bytes());
+                    suffix_buf.extend_from_slice(overlay_seq.as_bytes());
+                    suffix_buf.extend_from_slice(hud_seq.as_bytes());
+                    suffix_buf.extend_from_slice(b"\x1b[?2026l");
 
                     let assemble_us = assemble_start.elapsed().as_micros() as u64;
 
-                    // Query kernel PTY queue backlog via TIOCOUTQ before write_all
+                    // Query kernel PTY queue backlog via TIOCOUTQ before writev
                     let mut tiocoutq: libc::c_int = 0;
                     if crate::trace::enabled() {
                         unsafe {
@@ -335,12 +335,23 @@ impl TerminalBackend {
                         }
                     }
 
+                    let payload_bytes = if use_sixel { &sixel_out[..] } else { &kitty_out[..] };
+                    let total_frame_len = prefix_buf.len() + payload_bytes.len() + suffix_buf.len();
+
                     let write_start = std::time::Instant::now();
                     let write_start_us = if crate::trace::enabled() { crate::trace::now_us() } else { 0 };
+                    let mut syscall_stats = crate::backend::vectored::WritevStats::default();
                     {
                         let mut out_guard = stdout.lock();
-                        let _ = out_guard.write_all(&frame_buf);
-                        let _ = out_guard.flush();
+                        let _ = out_guard.flush(); // Flush any pending stdout bytes first to ensure order
+                        let mut slices = [
+                            IoSlice::new(&prefix_buf),
+                            IoSlice::new(payload_bytes),
+                            IoSlice::new(&suffix_buf),
+                        ];
+                        if let Ok(stats) = writev_all(libc::STDOUT_FILENO, &mut slices) {
+                            syscall_stats = stats;
+                        }
                     }
                     let write_us = write_start.elapsed().as_micros() as u64;
                     metrics_clone.total_write_us.fetch_add(write_us, Ordering::Relaxed);
@@ -360,23 +371,25 @@ impl TerminalBackend {
                         );
                         crate::trace::slice(
                             crate::trace::ThreadRole::AsyncRender,
-                            crate::trace::EventId::FrameAssemble,
+                            crate::trace::EventId::FramePrepare,
                             assemble_start_us,
                             assemble_us as u32,
                             job.frame_id,
-                            frame_buf.len() as u32,
-                            0,
+                            (prefix_buf.len() + suffix_buf.len()) as u32,
+                            payload_bytes.len() as u32,
                             job.show_hud as u16,
                         );
+                        let iovcnt = 3u32;
+                        let syscalls = (syscall_stats.syscalls & 0x7F) << 8;
                         crate::trace::slice(
                             crate::trace::ThreadRole::AsyncRender,
                             crate::trace::EventId::BackendWrite,
                             write_start_us,
                             write_us as u32,
                             job.frame_id,
-                            frame_buf.len() as u32,
+                            total_frame_len as u32,
                             tiocoutq.max(0) as u32,
-                            0,
+                            (iovcnt | syscalls) as u16,
                         );
                         if job.frame_id > 0 {
                             crate::trace::flow_end(

@@ -109,6 +109,9 @@ pub enum EventId {
     CounterWriteLatency,
     CounterRingOverflow,
     CounterWindowState,
+
+    // Pipeline optimization (M1)
+    FramePrepare,
 }
 
 impl EventId {
@@ -122,6 +125,7 @@ impl EventId {
 
             EventId::BackendEncode => "BackendEncode",
             EventId::FrameAssemble => "FrameAssemble",
+            EventId::FramePrepare => "FramePrepare",
             EventId::BackendWrite => "BackendWrite",
             EventId::FrameComplete => "FrameComplete",
             EventId::BackendDrop => "BackendDrop",
@@ -165,6 +169,7 @@ impl EventId {
 
             EventId::BackendEncode
             | EventId::FrameAssemble
+            | EventId::FramePrepare
             | EventId::BackendWrite
             | EventId::BackendDrop => "backend",
 

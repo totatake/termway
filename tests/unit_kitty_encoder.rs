@@ -1,4 +1,91 @@
 use termway::protocol::KittyEncoder;
+use termway::protocol::KittyStreamEncoder;
+use termway::display::DamageRect;
+
+trait KittyStreamEncoderExt {
+    #[allow(clippy::too_many_arguments)]
+    fn encode_frame_into(
+        &mut self,
+        rgba: &[u8],
+        width: u32,
+        height: u32,
+        term_cols: u16,
+        term_rows: u16,
+        cell_width_px: u16,
+        cell_height_px: u16,
+        damage: Option<&[DamageRect]>,
+        needs_clear: bool,
+        output: &mut String,
+    ) -> bool;
+
+    #[allow(clippy::too_many_arguments)]
+    #[allow(dead_code)]
+    fn encode_fullscreen_frame_into(
+        &mut self,
+        rgba: &[u8],
+        width: u32,
+        height: u32,
+        term_cols: u16,
+        term_rows: u16,
+        image_id: u32,
+        output: &mut String,
+    );
+}
+
+impl KittyStreamEncoderExt for KittyStreamEncoder {
+    fn encode_frame_into(
+        &mut self,
+        rgba: &[u8],
+        width: u32,
+        height: u32,
+        term_cols: u16,
+        term_rows: u16,
+        cell_width_px: u16,
+        cell_height_px: u16,
+        damage: Option<&[DamageRect]>,
+        needs_clear: bool,
+        output: &mut String,
+    ) -> bool {
+        let mut byte_buf = Vec::new();
+        let res = self.encode_frame_into(
+            rgba,
+            width,
+            height,
+            term_cols,
+            term_rows,
+            cell_width_px,
+            cell_height_px,
+            damage,
+            needs_clear,
+            &mut byte_buf,
+        );
+        *output = String::from_utf8(byte_buf).expect("Kitty protocol bytes must be valid UTF-8");
+        res
+    }
+
+    fn encode_fullscreen_frame_into(
+        &mut self,
+        rgba: &[u8],
+        width: u32,
+        height: u32,
+        term_cols: u16,
+        term_rows: u16,
+        image_id: u32,
+        output: &mut String,
+    ) {
+        let mut byte_buf = Vec::new();
+        self.encode_fullscreen_frame_into(
+            rgba,
+            width,
+            height,
+            term_cols,
+            term_rows,
+            image_id,
+            &mut byte_buf,
+        );
+        *output = String::from_utf8(byte_buf).expect("Kitty protocol bytes must be valid UTF-8");
+    }
+}
 
 #[test]
 fn test_clear_all_images() {
@@ -143,7 +230,7 @@ fn test_kitty_partial_placement_structure() {
     let mut output = String::new();
 
     // Frame 0: First frame without damage must establish full-screen canvas
-    encoder.encode_frame_into(
+    KittyStreamEncoderExt::encode_frame_into(&mut encoder, 
         &rgba, width, height, 16, 10, 10, 10, None, false, &mut output,
     );
     assert!(output.starts_with("\x1b[H\x1b_Ga=T,q=2,i=1,p=1,C=1,f=32,o=z,z=-2147483648"));
@@ -167,7 +254,7 @@ fn test_kitty_partial_placement_structure() {
     }];
 
     // Frame 1: Initial damage bounding box immediately emits partial placement
-    let is_partial_1 = encoder.encode_frame_into(
+    let is_partial_1 = KittyStreamEncoderExt::encode_frame_into(&mut encoder, 
         &rgba,
         width,
         height,
@@ -187,7 +274,7 @@ fn test_kitty_partial_placement_structure() {
     assert!(!output.contains("\x1b_Ga=d,d=i,i=2\x1b\\"), "Partial placement should not clear subimages");
 
     // Frame 2: Consecutive identical damage (e.g. stationary video player) emits partial placement
-    let is_partial_2 = encoder.encode_frame_into(
+    let is_partial_2 = KittyStreamEncoderExt::encode_frame_into(&mut encoder, 
         &rgba,
         width,
         height,
@@ -236,7 +323,7 @@ fn test_kitty_moving_damage_cumulative_bbox_and_adaptive_rebase() {
     let mut output = String::new();
 
     // Warmup frame
-    encoder.encode_frame_into(
+    KittyStreamEncoderExt::encode_frame_into(&mut encoder, 
         &rgba, width, height, 16, 10, 10, 10, None, false, &mut output,
     );
 
@@ -247,7 +334,7 @@ fn test_kitty_moving_damage_cumulative_bbox_and_adaptive_rebase() {
         width: 20,
         height: 10,
     }];
-    let is_p1 = encoder.encode_frame_into(
+    let is_p1 = KittyStreamEncoderExt::encode_frame_into(&mut encoder, 
         &rgba, width, height, 16, 10, 10, 10, Some(&damage_1), false, &mut output,
     );
     assert!(is_p1, "Initial damage should emit partial placement");
@@ -260,7 +347,7 @@ fn test_kitty_moving_damage_cumulative_bbox_and_adaptive_rebase() {
         height: 10,
     }];
 
-    let is_partial = encoder.encode_frame_into(
+    let is_partial = KittyStreamEncoderExt::encode_frame_into(&mut encoder, 
         &rgba,
         width,
         height,
@@ -284,7 +371,7 @@ fn test_kitty_moving_damage_cumulative_bbox_and_adaptive_rebase() {
         width: 10,
         height: 10,
     }];
-    let is_partial_far = encoder.encode_frame_into(
+    let is_partial_far = KittyStreamEncoderExt::encode_frame_into(&mut encoder, 
         &rgba,
         width,
         height,
@@ -314,7 +401,7 @@ fn test_kitty_subimage_neutralized_by_transparent_dummy_not_delete() {
     let mut output = String::new();
 
     // Warmup frame
-    encoder.encode_frame_into(
+    KittyStreamEncoderExt::encode_frame_into(&mut encoder, 
         &rgba, width, height, 16, 10, 10, 10, None, false, &mut output,
     );
 
@@ -325,7 +412,7 @@ fn test_kitty_subimage_neutralized_by_transparent_dummy_not_delete() {
         width: 20,
         height: 10,
     }];
-    let is_partial = encoder.encode_frame_into(
+    let is_partial = KittyStreamEncoderExt::encode_frame_into(&mut encoder, 
         &rgba, width, height, 16, 10, 10, 10, Some(&damage_1), false, &mut output,
     );
     assert!(is_partial, "Must be partial frame");
@@ -337,7 +424,7 @@ fn test_kitty_subimage_neutralized_by_transparent_dummy_not_delete() {
         width: 10,
         height: 10,
     }];
-    let is_partial_2 = encoder.encode_frame_into(
+    let is_partial_2 = KittyStreamEncoderExt::encode_frame_into(&mut encoder, 
         &rgba, width, height, 16, 10, 10, 10, Some(&damage_far), false, &mut output,
     );
     assert!(!is_partial_2, "Must fall back to full frame");
@@ -361,7 +448,7 @@ fn test_kitty_partial_placement_fallback_on_large_damage() {
     let mut output = String::new();
 
     // Warmup full frame
-    encoder.encode_frame_into(
+    KittyStreamEncoderExt::encode_frame_into(&mut encoder, 
         &rgba, width, height, 10, 10, 10, 10, None, false, &mut output,
     );
     assert!(output.starts_with("\x1b[H"));
@@ -374,7 +461,7 @@ fn test_kitty_partial_placement_fallback_on_large_damage() {
         height: 90,
     }];
 
-    let is_partial = encoder.encode_frame_into(
+    let is_partial = KittyStreamEncoderExt::encode_frame_into(&mut encoder, 
         &rgba,
         width,
         height,
@@ -405,7 +492,7 @@ fn test_kitty_partial_placement_unlimited_stationary_streaming() {
     let mut output = String::new();
 
     // Initial frame
-    encoder.encode_frame_into(
+    KittyStreamEncoderExt::encode_frame_into(&mut encoder, 
         &rgba, width, height, 10, 10, 10, 10, None, false, &mut output,
     );
 
@@ -417,13 +504,13 @@ fn test_kitty_partial_placement_unlimited_stationary_streaming() {
     }];
 
     // Warmup 1 frame to establish stationary bbox
-    let _ = encoder.encode_frame_into(
+    let _ = KittyStreamEncoderExt::encode_frame_into(&mut encoder, 
         &rgba, width, height, 10, 10, 10, 10, Some(&damage), false, &mut output,
     );
 
     // Run 100 partial frames: stationary video streaming continues indefinitely without 60-frame consolidation drop
     for frame in 1..=100 {
-        let is_partial = encoder.encode_frame_into(
+        let is_partial = KittyStreamEncoderExt::encode_frame_into(&mut encoder, 
             &rgba,
             width,
             height,
@@ -457,7 +544,7 @@ fn test_kitty_default_mode_and_opt_out() {
     assert!(encoder.enable_partial());
 
     // Initial frame
-    encoder.encode_frame_into(
+    KittyStreamEncoderExt::encode_frame_into(&mut encoder, 
         &rgba, width, height, 10, 10, 10, 10, None, false, &mut output,
     );
 
@@ -469,7 +556,7 @@ fn test_kitty_default_mode_and_opt_out() {
     }];
 
     // By default, small damage emits partial placement
-    let is_partial = encoder.encode_frame_into(
+    let is_partial = KittyStreamEncoderExt::encode_frame_into(&mut encoder, 
         &rgba, width, height, 10, 10, 10, 10, Some(&damage), false, &mut output,
     );
     assert!(is_partial, "Default mode should emit partial placement for small damage");
@@ -478,7 +565,7 @@ fn test_kitty_default_mode_and_opt_out() {
     // When opt-out via set_enable_partial(false), must emit full frame i=1, p=1
     encoder.set_enable_partial(false);
     assert!(!encoder.enable_partial());
-    let is_partial_opt_out = encoder.encode_frame_into(
+    let is_partial_opt_out = KittyStreamEncoderExt::encode_frame_into(&mut encoder, 
         &rgba, width, height, 10, 10, 10, 10, Some(&damage), false, &mut output,
     );
     assert!(!is_partial_opt_out, "Opted-out mode must always emit full frame");
@@ -504,7 +591,7 @@ fn test_kitty_uncompressible_and_varying_sizes() {
         for b in &mut rgba {
             *b = next_u8();
         }
-        encoder.encode_frame_into(
+        KittyStreamEncoderExt::encode_frame_into(&mut encoder, 
             &rgba, w, h, 80, 24, 10, 20, None, false, &mut output,
         );
         assert!(!output.is_empty());
@@ -515,7 +602,7 @@ fn test_kitty_uncompressible_and_varying_sizes() {
             width: (w / 3).max(1),
             height: (h / 3).max(1),
         }];
-        encoder.encode_frame_into(
+        KittyStreamEncoderExt::encode_frame_into(&mut encoder, 
             &rgba, w, h, 80, 24, 10, 20, Some(&damage), false, &mut output,
         );
         assert!(!output.is_empty());
@@ -546,7 +633,7 @@ fn test_kitty_gui_pattern_compression_efficiency() {
         }
     }
 
-    encoder.encode_frame_into(
+    KittyStreamEncoderExt::encode_frame_into(&mut encoder, 
         &rgba, w, h, 80, 24, 10, 20, None, false, &mut output,
     );
     // 800x600 uncompressed is 1.92MB. Level 2 dynamic Huffman compression should compress this to under 25KB.
@@ -635,7 +722,7 @@ fn test_kitty_resize_forces_fullscreen_rebase() {
     let w1 = 100u32;
     let h1 = 100u32;
     let rgba1 = vec![50u8; (w1 * h1 * 4) as usize];
-    encoder.encode_frame_into(
+    KittyStreamEncoderExt::encode_frame_into(&mut encoder, 
         &rgba1, w1, h1, 10, 10, 10, 10, None, false, &mut output,
     );
 
@@ -646,7 +733,7 @@ fn test_kitty_resize_forces_fullscreen_rebase() {
         width: 10,
         height: 10,
     }];
-    let is_p = encoder.encode_frame_into(
+    let is_p = KittyStreamEncoderExt::encode_frame_into(&mut encoder, 
         &rgba1, w1, h1, 10, 10, 10, 10, Some(&dmg), false, &mut output,
     );
     assert!(is_p, "Small damage on same resolution should emit partial");
@@ -655,7 +742,7 @@ fn test_kitty_resize_forces_fullscreen_rebase() {
     let w2 = 200u32;
     let h2 = 150u32;
     let rgba2 = vec![80u8; (w2 * h2 * 4) as usize];
-    let is_p_resized = encoder.encode_frame_into(
+    let is_p_resized = KittyStreamEncoderExt::encode_frame_into(&mut encoder, 
         &rgba2, w2, h2, 20, 15, 10, 10, Some(&dmg), false, &mut output,
     );
     assert!(
@@ -686,7 +773,7 @@ fn test_kitty_jpeg_f101_fullscreen_and_partial_placement() {
     let mut output = String::new();
 
     // 1. Initial fullscreen frame must use f=101 without o=z
-    encoder.encode_frame_into(
+    KittyStreamEncoderExt::encode_frame_into(&mut encoder, 
         &rgba, w, h, 16, 10, 10, 10, None, false, &mut output,
     );
     assert!(output.contains("f=101"), "Fullscreen header must use f=101");
@@ -710,7 +797,7 @@ fn test_kitty_jpeg_f101_fullscreen_and_partial_placement() {
         width: 20,
         height: 10,
     }];
-    let is_p = encoder.encode_frame_into(
+    let is_p = KittyStreamEncoderExt::encode_frame_into(&mut encoder, 
         &rgba, w, h, 16, 10, 10, 10, Some(&dmg), false, &mut output,
     );
     assert!(is_p, "Partial frame should emit subimage");
@@ -719,7 +806,7 @@ fn test_kitty_jpeg_f101_fullscreen_and_partial_placement() {
     assert!(output.contains("i=2,p=1"));
 
     // 3. Fallback / clear_placements must preserve f=32 transparent dummy pixel
-    encoder.encode_frame_into(
+    KittyStreamEncoderExt::encode_frame_into(&mut encoder, 
         &rgba, w, h, 16, 10, 10, 10, None, false, &mut output,
     );
     assert!(
@@ -743,14 +830,14 @@ fn test_kitty_jpeg_quality_configuration() {
     let rgba = vec![140u8; (w * h * 4) as usize];
     let mut out_high = String::new();
     encoder.set_use_jpeg(true);
-    encoder.encode_frame_into(
+    KittyStreamEncoderExt::encode_frame_into(&mut encoder, 
         &rgba, w, h, 8, 6, 10, 10, None, false, &mut out_high,
     );
 
     encoder.set_jpeg_quality(15);
     assert_eq!(encoder.jpeg_quality(), 15);
     let mut out_low = String::new();
-    encoder.encode_frame_into(
+    KittyStreamEncoderExt::encode_frame_into(&mut encoder, 
         &rgba, w, h, 8, 6, 10, 10, None, false, &mut out_low,
     );
 
@@ -921,7 +1008,7 @@ fn test_kitty_pixel_level_zero_ghosting_simulation() {
         p[2] = 0;
         p[3] = 255;
     }
-    encoder.encode_frame_into(
+    KittyStreamEncoderExt::encode_frame_into(&mut encoder, 
         &frame, width, height, term_cols, term_rows, cell_w as u16, cell_h as u16, None, false, &mut output,
     );
     sim.apply_kitty_seq(&output);
@@ -935,7 +1022,7 @@ fn test_kitty_pixel_level_zero_ghosting_simulation() {
         }
     }
     let dmg1 = [DamageRect { x: 20, y: 30, width: 10, height: 10 }];
-    let is_p1 = encoder.encode_frame_into(
+    let is_p1 = KittyStreamEncoderExt::encode_frame_into(&mut encoder, 
         &frame, width, height, term_cols, term_rows, cell_w as u16, cell_h as u16, Some(&dmg1), false, &mut output,
     );
     assert!(is_p1, "Frame 1 must be partial");
@@ -954,7 +1041,7 @@ fn test_kitty_pixel_level_zero_ghosting_simulation() {
         }
     }
     let dmg2 = [DamageRect { x: 20, y: 30, width: 15, height: 10 }];
-    let is_p2 = encoder.encode_frame_into(
+    let is_p2 = KittyStreamEncoderExt::encode_frame_into(&mut encoder, 
         &frame, width, height, term_cols, term_rows, cell_w as u16, cell_h as u16, Some(&dmg2), false, &mut output,
     );
     assert!(is_p2, "Frame 2 must be partial");
@@ -979,7 +1066,7 @@ fn test_kitty_pixel_level_zero_ghosting_simulation() {
         }
     }
     let dmg3 = [DamageRect { x: 25, y: 30, width: 13, height: 12 }];
-    let is_p3 = encoder.encode_frame_into(
+    let is_p3 = KittyStreamEncoderExt::encode_frame_into(&mut encoder, 
         &frame, width, height, term_cols, term_rows, cell_w as u16, cell_h as u16, Some(&dmg3), false, &mut output,
     );
     assert!(is_p3, "Frame 3 must be partial");
@@ -998,7 +1085,7 @@ fn test_kitty_pixel_level_zero_ghosting_simulation() {
         }
     }
     let dmg4 = [DamageRect { x: 140, y: 80, width: 5, height: 5 }];
-    let is_p4 = encoder.encode_frame_into(
+    let is_p4 = KittyStreamEncoderExt::encode_frame_into(&mut encoder, 
         &frame, width, height, term_cols, term_rows, cell_w as u16, cell_h as u16, Some(&dmg4), false, &mut output,
     );
     assert!(!is_p4, "Frame 4 must trigger adaptive rebase to full frame");
