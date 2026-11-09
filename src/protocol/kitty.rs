@@ -191,6 +191,7 @@ impl KittyStreamEncoder {
                 return;
             }
         }
+        #[cfg(not(target_arch = "aarch64"))]
         Self::quantize_rgb565_scalar(src, dst);
     }
 
@@ -213,6 +214,7 @@ impl KittyStreamEncoder {
                 return;
             }
         }
+        #[cfg(not(target_arch = "aarch64"))]
         Self::quantize_rgb565_scalar_in_place(buf);
     }
 

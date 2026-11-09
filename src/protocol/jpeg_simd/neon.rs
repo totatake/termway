@@ -40,20 +40,22 @@ pub unsafe fn transpose_4x4_s32(
 /// Represented as 8 rows of [int32x4_t; 2] (low 4 elements, high 4 elements).
 #[inline(always)]
 pub unsafe fn transpose_8x8_neon(r: &mut [[int32x4_t; 2]; 8]) {
+    let [r0, r1, r2, r3, r4, r5, r6, r7] = r;
     // 1. Transpose the four 4x4 quadrants
     // Top-Left (r[0..4][0])
-    transpose_4x4_s32(&mut r[0][0], &mut r[1][0], &mut r[2][0], &mut r[3][0]);
+    transpose_4x4_s32(&mut r0[0], &mut r1[0], &mut r2[0], &mut r3[0]);
     // Top-Right (r[0..4][1])
-    transpose_4x4_s32(&mut r[0][1], &mut r[1][1], &mut r[2][1], &mut r[3][1]);
+    transpose_4x4_s32(&mut r0[1], &mut r1[1], &mut r2[1], &mut r3[1]);
     // Bottom-Left (r[4..8][0])
-    transpose_4x4_s32(&mut r[4][0], &mut r[5][0], &mut r[6][0], &mut r[7][0]);
+    transpose_4x4_s32(&mut r4[0], &mut r5[0], &mut r6[0], &mut r7[0]);
     // Bottom-Right (r[4..8][1])
-    transpose_4x4_s32(&mut r[4][1], &mut r[5][1], &mut r[6][1], &mut r[7][1]);
+    transpose_4x4_s32(&mut r4[1], &mut r5[1], &mut r6[1], &mut r7[1]);
 
     // 2. Swap Top-Right quadrant with Bottom-Left quadrant
-    for i in 0..4 {
-        std::mem::swap(&mut r[i][1], &mut r[i + 4][0]);
-    }
+    std::mem::swap(&mut r0[1], &mut r4[0]);
+    std::mem::swap(&mut r1[1], &mut r5[0]);
+    std::mem::swap(&mut r2[1], &mut r6[0]);
+    std::mem::swap(&mut r3[1], &mut r7[0]);
 }
 
 /// 8-point 1D Forward DCT on 8 parallel rows (each split across two int32x4_t lanes).
@@ -250,7 +252,13 @@ pub unsafe fn extract_mcu_neon(
         let b_r_1 = vreinterpretq_s32_u32(vmovl_u16(vget_high_u16(b16_r)));
 
         // Compute Y for left 8 pixels
-        for (i, (&r, (&g, &b))) in [&r_l_0, &r_l_1].iter().zip([&g_l_0, &g_l_1].iter().zip([&b_l_0, &b_l_1].iter())).enumerate() {
+        let r_l = [r_l_0, r_l_1];
+        let g_l = [g_l_0, g_l_1];
+        let b_l = [b_l_0, b_l_1];
+        for i in 0..2 {
+            let r = r_l[i];
+            let g = g_l[i];
+            let b = b_l[i];
             let y_sum = vaddq_s32(
                 vaddq_s32(
                     vmulq_n_s32(r, 19595),
@@ -270,7 +278,13 @@ pub unsafe fn extract_mcu_neon(
         }
 
         // Compute Y for right 8 pixels
-        for (i, (&r, (&g, &b))) in [&r_r_0, &r_r_1].iter().zip([&g_r_0, &g_r_1].iter().zip([&b_r_0, &b_r_1].iter())).enumerate() {
+        let r_r = [r_r_0, r_r_1];
+        let g_r = [g_r_0, g_r_1];
+        let b_r = [b_r_0, b_r_1];
+        for i in 0..2 {
+            let r = r_r[i];
+            let g = g_r[i];
+            let b = b_r[i];
             let y_sum = vaddq_s32(
                 vaddq_s32(
                     vmulq_n_s32(r, 19595),
@@ -329,7 +343,13 @@ pub unsafe fn extract_mcu_neon(
             let b_avg_l = vshrq_n_s32(vaddq_s32(b_pair_l, vdupq_n_s32(2)), 2);
             let b_avg_r = vshrq_n_s32(vaddq_s32(b_pair_r, vdupq_n_s32(2)), 2);
 
-            for (half, (&r, (&g, &b))) in [&r_avg_l, &r_avg_r].iter().zip([&g_avg_l, &g_avg_r].iter().zip([&b_avg_l, &b_avg_r].iter())).enumerate() {
+            let r_avg = [r_avg_l, r_avg_r];
+            let g_avg = [g_avg_l, g_avg_r];
+            let b_avg = [b_avg_l, b_avg_r];
+            for half in 0..2 {
+                let r = r_avg[half];
+                let g = g_avg[half];
+                let b = b_avg[half];
                 let cb_term = vaddq_s32(
                     vaddq_s32(
                         vmulq_n_s32(r, -11058),
