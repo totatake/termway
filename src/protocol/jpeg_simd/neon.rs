@@ -178,8 +178,8 @@ pub unsafe fn quantize_and_zigzag_neon(
             let prod_lo = vmull_u32(a_lo, mult_lo);
             let prod_hi = vmull_u32(a_hi, mult_hi);
 
-            let q_lo = vshrn_n_u64(prod_lo, 33);
-            let q_hi = vshrn_n_u64(prod_hi, 33);
+            let q_lo = vmovn_u64(vshrq_n_u64(prod_lo, 33));
+            let q_hi = vmovn_u64(vshrq_n_u64(prod_hi, 33));
 
             let q_mag = vreinterpretq_s32_u32(vcombine_u32(q_lo, q_hi));
 
