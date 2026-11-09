@@ -35,6 +35,14 @@ fn format_args(ev: &TraceEvent) -> Option<String> {
             "\"frame_id\":{},\"bytes\":{},\"tiocoutq\":{}",
             ev.id, ev.arg1, ev.arg2
         )),
+        EventId::EncodeStall => Some(format!(
+            "\"stall_us\":{},\"frame_id\":{}",
+            ev.dur_us, ev.id
+        )),
+        EventId::WriteIdle => Some(format!(
+            "\"idle_us\":{}",
+            ev.dur_us
+        )),
         EventId::InputMouse => Some(format!(
             "\"button\":{},\"x\":{},\"y\":{}",
             ev.arg1, (ev.arg2 >> 16) as u16, (ev.arg2 & 0xFFFF) as u16
@@ -97,6 +105,10 @@ pub fn build_json_string(events: &[TraceEvent], total_overflow: u64) -> String {
     let _ = writeln!(
         out,
         r#"  {{"name":"thread_name","ph":"M","pid":1,"tid":1,"args":{{"name":"AsyncRender"}}}},"#
+    );
+    let _ = writeln!(
+        out,
+        r#"  {{"name":"thread_name","ph":"M","pid":1,"tid":2,"args":{{"name":"AsyncWrite"}}}},"#
     );
 
     // Initial overflow counter if any

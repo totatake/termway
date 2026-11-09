@@ -112,6 +112,10 @@ impl CompositorMetrics {
         let total_write_us = b_metrics.total_write_us.load(Ordering::Relaxed);
         let max_write_us = b_metrics.max_write_us.load(Ordering::Relaxed);
         let total_bytes = b_metrics.total_bytes_written.load(Ordering::Relaxed);
+        let frames_written = b_metrics.frames_written.load(Ordering::Relaxed);
+        let total_stall_us = b_metrics.total_encode_stall_us.load(Ordering::Relaxed);
+        let max_stall_us = b_metrics.max_encode_stall_us.load(Ordering::Relaxed);
+        let total_idle_us = b_metrics.total_write_idle_us.load(Ordering::Relaxed);
 
         let p95_encode_ms = b_metrics.percentile_encode(95.0);
         let p99_encode_ms = b_metrics.percentile_encode(99.0);
@@ -136,8 +140,19 @@ impl CompositorMetrics {
         } else {
             0.0
         };
-        let avg_write_ms = if jobs_rendered > 0 {
-            (total_write_us as f64 / jobs_rendered as f64) / 1000.0
+        let write_count = if frames_written > 0 { frames_written } else { jobs_rendered };
+        let avg_write_ms = if write_count > 0 {
+            (total_write_us as f64 / write_count as f64) / 1000.0
+        } else {
+            0.0
+        };
+        let avg_stall_ms = if jobs_rendered > 0 {
+            (total_stall_us as f64 / jobs_rendered as f64) / 1000.0
+        } else {
+            0.0
+        };
+        let avg_idle_ms = if write_count > 0 {
+            (total_idle_us as f64 / write_count as f64) / 1000.0
         } else {
             0.0
         };
@@ -151,8 +166,8 @@ impl CompositorMetrics {
         eprintln!("Session Duration:      {:.2}s", elapsed_secs);
         eprintln!("Compositor Frames:     {} rendered, {} skipped (unchanged clean frames)",
             self.render_frames, self.clean_skips);
-        eprintln!("Backend Async Jobs:    {} submitted, {} rendered ({} partial), {} dropped",
-            jobs_submitted, jobs_rendered, partial_frames, frames_dropped);
+        eprintln!("Backend Async Jobs:    {} submitted, {} rendered ({} partial), {} written, {} dropped",
+            jobs_submitted, jobs_rendered, partial_frames, frames_written, frames_dropped);
         eprintln!("Latency Breakdown (avg / p95 / p99 / max):");
         eprintln!("  1. Pixman Render:    avg = {:>6.2} ms,  p95 = {:>6.2} ms,  p99 = {:>6.2} ms,  max = {:>6.2} ms",
             avg_render_ms, p95_render_ms, p99_render_ms, self.render_max_us as f64 / 1000.0);
@@ -162,6 +177,10 @@ impl CompositorMetrics {
             avg_encode_ms, p95_encode_ms, p99_encode_ms, max_encode_us as f64 / 1000.0, backend.name());
         eprintln!("  4. Terminal Write:   avg = {:>6.2} ms,  p95 = {:>6.2} ms,  p99 = {:>6.2} ms,  max = {:>6.2} ms",
             avg_write_ms, p95_write_ms, p99_write_ms, max_write_us as f64 / 1000.0);
+        if total_stall_us > 0 || total_idle_us > 0 {
+            eprintln!("  5. Pipeline Stats:   avg stall = {:>6.2} ms (max {:>6.2} ms),  avg write idle = {:>6.2} ms",
+                avg_stall_ms, max_stall_us as f64 / 1000.0, avg_idle_ms);
+        }
         eprintln!("Output Data Bandwidth: total = {:.2} MB, throughput = {:.1} KB/s",
             total_bytes as f64 / (1024.0 * 1024.0), kb_per_sec);
         eprintln!("============================================================================================\n");
@@ -178,7 +197,7 @@ impl CompositorMetrics {
             };
 
             let report = format!(
-                r#"{{"duration_sec":{:.3},"render_frames":{},"clean_skips":{},"jobs_submitted":{},"jobs_rendered":{},"partial_frames":{},"frames_dropped":{},"avg_render_ms":{:.3},"p95_render_ms":{:.3},"p99_render_ms":{:.3},"max_render_ms":{:.3},"avg_damage_us":{:.3},"max_damage_us":{:.3},"avg_encode_ms":{:.3},"p95_encode_ms":{:.3},"p99_encode_ms":{:.3},"max_encode_ms":{:.3},"avg_write_ms":{:.3},"p95_write_ms":{:.3},"p99_write_ms":{:.3},"max_write_ms":{:.3},"total_bytes":{},"kb_per_sec":{:.2}{}}}"#,
+                r#"{{"duration_sec":{:.3},"render_frames":{},"clean_skips":{},"jobs_submitted":{},"jobs_rendered":{},"partial_frames":{},"frames_dropped":{},"frames_written":{},"avg_render_ms":{:.3},"p95_render_ms":{:.3},"p99_render_ms":{:.3},"max_render_ms":{:.3},"avg_damage_us":{:.3},"max_damage_us":{:.3},"avg_encode_ms":{:.3},"p95_encode_ms":{:.3},"p99_encode_ms":{:.3},"max_encode_ms":{:.3},"avg_write_ms":{:.3},"p95_write_ms":{:.3},"p99_write_ms":{:.3},"max_write_us":{:.3},"total_encode_stall_us":{},"max_encode_stall_us":{},"total_write_idle_us":{},"total_bytes":{},"kb_per_sec":{:.2}{}}}"#,
                 elapsed_secs,
                 self.render_frames,
                 self.clean_skips,
@@ -186,6 +205,7 @@ impl CompositorMetrics {
                 jobs_rendered,
                 partial_frames,
                 frames_dropped,
+                frames_written,
                 avg_render_ms,
                 p95_render_ms,
                 p99_render_ms,
@@ -200,6 +220,9 @@ impl CompositorMetrics {
                 p95_write_ms,
                 p99_write_ms,
                 max_write_us as f64 / 1000.0,
+                total_stall_us,
+                max_stall_us,
+                total_idle_us,
                 total_bytes,
                 kb_per_sec,
                 trace_file_entry,

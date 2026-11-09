@@ -21,6 +21,7 @@ pub fn total_overflow() -> u64 {
 
 static MAIN_RING: Mutex<Option<ThreadRing>> = Mutex::new(None);
 static WORKER_RING: Mutex<Option<ThreadRing>> = Mutex::new(None);
+static WRITE_RING: Mutex<Option<ThreadRing>> = Mutex::new(None);
 
 impl ThreadRing {
     pub fn with_capacity(cap: usize) -> Self {
@@ -102,6 +103,9 @@ pub fn init_rings(capacity: usize) {
 
     let mut worker_guard = WORKER_RING.lock().unwrap();
     *worker_guard = Some(ThreadRing::with_capacity(capacity));
+
+    let mut write_guard = WRITE_RING.lock().unwrap();
+    *write_guard = Some(ThreadRing::with_capacity(capacity));
 }
 
 pub fn reset_rings() {
@@ -110,6 +114,9 @@ pub fn reset_rings() {
 
     let mut worker_guard = WORKER_RING.lock().unwrap();
     *worker_guard = None;
+
+    let mut write_guard = WRITE_RING.lock().unwrap();
+    *write_guard = None;
 
     TOTAL_OVERFLOW.store(0, Ordering::Relaxed);
 }
@@ -131,10 +138,17 @@ pub fn record(thread: ThreadRole, ev: TraceEvent) {
                 }
             }
         }
+        ThreadRole::AsyncWrite => {
+            if let Ok(mut guard) = WRITE_RING.lock() {
+                if let Some(ref mut ring) = *guard {
+                    ring.push(ev);
+                }
+            }
+        }
     }
 }
 
-/// Drains both Main and AsyncRender rings in FIFO order and returns total overflow count.
+/// Drains Main, AsyncRender, and AsyncWrite rings in FIFO order and returns total overflow count.
 pub fn drain_all() -> (Vec<TraceEvent>, u64) {
     let mut all_events = Vec::new();
     let mut total_ovf = 0;
@@ -148,6 +162,14 @@ pub fn drain_all() -> (Vec<TraceEvent>, u64) {
     }
 
     if let Ok(mut guard) = WORKER_RING.lock() {
+        if let Some(ref mut ring) = *guard {
+            let (mut events, ovf) = ring.drain_ordered();
+            all_events.append(&mut events);
+            total_ovf += ovf;
+        }
+    }
+
+    if let Ok(mut guard) = WRITE_RING.lock() {
         if let Some(ref mut ring) = *guard {
             let (mut events, ovf) = ring.drain_ordered();
             all_events.append(&mut events);

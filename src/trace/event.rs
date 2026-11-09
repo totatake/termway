@@ -50,6 +50,7 @@ impl Phase {
 pub enum ThreadRole {
     Main = 0,
     AsyncRender = 1,
+    AsyncWrite = 2,
 }
 
 impl ThreadRole {
@@ -57,6 +58,7 @@ impl ThreadRole {
         match self {
             ThreadRole::Main => "Main",
             ThreadRole::AsyncRender => "AsyncRender",
+            ThreadRole::AsyncWrite => "AsyncWrite",
         }
     }
 
@@ -110,8 +112,10 @@ pub enum EventId {
     CounterRingOverflow,
     CounterWindowState,
 
-    // Pipeline optimization (M1)
+    // Pipeline optimization (M1, M3)
     FramePrepare,
+    EncodeStall,
+    WriteIdle,
 }
 
 impl EventId {
@@ -126,6 +130,8 @@ impl EventId {
             EventId::BackendEncode => "BackendEncode",
             EventId::FrameAssemble => "FrameAssemble",
             EventId::FramePrepare => "FramePrepare",
+            EventId::EncodeStall => "EncodeStall",
+            EventId::WriteIdle => "WriteIdle",
             EventId::BackendWrite => "BackendWrite",
             EventId::FrameComplete => "FrameComplete",
             EventId::BackendDrop => "BackendDrop",
@@ -170,6 +176,8 @@ impl EventId {
             EventId::BackendEncode
             | EventId::FrameAssemble
             | EventId::FramePrepare
+            | EventId::EncodeStall
+            | EventId::WriteIdle
             | EventId::BackendWrite
             | EventId::BackendDrop => "backend",
 

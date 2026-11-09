@@ -77,9 +77,39 @@ fn test_chrome_trace_json_output_and_file_dump() {
         3,
         1,
     );
+    trace::slice(
+        ThreadRole::AsyncRender,
+        EventId::EncodeStall,
+        ts + 2900,
+        300,
+        1,
+        0,
+        0,
+        0,
+    );
+    trace::slice(
+        ThreadRole::AsyncWrite,
+        EventId::WriteIdle,
+        ts + 1000,
+        500,
+        0,
+        0,
+        0,
+        0,
+    );
+    trace::slice(
+        ThreadRole::AsyncWrite,
+        EventId::BackendWrite,
+        ts + 3200,
+        1200,
+        1,
+        5000,
+        0,
+        3,
+    );
 
     let (events, ovf) = ring::drain_all();
-    assert!(events.len() >= 2);
+    assert!(events.len() >= 4);
 
     let json = build_json_string(&events, ovf);
     assert!(json.starts_with("[\n"));
@@ -87,6 +117,10 @@ fn test_chrome_trace_json_output_and_file_dump() {
     assert!(json.contains("\"process_name\""));
     assert!(json.contains("\"Render\""));
     assert!(json.contains("\"BackendEncode\""));
+    assert!(json.contains("\"EncodeStall\""));
+    assert!(json.contains("\"WriteIdle\""));
+    assert!(json.contains("\"BackendWrite\""));
+    assert!(json.contains("\"AsyncWrite\""));
     assert!(json.contains("\"ph\":\"X\""));
 
     // Test writing to a temporary file
