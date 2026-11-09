@@ -153,6 +153,12 @@ static CHROMA_DC_LUT: HuffmanLut = HuffmanLut::new(&CHROMA_DC_BITS, &CHROMA_DC_V
 static LUMA_AC_LUT: HuffmanLut = HuffmanLut::new(&LUMA_AC_BITS, &LUMA_AC_VALS);
 static CHROMA_AC_LUT: HuffmanLut = HuffmanLut::new(&CHROMA_AC_BITS, &CHROMA_AC_VALS);
 
+#[inline(always)]
+fn has_ff_byte(w: u32) -> bool {
+    let x = !w;
+    (x.wrapping_sub(0x0101_0101) & !x & 0x8080_8080) != 0
+}
+
 /// BitWriter packing bits and emitting byte-stuffed 0xFF bytes.
 pub struct BitWriter<'a> {
     out: &'a mut Vec<u8>,
@@ -178,12 +184,19 @@ impl<'a> BitWriter<'a> {
         self.buffer = (self.buffer << len) | (code as u64 & ((1u64 << len) - 1));
         self.bits_in_buffer += len;
 
-        while self.bits_in_buffer >= 8 {
-            self.bits_in_buffer -= 8;
-            let byte = ((self.buffer >> self.bits_in_buffer) & 0xFF) as u8;
-            self.out.push(byte);
-            if byte == 0xFF {
-                self.out.push(0x00); // JPEG byte stuffing
+        if self.bits_in_buffer >= 32 {
+            self.bits_in_buffer -= 32;
+            let w = (self.buffer >> self.bits_in_buffer) as u32;
+            self.buffer &= (1u64 << self.bits_in_buffer) - 1;
+            if !has_ff_byte(w) {
+                self.out.extend_from_slice(&w.to_be_bytes());
+            } else {
+                for b in w.to_be_bytes() {
+                    self.out.push(b);
+                    if b == 0xFF {
+                        self.out.push(0x00);
+                    }
+                }
             }
         }
     }
@@ -191,9 +204,21 @@ impl<'a> BitWriter<'a> {
     #[inline(always)]
     pub fn flush_pad(&mut self) {
         if self.bits_in_buffer > 0 {
-            let pad_bits = 8 - self.bits_in_buffer;
-            let code = (1u16 << pad_bits) - 1;
-            self.write_bits(code, pad_bits);
+            let rem = self.bits_in_buffer % 8;
+            if rem > 0 {
+                let pad = 8 - rem;
+                self.buffer = (self.buffer << pad) | ((1u64 << pad) - 1);
+                self.bits_in_buffer += pad;
+            }
+            while self.bits_in_buffer >= 8 {
+                self.bits_in_buffer -= 8;
+                let byte = ((self.buffer >> self.bits_in_buffer) & 0xFF) as u8;
+                self.out.push(byte);
+                if byte == 0xFF {
+                    self.out.push(0x00); // JPEG byte stuffing
+                }
+            }
+            self.buffer = 0;
         }
     }
 }
@@ -290,7 +315,8 @@ fn fdct_1d(data: &mut [i32; 64], stride: usize, offset: usize) {
 
 /// Performs full 2D 8x8 integer DCT on a block.
 #[inline(always)]
-fn fdct_2d(block: &mut [i32; 64]) {
+#[doc(hidden)]
+pub fn fdct_2d(block: &mut [i32; 64]) {
     // 1D DCT on rows
     for row in 0..8 {
         fdct_1d(block, 1, row * 8);
@@ -310,6 +336,10 @@ pub struct QuantizationTables {
     pub y_half: [i32; 64],
     pub c_mult: [u32; 64],
     pub c_half: [i32; 64],
+    pub y_mult_r: [u32; 64],
+    pub y_half_r: [i32; 64],
+    pub c_mult_r: [u32; 64],
+    pub c_half_r: [i32; 64],
 }
 
 impl QuantizationTables {
@@ -339,6 +369,18 @@ impl QuantizationTables {
             c_mult[i] = (((1u64 << 33) + dc - 1) / dc) as u32;
         }
 
+        let mut y_mult_r = [0u32; 64];
+        let mut y_half_r = [0i32; 64];
+        let mut c_mult_r = [0u32; 64];
+        let mut c_half_r = [0i32; 64];
+        for k in 0..64 {
+            let r = ZIGZAG[k];
+            y_mult_r[r] = y_mult[k];
+            y_half_r[r] = y_half[k];
+            c_mult_r[r] = c_mult[k];
+            c_half_r[r] = c_half[k];
+        }
+
         Self {
             y_table,
             c_table,
@@ -346,18 +388,25 @@ impl QuantizationTables {
             y_half,
             c_mult,
             c_half,
+            y_mult_r,
+            y_half_r,
+            c_mult_r,
+            c_half_r,
         }
     }
 }
 
 /// Quantizes and zig-zag reorders DCT coefficients with zero integer division.
+/// Returns the index of the last non-zero AC coefficient in zig-zag order (0 if all AC coefficients are 0).
 #[inline(always)]
-fn quantize_and_zigzag(
+#[doc(hidden)]
+pub fn quantize_and_zigzag(
     dct: &[i32; 64],
     mult_table: &[u32; 64],
     half_table: &[i32; 64],
     out: &mut [i16; 64],
-) {
+) -> u8 {
+    let mut last_nonzero = 0u8;
     for k in 0..64 {
         let raster_idx = ZIGZAG[k];
         let val = dct[raster_idx];
@@ -369,14 +418,20 @@ fn quantize_and_zigzag(
         } else {
             -((((-val + half) as u64 * mult) >> 33) as i32)
         };
-        out[k] = quantized.clamp(i16::MIN as i32, i16::MAX as i32) as i16;
+        let q = quantized.clamp(i16::MIN as i32, i16::MAX as i32) as i16;
+        out[k] = q;
+        if k > 0 && q != 0 {
+            last_nonzero = k as u8;
+        }
     }
+    last_nonzero
 }
 
 /// Encodes a quantized 8x8 block using standard DC and AC Huffman tables.
 #[inline(always)]
 fn encode_block(
     block: &[i16; 64],
+    last_nonzero: u8,
     last_dc: &mut i32,
     dc_lut: &HuffmanLut,
     ac_lut: &HuffmanLut,
@@ -394,7 +449,7 @@ fn encode_block(
 
     // 2. AC Coefficients
     let mut r = 0u8; // run of zeros
-    for k in 1..64 {
+    for k in 1..=last_nonzero as usize {
         let ac = block[k] as i32;
         if ac == 0 {
             r += 1;
@@ -414,26 +469,42 @@ fn encode_block(
         }
     }
 
-    if r > 0 {
+    if last_nonzero < 63 {
         // EOB (End of Block)
         let (eob_code, eob_len) = ac_lut.get(0x00);
         writer.write_bits(eob_code, eob_len);
     }
 }
 
+use super::jpeg_simd::JpegBackend;
+
 /// High-performance zero-allocation Baseline JPEG (YCbCr 4:2:0) encoder.
 pub struct JpegEncoder {
     quality: u8,
     q_tables: QuantizationTables,
+    backend: JpegBackend,
 }
 
 impl JpegEncoder {
     pub fn new(quality: u8) -> Self {
+        Self::with_backend(quality, JpegBackend::from_env_or_detect())
+    }
+
+    pub fn with_backend(quality: u8, backend: JpegBackend) -> Self {
         let q = quality.clamp(1, 100);
         Self {
             quality: q,
             q_tables: QuantizationTables::new(q),
+            backend,
         }
+    }
+
+    pub fn backend(&self) -> JpegBackend {
+        self.backend
+    }
+
+    pub fn set_backend(&mut self, backend: JpegBackend) {
+        self.backend = backend;
     }
 
     pub fn set_quality(&mut self, quality: u8) {
@@ -531,6 +602,158 @@ impl JpegEncoder {
             for mcu_x in 0..mcu_cols {
                 let base_x = rect_x + mcu_x * 16;
 
+                #[cfg(target_arch = "x86_64")]
+                if self.backend == JpegBackend::Avx2
+                    && base_x + 16 <= rect_x + rect_w
+                    && base_y + 16 <= rect_y + rect_h
+                {
+                    let mut y_blocks =
+                        [[unsafe { std::arch::x86_64::_mm256_setzero_si256() }; 8]; 4];
+                    let mut cb_block = [unsafe { std::arch::x86_64::_mm256_setzero_si256() }; 8];
+                    let mut cr_block = [unsafe { std::arch::x86_64::_mm256_setzero_si256() }; 8];
+
+                    let stride = (full_width * 4) as usize;
+                    let base_offset = (base_y as usize) * stride + (base_x as usize) * 4;
+
+                    unsafe {
+                        crate::protocol::jpeg_simd::avx2::extract_mcu_avx2(
+                            full_rgba,
+                            stride,
+                            base_offset,
+                            &mut y_blocks,
+                            &mut cb_block,
+                            &mut cr_block,
+                        );
+
+                        for y_idx in 0..4 {
+                            crate::protocol::jpeg_simd::avx2::fdct_2d_avx2(&mut y_blocks[y_idx]);
+                            let lnz = crate::protocol::jpeg_simd::avx2::quantize_and_zigzag_avx2(
+                                &y_blocks[y_idx],
+                                &self.q_tables.y_mult_r,
+                                &self.q_tables.y_half_r,
+                                &mut quant_block,
+                            );
+                            encode_block(
+                                &quant_block,
+                                lnz,
+                                &mut last_y_dc,
+                                &LUMA_DC_LUT,
+                                &LUMA_AC_LUT,
+                                &mut writer,
+                            );
+                        }
+
+                        crate::protocol::jpeg_simd::avx2::fdct_2d_avx2(&mut cb_block);
+                        let lnz_cb = crate::protocol::jpeg_simd::avx2::quantize_and_zigzag_avx2(
+                            &cb_block,
+                            &self.q_tables.c_mult_r,
+                            &self.q_tables.c_half_r,
+                            &mut quant_block,
+                        );
+                        encode_block(
+                            &quant_block,
+                            lnz_cb,
+                            &mut last_cb_dc,
+                            &CHROMA_DC_LUT,
+                            &CHROMA_AC_LUT,
+                            &mut writer,
+                        );
+
+                        crate::protocol::jpeg_simd::avx2::fdct_2d_avx2(&mut cr_block);
+                        let lnz_cr = crate::protocol::jpeg_simd::avx2::quantize_and_zigzag_avx2(
+                            &cr_block,
+                            &self.q_tables.c_mult_r,
+                            &self.q_tables.c_half_r,
+                            &mut quant_block,
+                        );
+                        encode_block(
+                            &quant_block,
+                            lnz_cr,
+                            &mut last_cr_dc,
+                            &CHROMA_DC_LUT,
+                            &CHROMA_AC_LUT,
+                            &mut writer,
+                        );
+                    }
+                    continue;
+                }
+
+                #[cfg(target_arch = "aarch64")]
+                if self.backend == JpegBackend::Neon
+                    && base_x + 16 <= rect_x + rect_w
+                    && base_y + 16 <= rect_y + rect_h
+                {
+                    let mut y_blocks =
+                        [[[unsafe { std::arch::aarch64::vdupq_n_s32(0) }; 2]; 8]; 4];
+                    let mut cb_block = [[unsafe { std::arch::aarch64::vdupq_n_s32(0) }; 2]; 8];
+                    let mut cr_block = [[unsafe { std::arch::aarch64::vdupq_n_s32(0) }; 2]; 8];
+
+                    let stride = (full_width * 4) as usize;
+                    let base_offset = (base_y as usize) * stride + (base_x as usize) * 4;
+
+                    unsafe {
+                        crate::protocol::jpeg_simd::neon::extract_mcu_neon(
+                            full_rgba,
+                            stride,
+                            base_offset,
+                            &mut y_blocks,
+                            &mut cb_block,
+                            &mut cr_block,
+                        );
+
+                        for y_idx in 0..4 {
+                            crate::protocol::jpeg_simd::neon::fdct_2d_neon(&mut y_blocks[y_idx]);
+                            let lnz = crate::protocol::jpeg_simd::neon::quantize_and_zigzag_neon(
+                                &y_blocks[y_idx],
+                                &self.q_tables.y_mult_r,
+                                &self.q_tables.y_half_r,
+                                &mut quant_block,
+                            );
+                            encode_block(
+                                &quant_block,
+                                lnz,
+                                &mut last_y_dc,
+                                &LUMA_DC_LUT,
+                                &LUMA_AC_LUT,
+                                &mut writer,
+                            );
+                        }
+
+                        crate::protocol::jpeg_simd::neon::fdct_2d_neon(&mut cb_block);
+                        let lnz_cb = crate::protocol::jpeg_simd::neon::quantize_and_zigzag_neon(
+                            &cb_block,
+                            &self.q_tables.c_mult_r,
+                            &self.q_tables.c_half_r,
+                            &mut quant_block,
+                        );
+                        encode_block(
+                            &quant_block,
+                            lnz_cb,
+                            &mut last_cb_dc,
+                            &CHROMA_DC_LUT,
+                            &CHROMA_AC_LUT,
+                            &mut writer,
+                        );
+
+                        crate::protocol::jpeg_simd::neon::fdct_2d_neon(&mut cr_block);
+                        let lnz_cr = crate::protocol::jpeg_simd::neon::quantize_and_zigzag_neon(
+                            &cr_block,
+                            &self.q_tables.c_mult_r,
+                            &self.q_tables.c_half_r,
+                            &mut quant_block,
+                        );
+                        encode_block(
+                            &quant_block,
+                            lnz_cr,
+                            &mut last_cr_dc,
+                            &CHROMA_DC_LUT,
+                            &CHROMA_AC_LUT,
+                            &mut writer,
+                        );
+                    }
+                    continue;
+                }
+
                 // Four 8x8 Y blocks: Y0, Y1, Y2, Y3
                 for by in 0..2 {
                     for bx in 0..2 {
@@ -546,7 +769,7 @@ impl JpegEncoder {
                             &mut dct_block,
                         );
                         fdct_2d(&mut dct_block);
-                        quantize_and_zigzag(
+                        let lnz = quantize_and_zigzag(
                             &dct_block,
                             &self.q_tables.y_mult,
                             &self.q_tables.y_half,
@@ -554,6 +777,7 @@ impl JpegEncoder {
                         );
                         encode_block(
                             &quant_block,
+                            lnz,
                             &mut last_y_dc,
                             &LUMA_DC_LUT,
                             &LUMA_AC_LUT,
@@ -578,7 +802,7 @@ impl JpegEncoder {
 
                 // Encode Cb
                 fdct_2d(&mut cb_block);
-                quantize_and_zigzag(
+                let lnz_cb = quantize_and_zigzag(
                     &cb_block,
                     &self.q_tables.c_mult,
                     &self.q_tables.c_half,
@@ -586,6 +810,7 @@ impl JpegEncoder {
                 );
                 encode_block(
                     &quant_block,
+                    lnz_cb,
                     &mut last_cb_dc,
                     &CHROMA_DC_LUT,
                     &CHROMA_AC_LUT,
@@ -594,7 +819,7 @@ impl JpegEncoder {
 
                 // Encode Cr
                 fdct_2d(&mut cr_block);
-                quantize_and_zigzag(
+                let lnz_cr = quantize_and_zigzag(
                     &cr_block,
                     &self.q_tables.c_mult,
                     &self.q_tables.c_half,
@@ -602,6 +827,7 @@ impl JpegEncoder {
                 );
                 encode_block(
                     &quant_block,
+                    lnz_cr,
                     &mut last_cr_dc,
                     &CHROMA_DC_LUT,
                     &CHROMA_AC_LUT,

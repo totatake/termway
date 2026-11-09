@@ -226,3 +226,54 @@ fn benchmark_pipeline_baseline() {
     eprintln!("==========================================================================================\n");
 }
 
+#[test]
+fn benchmark_jpeg_1080p_scalar_vs_simd() {
+    use termway::protocol::jpeg_simd::JpegBackend;
+    use termway::protocol::JpegEncoder;
+
+    let host_backend = JpegBackend::detect();
+    if host_backend == JpegBackend::Scalar {
+        eprintln!("Host CPU does not support AVX2/NEON SIMD; skipping comparison benchmark.");
+        return;
+    }
+
+    let w = 1920u32;
+    let h = 1080u32;
+    let rgba = create_base_frame(w, h);
+
+    let enc_scalar = JpegEncoder::with_backend(75, JpegBackend::Scalar);
+    let enc_simd = JpegEncoder::with_backend(75, host_backend);
+
+    let mut out_scalar = Vec::with_capacity(512 * 1024);
+    let mut out_simd = Vec::with_capacity(512 * 1024);
+
+    // Warm-up
+    enc_scalar.encode_subimage_into(&rgba, w, 0, 0, w, h, &mut out_scalar);
+    enc_simd.encode_subimage_into(&rgba, w, 0, 0, w, h, &mut out_simd);
+
+    let iters = 5;
+
+    let t0 = Instant::now();
+    for _ in 0..iters {
+        enc_scalar.encode_subimage_into(&rgba, w, 0, 0, w, h, &mut out_scalar);
+    }
+    let elapsed_scalar_ms = t0.elapsed().as_secs_f64() * 1000.0 / iters as f64;
+
+    let t1 = Instant::now();
+    for _ in 0..iters {
+        enc_simd.encode_subimage_into(&rgba, w, 0, 0, w, h, &mut out_simd);
+    }
+    let elapsed_simd_ms = t1.elapsed().as_secs_f64() * 1000.0 / iters as f64;
+
+    let speedup = elapsed_scalar_ms / elapsed_simd_ms;
+    eprintln!("\n==========================================================================================");
+    eprintln!(" JPEG 1080p (1920x1080) BENCHMARK: SCALAR vs {:?}", host_backend);
+    eprintln!("==========================================================================================");
+    eprintln!(" Scalar time: {:>7.2} ms (size: {} KB)", elapsed_scalar_ms, out_scalar.len() / 1024);
+    eprintln!(" SIMD time:   {:>7.2} ms (size: {} KB)", elapsed_simd_ms, out_simd.len() / 1024);
+    eprintln!(" Speedup:     {:>7.2}x", speedup);
+    eprintln!("==========================================================================================\n");
+
+    assert_eq!(out_scalar, out_simd, "Scalar and SIMD 1080p output must be identical");
+}
+
