@@ -335,6 +335,7 @@ Kitty グラフィックスプロトコルの標準仕様（RFC 1950 zlib 圧縮
 | **フェーズ 20**（シグナル/パニック端末復元・自己診断・拡張プロファイル） | SIGINT/SIGTERM/SIGHUP 受信時および panic 時の確実な端末復元・同期描画解除 (`\x1b[?2026l`)、`--query` 診断レポート、`TERMWAY_NO_CURSOR_SHAPE` オプトアウト、`TERMWAY_FPS`、p99 レイテンシヒストグラム算出 | 最優先 | 異常終了・強制終了時の端末ハング・同期ロック完全防止、端末機能の事前診断、特定環境での OSC 22 競合防止、p99 テールレイテンシの可視化 | **実装済み (v0.16.0 / v0.16.1)** |
 | **フェーズ 21**（コンポジタ構造整理・不要コード削除・クランプ共通化） | `state.toplevels` の二重管理廃止と `wm.windows` への一本化、`ManagedWindow::clamp_content_loc` によるクランプ処理共通化と幾何学マージン明確化、未使用デッドコード削除、XKB Unicode キーマップ 64 スロット超マルチバッチロールオーバー検証 | 高 | Wayland ウィンドウ二重カウント・二重コールバック送出の根絶、保守性・可読性の向上、長文ペースト時の堅牢性保証 | **実装済み (v0.17.0)** |
 | **フェーズ 22**（ゼロアロケーション・タイムライントレーシング ＆ Perfetto 連携） | 32B 固定長イベント・スレッド独立リングバッファ、Chrome Trace Event JSON / `.gz` 出力器、`frame_id` 跨スレッド非同期フロー・ドロップ原因追跡・`TIOCOUTQ` 監視、高頻度マウスインプレース共結成、WM 状態遷移カウンタトラック (`win_{id}_state`)、連番スナップショット、panic 時安全ダンプ、HUD 溢れ表示 (`Ovf`) | 最優先 | ナノ〜マイクロ秒精度でのパイプライン・ボトルネック追跡、フレームドロップ原因の完全可視化、ui.perfetto.dev によるタイムライン解析 | **実装済み (v0.18.0)** |
+| **フェーズ 23**（Wayland ポインタフレーム分離 ＆ 水平スクロール対応） | `wl_pointer.motion` と `axis`/`button` の独立 `wl_pointer.frame` 分離（GTK3/WebKitGTK/Tauri 早期リターン問題解消）、SGR マウス水平スクロール（`WheelLeft`/`WheelRight`、`raw_btn & 67`）、`under_from_surface_tree` サブサーフェスヒットテスト（ADR-0004） | 最優先 | openidea 等の GTK3/Tauri アプリにおけるホイールスクロール完全動作、macOS (Ghostty) / Windows (cnotty) での滑らかな 2D トラックパッド追従 | **実装済み (v0.19.0)** |
 
 ---
 
