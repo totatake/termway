@@ -267,6 +267,8 @@ termway は起動時に端末エミュレータのプロトコル対応状況を
 - 環境変数:
   - `TERMWAY_KITTY_JPEG=1` / `true`（強制有効）、`0` / `false`（強制無効）、未設定 / `auto`（自動プローブ判定）
   - `TERMWAY_JPEG_QUALITY=1..=100`（品質指定）
+  - `TERMWAY_JPEG_SIMD=0`（AVX2/NEON SIMD を無効化し純粋スカラーにフォールバック）
+  - `TERMWAY_PIPELINE=serial`（ダブルバッファリングパイプラインを無効化し直列実行）
 
 ```bash
 # JPEG 拡張を明示的に有効化して動画アプリやブラウザを起動

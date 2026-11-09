@@ -174,7 +174,10 @@ flowchart LR
 | `tests/unit_terminal.rs` | 6 | 端末サイズフォールバック、セル→ピクセル変換、TerminalBackend モード名検証、`RawModeGuard` RAII 安全性検証、シグナル終了フラグ & 生端末復元検証 |
 | `tests/unit_trace.rs` | 8 | 32B 固定長構造体検証 (TRC-001)、リングバッファ overflow & drop-oldest 順序検証 (TRC-001)、Chrome Trace Event JSON および `.gz` 圧縮出力 (TRC-001)、`frame_id` 跨スレッド非同期フロー & `BackendDrop` 原因追跡 (TRC-002)、高頻度マウスインプレース共結成 & `--trace-no-input` ゲート (TRC-003)、連番スナップショットローテーション & CLI パース (TRC-004)、WM 状態遷移カウンタトラック (`win_{id}_state`: 1→2→0→1) およびライフサイクルイベント (TRC-005) |
 | `tests/system_e2e_gui.rs` | 2 | Smithay コンポジタ描画 → DamageTracker → Kitty エンコード → SIMD BGRX 変換 E2E パイプライン検証、テストドライバ JSON ダンプ検証 |
-| `tests/perf_pipeline.rs` | 1 | 1080x720 擬似ウィンドウ描画・DamageTracker 差分検出・Kitty/Sixel エンコード総合パイプラインのベースライン性能ベンチマーク検証 |
+| `tests/unit_vectored.rs` | 4 | `writev_all` によるゼロコピー scatter-gather 出力検証 (PIP-001): 複数スライス結合完全性、空/単一スライス、1MB 超大容量ペイロード、ノンブロッキング `EAGAIN` / `EINTR` リカバリ |
+| `tests/unit_jpeg_simd.rs` | 5 | SIMD JPEG ビット完全一致差分検証 (PIP-002 / INV-4): 多解像度 (1x1 〜 1080p)・任意部分矩形・全品質 (1..100)・10,000 ランダムブロック単体での 2D FDCT & 量子化一致、`TERMWAY_JPEG_SIMD=0` 環境変数検証 |
+| `tests/unit_pipeline.rs` | 4 | Double-Buffering パイプライン検証 (PIP-003〜005): 順序保証・エンコード後非欠落 (INV-1)、人工遅延下でのパイプライン並列性 (PIP-004)、シャットダウン安全性・同期描画ブラケット `?2026` 整合性 (INV-5)、`TERMWAY_PIPELINE=serial` フォールバック |
+| `tests/perf_pipeline.rs` | 2 | パイプライン段別ベンチマーク検証、JPEG 1080p スカラー vs AVX2/NEON SIMD 速度比 (3.29x) ベンチマーク |
 
 ---
 
@@ -182,23 +185,27 @@ flowchart LR
 
 ```bash
 $ cargo test
-   Compiling termway v0.16.1 (/path/to/termway)
+   Compiling termway v0.20.0 (/path/to/termway)
     Finished `test` profile [unoptimized + debuginfo] target(s)
      Running unittests src/lib.rs (8 tests) ... ok
      Running tests/integration_pipeline.rs (11 tests) ... ok
-     Running tests/perf_pipeline.rs (1 test) ... ok
+     Running tests/perf_pipeline.rs (2 tests) ... ok
      Running tests/system_e2e_gui.rs (2 tests) ... ok
-     Running tests/unit_compositor.rs (39 tests) ... ok
+     Running tests/unit_compositor.rs (41 tests) ... ok
      Running tests/unit_damage_tracker.rs (9 tests) ... ok
      Running tests/unit_keyboard.rs (6 tests) ... ok
      Running tests/unit_kitty_encoder.rs (20 tests) ... ok
+     Running tests/unit_pipeline.rs (4 tests) ... ok
      Running tests/unit_secret_bridge.rs (4 tests) ... ok
      Running tests/unit_session.rs (7 tests) ... ok
      Running tests/unit_sgr_mouse.rs (7 tests) ... ok
      Running tests/unit_sixel_encoder.rs (7 tests) ... ok
      Running tests/unit_terminal.rs (6 tests) ... ok
+     Running tests/unit_trace.rs (8 tests) ... ok
+     Running tests/unit_vectored.rs (4 tests) ... ok
+     Running tests/unit_jpeg_simd.rs (5 tests) ... ok
 
-test result: ok. 127 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 28.5s
+test result: ok. 136 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
 ```
-全 127 テストが 100% 成功し、すべての要件定義項目が検証されました。
+全 136 テストが 100% 成功し、すべての要件定義項目が検証されました。
 

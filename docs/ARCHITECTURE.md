@@ -358,13 +358,17 @@ sequenceDiagram
 
 ---
 
-### 2.2 イベント駆動メインループと非同期レンダリングパイプライン
+### 2.2 イベント駆動メインループと非同期レンダリングパイプライン (Double-Buffering)
 
-`TermwayCompositor::run` のメインスレッド（統一 FD ポーリング + Calloop + Wayland ディスパッチ）と、`TerminalBackend` の専用ワーカースレッド（`termway-async-render`）間の非同期協調動作を示します。
+`TermwayCompositor::run` のメインスレッド（統一 FD ポーリング + Calloop + Wayland ディスパッチ）と、`TerminalBackend` の 2 つの専用ワーカースレッド（`termway-async-render` [Encode] および `termway-async-write` [Write]）間の非同期 2 段パイプライン動作を示します。
 
 - **統一 FD ポーリングとフレームペーシング (`--fps`)**: `stdin`・Wayland `ListeningSocket`・`display.backend().poll_fd()` の 3 記述子を単一の `nix::poll` で一括監視することでアイドル時の CPU 使用率を 0% に保ちつつ、`--fps`（デフォルト 30fps）のフレーム間隔に基づいて連続コミット時の再描画頻度を適応的に制御します。
-- **入力とイベント処理の非ブロッキング化**: 画像エンコード（Sixel 減色や Kitty zlib 圧縮）と標準出力フラッシュは別スレッドで実行されるため、高解像度描画中でもマウス・キー入力は遅延なく処理されます。
-- **最新フレーム間引き (Frame Dropping) とゼロアロケーション再利用**: ワーカースレッドが前フレームをエンコード中に次のフレームが到着した場合、`pending_job` のピクセルバッファを上書き置換することで古いフレームを破棄し、PTY バッファブロートを完全に防ぎます。また、描画完了後の `Vec<u8>` は `spare_buffer` としてメインスレッドへ返却・再利用されます。
+- **入力とイベント処理の非ブロッキング化**: 画像エンコード（Sixel 減色や Kitty zlib/JPEG 圧縮）と PTY 送信は別スレッドで実行されるため、高解像度描画中でもマウス・キー入力は遅延なく処理されます。
+- **Double-Buffering パイプライン分離 (M3 / ADR-0005)**:
+  - **Encode スレッド (`termway-async-render`)**: 状態を持つエンコーダ（Sixel / Kitty / SIMD JPEG）を単一所有（INV-2）。2 面の `EncodedFrame` スロットから空きスロットを獲得し、前フレームの PTY 送信と並行して次フレームをエンコード。
+  - **Write スレッド (`termway-async-write`)**: POSIX `writev` によるゼロコピー scatter-gather 出力（INV-3）。`ready` キューからスロットを取り出して PTY 送信し、完了後に `free` プールへ返却。
+  - **順序保証と非欠落 (INV-1)**: 端末側の画像参照状態・差分状態を守るため、エンコード済みのフレームは絶対に破棄（Drop）せずランデブー待機します。
+- **最新フレーム間引き (Frame Dropping) とゼロアロケーション再利用**: エンコード前の `pending_job` でのみ古いフレームを上書き破棄し、PTY バッファブロートを完全に防ぎます。また、ピクセルバッファは `spare_buffer` としてメインスレッドへ返却・再利用されます。
 
 ```mermaid
 sequenceDiagram
@@ -405,15 +409,13 @@ sequenceDiagram
         end
     end
 
-    par バックグラウンド非同期エンコード
+    par バックグラウンド 2段パイプライン (Double-Buffering)
         Worker->>Queue: pending_job.take()
-        alt Sixel モード
-            Worker->>Worker: SixelStreamEncoder::encode_frame_into()<br/>(6行ダーティバンド FNV-1a キャッシュ + AVX2 RGB332 減色 + tzcnt RLE)
-        else Kitty モード
-            Worker->>Worker: KittyStreamEncoder::encode_fullscreen_frame_into()<br/>(ゼロアロケーション CompressorOxide 再利用 + Base64 4096B ストリーミング)
-        end
-        Worker->>TermOut: Synchronized Output (\x1b[?2026h ... 画像 + タスクバー + HUD ... \x1b[?2026l)
+        Worker->>Worker: Sixel / Kitty / SIMD JPEG エンコード (AVX2/NEON)
         Worker->>Queue: spare_buffer = Some(job.pixels) (バッファ返却・再利用)
+        Worker->>Worker: EncodedFrame スロットへ格納 & ready へランデブー引き渡し
+        Note over Worker: Write スレッドが並行して PTY 送信中も<br/>Encode スレッドは free スロットで次フレーム先行処理
+        Worker->>TermOut: writev_all([prefix, payload, suffix]) (ゼロコピーアトミック送信)
     end
 ```
 

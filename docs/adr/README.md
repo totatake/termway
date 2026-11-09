@@ -14,3 +14,4 @@
 | [ADR-0002](0002-fixed-image-id-partial-placement.md) | 固定画像IDによる部分画面転送アーキテクチャと端末エミュレータ保護 | Accepted | 2026-10-18 |
 | [ADR-0003](0003-zero-allocation-time-line-tracer.md) | ゼロアロケーション・タイムライン・トレーサ（Perfetto 対応） | Accepted | 2026-11-02 |
 | [ADR-0004](0004-wayland-pointer-frame-separation-and-horizontal-scroll.md) | Wayland ポインタフレーム分離と水平スクロール対応による GTK/Tauri 互換性確保 | Accepted | 2026-11-09 |
+| [ADR-0005](0005-double-buffering-simd-jpeg-and-vectored-io.md) | 完全非同期パイプライン・SIMD JPEG・ベクタード I/O による描画スループット最適化 | Accepted | 2026-11-09 |

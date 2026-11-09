@@ -336,6 +336,7 @@ Kitty グラフィックスプロトコルの標準仕様（RFC 1950 zlib 圧縮
 | **フェーズ 21**（コンポジタ構造整理・不要コード削除・クランプ共通化） | `state.toplevels` の二重管理廃止と `wm.windows` への一本化、`ManagedWindow::clamp_content_loc` によるクランプ処理共通化と幾何学マージン明確化、未使用デッドコード削除、XKB Unicode キーマップ 64 スロット超マルチバッチロールオーバー検証 | 高 | Wayland ウィンドウ二重カウント・二重コールバック送出の根絶、保守性・可読性の向上、長文ペースト時の堅牢性保証 | **実装済み (v0.17.0)** |
 | **フェーズ 22**（ゼロアロケーション・タイムライントレーシング ＆ Perfetto 連携） | 32B 固定長イベント・スレッド独立リングバッファ、Chrome Trace Event JSON / `.gz` 出力器、`frame_id` 跨スレッド非同期フロー・ドロップ原因追跡・`TIOCOUTQ` 監視、高頻度マウスインプレース共結成、WM 状態遷移カウンタトラック (`win_{id}_state`)、連番スナップショット、panic 時安全ダンプ、HUD 溢れ表示 (`Ovf`) | 最優先 | ナノ〜マイクロ秒精度でのパイプライン・ボトルネック追跡、フレームドロップ原因の完全可視化、ui.perfetto.dev によるタイムライン解析 | **実装済み (v0.18.0)** |
 | **フェーズ 23**（Wayland ポインタフレーム分離 ＆ 水平スクロール対応） | `wl_pointer.motion` と `axis`/`button` の独立 `wl_pointer.frame` 分離（GTK3/WebKitGTK/Tauri 早期リターン問題解消）、SGR マウス水平スクロール（`WheelLeft`/`WheelRight`、`raw_btn & 67`）、`under_from_surface_tree` サブサーフェスヒットテスト（ADR-0004） | 最優先 | openidea 等の GTK3/Tauri アプリにおけるホイールスクロール完全動作、macOS (Ghostty) / Windows (cnotty) での滑らかな 2D トラックパッド追従 | **実装済み (v0.19.0)** |
+| **フェーズ 24**（非同期パイプライン・SIMD JPEG・ベクタード I/O） | M1: `libc::writev` によるフレーム組み立て memcpy 全廃ゼロコピー化、M2: 純粋 Rust JPEG エンコーダの AVX2/NEON SIMD 化（3.29倍高速化・ビット完全一致 INV-4）、M3: ダブルバッファリング 2 段パイプライン（`termway-async-render` と `termway-async-write`、順序保証 INV-1・状態分離 INV-2・端末保護 INV-5）、安全弁（`TERMWAY_JPEG_SIMD=0`, `TERMWAY_PIPELINE=serial`）、ADR-0005・開発指示書完備 | 最優先 | 1080p JPEG エンコード所要時間 13.07ms→3.98ms（3.29x）、エンコード・送信の完全並列動作（実効フレーム周期 $\max(T_{enc}, T_{write})$ 達成） | **実装済み (v0.20.0)** |
 
 ---
 
@@ -343,9 +344,6 @@ Kitty グラフィックスプロトコルの標準仕様（RFC 1950 zlib 圧縮
 
 | テーマ | 概要 | 期待される価値 |
 | :--- | :--- | :--- |
-| **エンコード・PTY 送信の完全非同期パイプライン化 (Double-Buffering Pipeline)** | タイムライン解析で判明した `BackendEncode` (CPU) と `BackendWrite` (PTY I/O) の直列実行を、2 段パイプライン／ダブルバッファリング構成へ分離。フレーム $N$ の PTY 送信中に、バックグラウンドでフレーム $N+1$ のエンコードを先行並列実行する。（開発指示書: [docs/pipeline/](pipeline/README.md) M3） | 1 フレームあたりの所要時間が $\max(\text{Encode}, \text{Write})$ に短縮され、パイプライン遅延を約 25〜30% 圧縮。30fps 再生時のアイドルマージン拡大とドロップ耐性の飛躍的向上。 |
-| **純粋 Rust JPEG エンコーダの AVX2 / ARM NEON SIMD ベクトル化** | 8x8 FDCT (離散コサイン変換) 内積演算、RGB→YCbCr 色空間変換、量子化テーブル乗算を AVX2 / ARM NEON により 8 レーン並列化。（開発指示書: [docs/pipeline/](pipeline/README.md) M2） | JPEG エンコード時間（現行約 15ms）を 1/2〜1/3（約 5〜8ms）に大幅短縮。メイン CPU 負荷を半減させ、低スペックホスト環境での高フレームレート追従性を向上。 |
-| **PTY 送信のベクタード I/O (`writev` / `vmsplice`) によるゼロコピー化** | `FrameAssemble` による単一メモリバッファ結合コピーをバイパスし、制御エスケープシーケンスとエンコード済み画像ペイロードを `writev` (scatter-gather I/O) でカーネルへ直接書き込み。なお `vmsplice` はパイプ専用で PTY には適用できないため不採用（開発指示書: [docs/pipeline/](pipeline/README.md) M1）。 | 毎フレーム発生するメガバイト単位のメモリコピー遅延と L3 キャッシュ汚染を排除。 |
 | **Direct Scanout / DRM バックエンド探索** | ヘッドレス/仮想端末に加え、DRM/KMS 直接描画バックエンドの実験的検討 | 端末を介さないベアメタル/コンソール環境での直接GUI動作 |
 | **ローカル接続時の動的無圧縮（Raw RGBA）バイパス** | Kitty プロトコルの無圧縮 RGBA 転送を活用し、ローカル実行環境（非SSH）において zlib 圧縮処理をバイパス（`--no-compress`） | 帯域制限のないローカル環境での CPU 負荷削減と極小描画レイテンシの実現 |
 | **次世代圧縮アルゴリズム（Zstandard / LZ4 等）の検証** | Kitty 規格外（RFC 1950 zlib 以外）の超高速圧縮方式（Zstandard / LZ4 / QOI 等）のフィージビリティ調査。端末エミュレータ側の標準規格拡張やカスタム拡張ハンドシェイクの可能性を検証 | zlib を超える極小圧縮遅延（GB/s 級）の実現可能性の模索 |

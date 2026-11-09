@@ -266,6 +266,8 @@ For compatible terminals such as specially extended Noctty (an experimental fork
 - Environment Variables:
   - `TERMWAY_KITTY_JPEG=1` / `true` (force enabled), `0` / `false` (force disabled), unset / `auto` (auto-detect)
   - `TERMWAY_JPEG_QUALITY=1..=100` (quality setting)
+  - `TERMWAY_JPEG_SIMD=0` (force-disable AVX2/NEON SIMD and use pure scalar fallback)
+  - `TERMWAY_PIPELINE=serial` (force-disable double-buffering and use serial execution)
 
 ```bash
 # Run with JPEG extension explicitly enabled
