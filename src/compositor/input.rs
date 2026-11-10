@@ -647,6 +647,7 @@ pub fn dispatch_mouse_event(
                 }
                 WindowDragState::None => {
                     let mut cursor_shape = "default";
+                    let mut on_decoration = false;
                     for win in state.wm.windows.iter().rev() {
                         if win.is_minimized {
                             continue;
@@ -657,14 +658,17 @@ pub fn dispatch_mouse_event(
                                 || win.minimize_button_hit_geometry().contains(loc_i32)
                             {
                                 cursor_shape = "pointer";
+                                on_decoration = true;
                                 break;
                             }
                             if let Some(edge) = win.resize_edge_at(loc_i32) {
                                 cursor_shape = edge.cursor_shape();
+                                on_decoration = true;
                                 break;
                             }
                             if win.titlebar_geometry().contains(loc_i32) {
                                 cursor_shape = "grab";
+                                on_decoration = true;
                                 break;
                             }
                         }
@@ -673,6 +677,9 @@ pub fn dispatch_mouse_event(
                             break;
                         }
                     }
+                    // Must be set BEFORE pointer.motion(): smithay invokes cursor_image() from
+                    // inside motion() (on focus leave) and that must not override our shape.
+                    state.pointer_on_decoration = on_decoration;
                     state.update_cursor_shape(cursor_shape);
                 }
             }

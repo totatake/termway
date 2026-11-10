@@ -42,6 +42,48 @@ fn test_compositor_renderer_buffer() {
 }
 
 #[test]
+fn test_cursor_image_does_not_override_decoration_hover_and_never_locks_pointer() {
+    use smithay::input::pointer::CursorImageStatus;
+    use smithay::input::SeatHandler;
+    use smithay::utils::{Point, Size};
+    use termway::compositor::input::dispatch_mouse_event;
+    use termway::compositor::window::ManagedWindow;
+    use termway::protocol::{MouseAction, MouseButton, MouseEvent};
+
+    let display = Display::<TermwayState>::new().expect("Failed to create Wayland Display");
+    let dh = display.handle();
+    let mut state = TermwayState::new(&dh, 800, 600, true);
+
+    let win = ManagedWindow::new_dummy(1, "W".into(), Point::from((100, 100)), Size::from((400, 300)));
+    state.wm.windows.push(win);
+    let mut child = None;
+
+    // Hover over the left resize border -> compositor owns the cursor
+    let hover_left = MouseEvent {
+        button: MouseButton::None, action: MouseAction::Move,
+        col: 100, row: 201, shift: false, meta: false, ctrl: false,
+    };
+    dispatch_mouse_event(&mut state, 800, 600, 800, 600, &hover_left, &mut child);
+    assert_eq!(state.current_cursor_shape, "ew-resize");
+    assert!(state.pointer_on_decoration);
+
+    // smithay calls cursor_image() from inside PointerHandle::motion() while the pointer mutex is
+    // held (focus leave). Simulate that call: it must not deadlock and must not override.
+    let seat = state.seat.clone();
+    state.cursor_image(&seat, CursorImageStatus::default_named());
+    assert_eq!(state.current_cursor_shape, "ew-resize");
+
+    // Moving to the desktop background clears the flag; client cursors apply again
+    let hover_bg = MouseEvent {
+        button: MouseButton::None, action: MouseAction::Move,
+        col: 21, row: 21, shift: false, meta: false, ctrl: false,
+    };
+    dispatch_mouse_event(&mut state, 800, 600, 800, 600, &hover_bg, &mut child);
+    assert!(!state.pointer_on_decoration);
+    assert_eq!(state.current_cursor_shape, "default");
+}
+
+#[test]
 fn test_xwayland_state_and_shell() {
     let display = Display::<TermwayState>::new().expect("Failed to create Wayland Display");
     let dh = display.handle();

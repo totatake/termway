@@ -116,6 +116,10 @@ pub struct TermwayState {
     pub splash_command: String,
     pub start_time: std::time::Instant,
     pub current_cursor_shape: String,
+    /// True while the pointer hovers a compositor-owned decoration (titlebar / resize border).
+    /// Set from the input path *before* `pointer.motion()`; read by `cursor_image()` which is
+    /// invoked by smithay while the pointer mutex is held (so it must never lock the pointer).
+    pub pointer_on_decoration: bool,
     pub current_terminal_title: String,
     pub pixel_mouse: bool,
     pub enable_cursor_shape: bool,
@@ -224,6 +228,7 @@ impl TermwayState {
             splash_command: String::from("gui-app"),
             start_time: std::time::Instant::now(),
             current_cursor_shape: String::from("default"),
+            pointer_on_decoration: false,
             current_terminal_title: String::from("termway"),
             pixel_mouse: false,
             enable_cursor_shape: std::env::var("TERMWAY_NO_CURSOR_SHAPE").is_err(),

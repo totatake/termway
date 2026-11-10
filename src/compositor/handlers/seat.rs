@@ -68,17 +68,11 @@ impl SeatHandler for TermwayState {
         if !matches!(self.wm.drag_state, crate::compositor::window::WindowDragState::None) {
             return;
         }
-        // If the pointer is currently hovering over an SSD titlebar or resize border,
-        // do not let client override compositor's hover cursor shape
-        let cur_loc = self.pointer.current_location();
-        let cur_i32 = smithay::utils::Point::from((cur_loc.x as i32, cur_loc.y as i32));
-        for win in self.wm.windows.iter().rev() {
-            if win.is_minimized {
-                continue;
-            }
-            if win.has_ssd && (win.titlebar_geometry().contains(cur_i32) || win.resize_edge_at(cur_i32).is_some()) {
-                return;
-            }
+        // While hovering an SSD titlebar / resize border, the compositor owns the cursor shape.
+        // NOTE: smithay calls this while holding the pointer mutex (PointerHandle::motion), so we
+        // must NOT call self.pointer.current_location() here (self-deadlock). Use the flag instead.
+        if self.pointer_on_decoration {
+            return;
         }
         match image {
             smithay::input::pointer::CursorImageStatus::Hidden => {
