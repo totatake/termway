@@ -340,7 +340,7 @@ impl XwmHandler for TermwayState {
         self.dirty = true;
     }
 
-    fn resize_request(&mut self, _xwm: XwmId, window: X11Surface, _button: u32, _resize_edge: ResizeEdge) {
+    fn resize_request(&mut self, _xwm: XwmId, window: X11Surface, _button: u32, resize_edge: ResizeEdge) {
         if !self.enable_wm {
             return;
         }
@@ -350,7 +350,18 @@ impl XwmHandler for TermwayState {
         }) {
             let cur_loc = self.pointer.current_location();
             let win_geo = win.content_geometry();
+            let edge = match resize_edge {
+                ResizeEdge::Top => crate::compositor::window::ResizeEdge::Top,
+                ResizeEdge::Bottom => crate::compositor::window::ResizeEdge::Bottom,
+                ResizeEdge::Left => crate::compositor::window::ResizeEdge::Left,
+                ResizeEdge::Right => crate::compositor::window::ResizeEdge::Right,
+                ResizeEdge::TopLeft => crate::compositor::window::ResizeEdge::TopLeft,
+                ResizeEdge::TopRight => crate::compositor::window::ResizeEdge::TopRight,
+                ResizeEdge::BottomLeft => crate::compositor::window::ResizeEdge::BottomLeft,
+                ResizeEdge::BottomRight => crate::compositor::window::ResizeEdge::BottomRight,
+            };
             self.wm.drag_state = WindowDragState::Resizing {
+                edge,
                 start_cursor: (cur_loc.x, cur_loc.y),
                 start_window_geo: win_geo,
             };

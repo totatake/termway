@@ -13,7 +13,7 @@ use smithay::{
 };
 
 use crate::compositor::state::{ClientState, TermwayState};
-use crate::compositor::window::{WindowSurface, BORDER_WIDTH, TITLEBAR_HEIGHT};
+use crate::compositor::window::{ManagedWindow, WindowSurface, BORDER_WIDTH, TITLEBAR_HEIGHT};
 
 // 1. BufferHandler
 impl BufferHandler for TermwayState {
@@ -130,13 +130,14 @@ impl CompositorHandler for TermwayState {
                                 let clamped_h = bbox.size.h.min(max_allowed_h);
                                 w.size = (clamped_w, clamped_h).into();
 
-                                // 画面枠内に確実に収まるよう位置を調整
-                                let min_x = if w.has_ssd { BORDER_WIDTH } else { 0 };
-                                let max_x = (self.width as i32 - w.size.w - min_x).max(min_x);
-                                let min_y = if w.has_ssd { TITLEBAR_HEIGHT + BORDER_WIDTH } else { 0 };
-                                let max_y = (self.height as i32 - w.size.h - min_x).max(min_y);
-                                w.loc.x = w.loc.x.clamp(min_x, max_x);
-                                w.loc.y = w.loc.y.clamp(min_y, max_y);
+                                // 画面枠外への適度な移動を許容しつつ位置を安全にクランプ
+                                w.loc = ManagedWindow::clamp_content_loc(
+                                    w.loc,
+                                    w.size,
+                                    w.has_ssd,
+                                    self.width,
+                                    self.height,
+                                );
 
                                 if clamped_w != bbox.size.w || clamped_h != bbox.size.h {
                                     w.configure_size(clamped_w, clamped_h);

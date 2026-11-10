@@ -127,7 +127,7 @@ flowchart LR
 | **FR-22** | `/tmp/.X11-unix` 書込権限事前検査 | XWayland 起動前に `/tmp/.X11-unix` ディレクトリへの書込可否を検証し、リードオンリー環境でのハングアップやホスト DISPLAY へのエスケープを防止すること。 | `tests/unit_session.rs` | **PASS** |
 | **FR-23** | Wayland データデバイスフォーカス & シリアル整合性 | Wayland Seat においてフォーカス切り替え時に `set_data_device_focus` を通知し、単調増加シリアル番号を保証すること。 | `tests/unit_compositor.rs` | **PASS** |
 | **FR-24** | Wayland XDG Popup & X11 Override-Redirect メニュー対応 | Wayland `xdg_popup` および XWayland override-redirect ウィンドウを追跡・最前面描画・優先ヒットテストし、ドロップダウンメニューやコンテキストメニューを正常操作できること。 | `tests/unit_compositor.rs` | **PASS** |
-| **FR-25** | ウィンドウ最小化・最大化・タスクバー管理 (`WindowManager`) | タイトルバーの最小化 `[-]`・最大化 `[□]`・閉じる `[×]` ボタンおよび最下部タスクバーチップによるウィンドウ状態制御・80%中央サイズ復元・ドメイン独立管理（`WindowManager`）を行うこと。 | `tests/unit_compositor.rs` | **PASS** |
+| **FR-25** | ウィンドウ最小化・最大化・タスクバー管理・画面外ドラッグおよび 8方向リサイズ (`WindowManager`) | タイトルバーの最小化 `[-]`・最大化 `[□]`・閉じる `[×]` ボタンおよび最下部タスクバーチップによるウィンドウ状態制御・80%中央サイズ復元・ドメイン独立管理（`WindowManager`）、画面外ドラッグ移動（パーシャル・オフスクリーン移動、最低48px安全マージン保証）、および外枠4辺・4隅の8方向リサイズ（最小サイズガード、loc & size 協調計算）を行うこと。 | `tests/unit_compositor.rs` | **PASS** |
 | **FR-26** | 動的ターミナルリサイズ追従 (`SIGWINCH`) | `SIGWINCH` シグナル検知時にコンポジタ出力・Pixman バッファ・DamageTracker・最大化/浮動ウィンドウを動的にリサイズ追従させること。 | `tests/unit_compositor.rs` | **PASS** |
 | **FR-27** | リアルタイムパフォーマンス HUD (`--hud`) | `--hud` 指定時に FPS、解像度、転送帯域（KB/s）、エンコード時間（ms）を画面右上にオーバーレイ表示すること。 | `tests/unit_compositor.rs` | **PASS** |
 | **FR-28** | 起動時スプラッシュスクリーン (`--no-splash`) | 最初のウィンドウが表示されるまでの間、ブルー〜シアンのグラデーションロゴ `>_ TERMWAY` とカーネル風テレメトリログを描画し、ウィンドウ表示時に自動消去すること（`--no-splash` で非表示化可能）。 | `tests/unit_compositor.rs` | **PASS** |
@@ -135,7 +135,7 @@ flowchart LR
 | **FR-30** | Sixel ダーティバンドキャッシュ & Kitty ストリーミング・部分矩形プレースメント | Sixel エンコーダにおいて 6 行バンド単位の FNV-1a ハッシュキャッシュによる完全同一バンドスキップを行い、Kitty エンコーダにおいては `KittyStreamEncoder` によるゼロアロケーションバッファ再利用ストリーミングおよび累積バウンディングボックス部分矩形プレースメント転送（75%以下の累積汚損領域の部分配置転送、スパース膨張時の適応的リベース、定点動画の無制限連続部分転送、1パスRGB565量子化）を実現すること。 | `tests/unit_sixel_encoder.rs`<br/>`tests/unit_kitty_encoder.rs` | **PASS** |
 | **FR-31** | 統一 FD ポーリング & `--fps` フレームペーシング | `calloop` イベントループにおいて stdin, Wayland display, XWayland, clipboard, signal の全記述子を単一 epoll で統一監視し、`--fps`（デフォルト 30fps）による適応型フレームペーシング制御を行うこと。 | `tests/unit_compositor.rs`<br/>`tests/integration_pipeline.rs` | **PASS** |
 | **FR-34** | Wayland Fractional Scale (`wp_fractional_scale_v1`) & Viewporter (`wp_viewporter`) & HiDPI制御 (`--scale`) | `--scale <FACTOR>`（0.25〜4.0）による動的スケール指定、`wp_fractional_scale_v1`（120分の1単位）および `wp_viewporter` 拡張プロトコルのアドバタイズ、サーフェスコミット時の `preferred_scale` 通知、論理/物理座標系の分離（ウィンドウ管理・装飾・マウス入力・Pixman合成）を保証すること。 | `tests/unit_compositor.rs` | **PASS** |
-| **FR-35** | OSC 22 マウスカーソル形状同期 | ウィンドウの枠線やリサイズハンドル（`nwse-resize`）、タイトルバー（`grab`）、ボタン（`pointer`）などのホバー対象に応じて、ホスト端末のマウスカーソル形状を動的に同期（`\x1b]22;<name>\x07`）すること。 | `tests/unit_compositor.rs` | **PASS** |
+| **FR-35** | OSC 22 マウスカーソル形状同期 | ウィンドウの枠線（4辺・4隅の 8 方向リサイズ: `ew-resize`, `ns-resize`, `nwse-resize`, `nesw-resize`）、タイトルバー（`grab` / `grabbing`）、ボタン（`pointer`）などのホバーおよびドラッグ対象に応じて、ホスト端末のマウスカーソル形状を動的に同期（`\x1b]22;<name>\x07`）すること。 | `tests/unit_compositor.rs` | **PASS** |
 | **FR-36** | Kitty Keyboard Protocol (CSI u) | 起動時に `\x1b[>1u` を送信してプログレッシブなキーボード拡張を有効化し、修飾キーやエスケープシーケンスの曖昧性を解消すること（終了時に `\x1b[<u` で安全復元）。 | `tests/unit_keyboard.rs` | **PASS** |
 | **FR-37** | Wayland Primary Selection & 中クリックペースト | `zwp_primary_selection_device_manager_v1` および `gtk_primary_selection` を実装し、マウスによるテキスト選択範囲の即時共有とマウス中クリックによる即時貼り付けをサポートすること。 | `tests/unit_compositor.rs` | **PASS** |
 | **FR-38** | OSC 2 端末ウィンドウ/タブタイトル動的同期 | アクティブな GUI ウィンドウのタイトルを検知し、ホスト端末のウィンドウ/タブタイトルへ動的同期（`\x1b]2;termway: <Title>\x07`）すること（終了時に安全復元）。 | `tests/unit_compositor.rs` | **PASS** |
@@ -162,7 +162,7 @@ flowchart LR
 | テストターゲット | テスト数 | 検証内容 |
 | :--- | :---: | :--- |
 | `src/lib.rs` | 8 | 純粋 Rust Baseline JPEG (YCbCr 4:2:0) エンコーダ（SOF0, DQT, DHT, SOS）、任意ストライド部分矩形抽出、奇数解像度、1x1〜1080p 色再現性・高解像度ベンチマーク、固定小数点逆数乗算テーブル、端末テキストサニタイズ、CJK 文字カラム幅計算 |
-| `tests/unit_compositor.rs` | 41 | `TermwayState` / `WindowManager` ドメイン操作、SSD/CSD 装飾、最大化・80%中央復元・最小化、動的リサイズ (`SIGWINCH`)、OSC 52 クリップボード送信、マウスホイール（上下・左右ディスパッチ、Wayland ポインタフレーム分離）、スプラッシュ描画・消去、JSON 状態ダンプ、UTF-8 日本語入力、Fractional Scale / Viewporter / HiDPI スケールレンダリング、OSC 22 カーソル形状同期、Wayland Primary Selection、OSC 2 端末タブタイトル同期、SGR-Pixels (1016h) 1px 精度マウスディスパッチ、`TERMWAY_NO_CURSOR_SHAPE` オプトアウト、`TERMWAY_FPS`、`LatencyHistogram` p95/p99 レイテンシ検証 |
+| `tests/unit_compositor.rs` | 43 | `TermwayState` / `WindowManager` ドメイン操作、SSD/CSD 装飾、最大化・80%中央復元・最小化、8方向リサイズ（4辺・4隅）・安全画面外ドラッグ移動、動的リサイズ (`SIGWINCH`)、OSC 52 クリップボード送信、マウスホイール（上下・左右ディスパッチ、Wayland ポインタフレーム分離）、スプラッシュ描画・消去、JSON 状態ダンプ、UTF-8 日本語入力、Fractional Scale / Viewporter / HiDPI スケールレンダリング、OSC 22 カーソル形状同期、Wayland Primary Selection、OSC 2 端末タブタイトル同期、SGR-Pixels (1016h) 1px 精度マウスディスパッチ、`TERMWAY_NO_CURSOR_SHAPE` オプトアウト、`TERMWAY_FPS`、`LatencyHistogram` p95/p99 レイテンシ検証 |
 | `tests/unit_session.rs` | 7 | ハイブリッド D-Bus セッション起動、Snap コマンド判定・PATH シムルーティング、Polkit エージェント検出、コマンド存在性検証、`/tmp/.X11-unix` 書込検査 |
 | `tests/unit_kitty_encoder.rs` | 20 | Kitty フルスクリーン RFC 1950 zlib 圧縮 (`o=z`)・4096B チャンク分割・ラウンドトリップ解凍検証、累積バウンディングボックス部分矩形プレースメント転送・デコード検証、大面積更新時フルフレームフォールバック、定点動画の無制限連続部分転送、解像度変更ガード、端末合成シミュレータによるピクセルレベル残像完全ゼロ検証、Kitty-JPEG (`f=101`) フルスクリーン/部分プレースメント/透過ダミー保護検証、品質設定検証、1080x720 パフォーマンス検証 |
 | `tests/unit_sixel_encoder.rs` | 7 | Sixel AVX2 / ARM NEON SIMD 減色・6行バンド走査・単色バンド高速パス・RLE 圧縮・非8倍数幅エッジケース、6行バンド差分キャッシュ (`SixelStreamEncoder`)、1080x720 パフォーマンス検証 |
@@ -191,7 +191,7 @@ $ cargo test
      Running tests/integration_pipeline.rs (11 tests) ... ok
      Running tests/perf_pipeline.rs (2 tests) ... ok
      Running tests/system_e2e_gui.rs (2 tests) ... ok
-     Running tests/unit_compositor.rs (41 tests) ... ok
+     Running tests/unit_compositor.rs (43 tests) ... ok
      Running tests/unit_damage_tracker.rs (9 tests) ... ok
      Running tests/unit_keyboard.rs (6 tests) ... ok
      Running tests/unit_kitty_encoder.rs (20 tests) ... ok
@@ -205,7 +205,7 @@ $ cargo test
      Running tests/unit_vectored.rs (4 tests) ... ok
      Running tests/unit_jpeg_simd.rs (5 tests) ... ok
 
-test result: ok. 136 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+test result: ok. 138 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
 ```
-全 136 テストが 100% 成功し、すべての要件定義項目が検証されました。
+全 138 テストが 100% 成功し、すべての要件定義項目が検証されました。
 

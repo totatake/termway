@@ -5,12 +5,12 @@ use smithay::{
         pointer::{AxisFrame, ButtonEvent, MotionEvent},
     },
     reexports::wayland_server::protocol::wl_surface::WlSurface,
-    utils::{Logical, Point, Rectangle, SERIAL_COUNTER},
+    utils::{Logical, Point, Rectangle, Size, SERIAL_COUNTER},
 };
 use std::process::Child;
 
 use super::state::TermwayState;
-use super::window::{ManagedWindow, WindowDragState, WindowSurface, BORDER_WIDTH};
+use super::window::{ManagedWindow, WindowDragState, WindowSurface};
 use crate::protocol::{KeyCode, MouseAction, MouseButton, MouseEvent};
 
 /// Map KeyCode / Char to Linux evdev scancode and modifier requirements (need_shift, need_ctrl).
@@ -584,16 +584,57 @@ pub fn dispatch_mouse_event(
                     }
                     return;
                 }
-                WindowDragState::Resizing { start_cursor, start_window_geo } => {
-                    state.update_cursor_shape("nwse-resize");
-                    let dw = (loc_x - start_cursor.0).round() as i32;
-                    let dh = (loc_y - start_cursor.1).round() as i32;
+                WindowDragState::Resizing { edge, start_cursor, start_window_geo } => {
+                    state.update_cursor_shape(edge.cursor_shape());
+                    let dx = (loc_x - start_cursor.0).round() as i32;
+                    let dy = (loc_y - start_cursor.1).round() as i32;
                     if let Some(top_win) = state.wm.windows.last_mut() {
-                        let max_w = (state.width as i32 - top_win.loc.x - BORDER_WIDTH).max(100);
-                        let max_h = (state.height as i32 - top_win.loc.y - BORDER_WIDTH).max(60);
+                        let (start_x, start_y) = (start_window_geo.loc.x, start_window_geo.loc.y);
+                        let (start_w, start_h) = (start_window_geo.size.w, start_window_geo.size.h);
 
-                        let new_w = (start_window_geo.size.w + dw).clamp(100, max_w);
-                        let new_h = (start_window_geo.size.h + dh).clamp(60, max_h);
+                        const MIN_W: i32 = 100;
+                        const MIN_H: i32 = 60;
+
+                        use crate::compositor::window::ResizeEdge;
+                        let (new_x, new_w) = match edge {
+                            ResizeEdge::Right | ResizeEdge::TopRight | ResizeEdge::BottomRight => {
+                                let w = (start_w + dx).max(MIN_W);
+                                (start_x, w)
+                            }
+                            ResizeEdge::Left | ResizeEdge::TopLeft | ResizeEdge::BottomLeft => {
+                                let w = (start_w - dx).max(MIN_W);
+                                let x = start_x + (start_w - w);
+                                (x, w)
+                            }
+                            ResizeEdge::Top | ResizeEdge::Bottom => {
+                                (start_x, start_w)
+                            }
+                        };
+
+                        let (new_y, new_h) = match edge {
+                            ResizeEdge::Bottom | ResizeEdge::BottomLeft | ResizeEdge::BottomRight => {
+                                let h = (start_h + dy).max(MIN_H);
+                                (start_y, h)
+                            }
+                            ResizeEdge::Top | ResizeEdge::TopLeft | ResizeEdge::TopRight => {
+                                let h = (start_h - dy).max(MIN_H);
+                                let y = start_y + (start_h - h);
+                                (y, h)
+                            }
+                            ResizeEdge::Left | ResizeEdge::Right => {
+                                (start_y, start_h)
+                            }
+                        };
+
+                        let clamped_loc = ManagedWindow::clamp_content_loc(
+                            Point::from((new_x, new_y)),
+                            Size::from((new_w, new_h)),
+                            top_win.has_ssd,
+                            state.width,
+                            state.height,
+                        );
+
+                        top_win.set_loc(clamped_loc);
                         top_win.configure_size(new_w, new_h);
                         state.dirty = true;
                     }
@@ -613,8 +654,8 @@ pub fn dispatch_mouse_event(
                                 cursor_shape = "pointer";
                                 break;
                             }
-                            if !win.is_maximized && win.resize_handle_hit_geometry().contains(loc_i32) {
-                                cursor_shape = "nwse-resize";
+                            if let Some(edge) = win.resize_edge_at(loc_i32) {
+                                cursor_shape = edge.cursor_shape();
                                 break;
                             }
                             if win.titlebar_geometry().contains(loc_i32) {
@@ -763,7 +804,7 @@ pub fn dispatch_mouse_event(
             let mut clicked_maximize = false;
             let mut clicked_minimize = false;
             let mut clicked_titlebar = false;
-            let mut clicked_resize = false;
+            let mut clicked_resize = None;
             let mut clicked_content = false;
             let mut win_loc = Point::from((0, 0));
             let mut win_geo = smithay::utils::Rectangle::new((0, 0).into(), (0, 0).into());
@@ -788,11 +829,13 @@ pub fn dispatch_mouse_event(
                         clicked_minimize = true;
                         break;
                     }
-                    if is_left && !win.is_maximized && win.resize_handle_hit_geometry().contains(loc_i32) {
-                        hit_window_id = Some(win.id);
-                        clicked_resize = true;
-                        win_geo = win.content_geometry();
-                        break;
+                    if is_left && !win.is_maximized {
+                        if let Some(edge) = win.resize_edge_at(loc_i32) {
+                            hit_window_id = Some(win.id);
+                            clicked_resize = Some(edge);
+                            win_geo = win.content_geometry();
+                            break;
+                        }
                     }
                     if win.titlebar_geometry().contains(loc_i32) {
                         hit_window_id = Some(win.id);
@@ -891,14 +934,17 @@ pub fn dispatch_mouse_event(
                     return;
                 }
 
-                if clicked_resize && is_left {
-                    state.wm.drag_state = WindowDragState::Resizing {
-                        start_cursor: (loc_x, loc_y),
-                        start_window_geo: win_geo,
-                    };
-                    state.update_cursor_shape("nwse-resize");
-                    state.dirty = true;
-                    return;
+                if let Some(edge) = clicked_resize {
+                    if is_left {
+                        state.wm.drag_state = WindowDragState::Resizing {
+                            edge,
+                            start_cursor: (loc_x, loc_y),
+                            start_window_geo: win_geo,
+                        };
+                        state.update_cursor_shape(edge.cursor_shape());
+                        state.dirty = true;
+                        return;
+                    }
                 }
 
                 if clicked_content {

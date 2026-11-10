@@ -215,22 +215,10 @@ fn test_window_clamping_logic() {
     let screen_w = 800;
     let screen_h = 600;
 
-    let mut win = ManagedWindow::new_dummy(1, "Test Window".into(), Point::from((50, 50)), Size::from((700, 500)));
-
-    // Clamp window position
-    let min_x = BORDER_WIDTH;
-    let max_x = (screen_w - win.size.w - BORDER_WIDTH).max(min_x);
-    let min_y = TITLEBAR_HEIGHT + BORDER_WIDTH;
-    let max_y = (screen_h - win.size.h - BORDER_WIDTH).max(min_y);
-
-    let clamped_x = win.loc.x.clamp(min_x, max_x);
-    let clamped_y = win.loc.y.clamp(min_y, max_y);
-    win.set_loc(Point::from((clamped_x, clamped_y)));
-
-    assert!(win.loc.x >= min_x && win.loc.x <= max_x);
-    assert!(win.loc.y >= min_y && win.loc.y <= max_y);
+    let win = ManagedWindow::new_dummy(1, "Test Window".into(), Point::from((50, 50)), Size::from((700, 500)));
 
     // Verify ManagedWindow::clamp_content_loc helper directly
+    // With partial-offscreen drag support, window can move negative down to 48 - border - size.w = -653
     let clamped_helper = ManagedWindow::clamp_content_loc(
         Point::from((-50, -50)),
         win.size,
@@ -238,9 +226,23 @@ fn test_window_clamping_logic() {
         screen_w as u32,
         screen_h as u32,
     );
-    assert_eq!(clamped_helper.x, min_x);
-    assert_eq!(clamped_helper.y, min_y);
+    assert_eq!(clamped_helper.x, -50);
+    assert_eq!(clamped_helper.y, TITLEBAR_HEIGHT + BORDER_WIDTH);
 
+    // Past maximum off-screen left bound: should clamp to min_x (-653)
+    let min_x = 48 - BORDER_WIDTH - win.size.w;
+    let clamped_far_left = ManagedWindow::clamp_content_loc(
+        Point::from((-1000, -50)),
+        win.size,
+        win.has_ssd,
+        screen_w as u32,
+        screen_h as u32,
+    );
+    assert_eq!(clamped_far_left.x, min_x);
+    assert_eq!(clamped_far_left.y, TITLEBAR_HEIGHT + BORDER_WIDTH);
+
+    let max_x = screen_w - 48 + BORDER_WIDTH;
+    let max_y = screen_h - TITLEBAR_HEIGHT;
     let clamped_bottom_right = ManagedWindow::clamp_content_loc(
         Point::from((1000, 1000)),
         win.size,
@@ -251,7 +253,7 @@ fn test_window_clamping_logic() {
     assert_eq!(clamped_bottom_right.x, max_x);
     assert_eq!(clamped_bottom_right.y, max_y);
 
-    // CSD window (no SSD) clamps to 0..=screen - size
+    // CSD window (no SSD): can also move partially off-screen while keeping at least 48px visible
     let csd_clamped = ManagedWindow::clamp_content_loc(
         Point::from((-10, -10)),
         Size::from((100, 100)),
@@ -259,15 +261,140 @@ fn test_window_clamping_logic() {
         screen_w as u32,
         screen_h as u32,
     );
-    assert_eq!(csd_clamped.x, 0);
+    assert_eq!(csd_clamped.x, -10);
     assert_eq!(csd_clamped.y, 0);
+}
 
-    // Frame geometry should be entirely within screen bounds
-    let fg = win.frame_geometry();
-    assert!(fg.loc.x >= 0);
-    assert!(fg.loc.y >= 0);
-    assert!(fg.loc.x + fg.size.w <= screen_w);
-    assert!(fg.loc.y + fg.size.h <= screen_h);
+#[test]
+fn test_window_8_direction_resize_hit_testing() {
+    use smithay::utils::{Point, Size};
+    use termway::compositor::window::{ManagedWindow, ResizeEdge};
+
+    let mut win = ManagedWindow::new_dummy(
+        1,
+        "Resize Window".into(),
+        Point::from((100, 100)), // content origin
+        Size::from((400, 300)),
+    );
+    // Frame: loc = (100 - 1, 100 - 22 - 1) = (99, 77), size = (402, 324)
+    // Left = 99, Right = 501, Top = 77, Bottom = 401
+
+    // Top-Left corner: (99, 77)
+    assert_eq!(win.resize_edge_at(Point::from((99, 77))), Some(ResizeEdge::TopLeft));
+    // Top-Right corner: (503, 75) - outside close button
+    assert_eq!(win.resize_edge_at(Point::from((503, 75))), Some(ResizeEdge::TopRight));
+    // Bottom-Left corner: (99, 401)
+    assert_eq!(win.resize_edge_at(Point::from((99, 401))), Some(ResizeEdge::BottomLeft));
+    // Bottom-Right corner: (500, 400) or inside grip (485, 385)
+    assert_eq!(win.resize_edge_at(Point::from((500, 400))), Some(ResizeEdge::BottomRight));
+    assert_eq!(win.resize_edge_at(Point::from((485, 385))), Some(ResizeEdge::BottomRight));
+
+    // Edges (away from corners):
+    // Left edge (x = 99, y = 200)
+    assert_eq!(win.resize_edge_at(Point::from((99, 200))), Some(ResizeEdge::Left));
+    // Right edge (x = 501, y = 200)
+    assert_eq!(win.resize_edge_at(Point::from((501, 200))), Some(ResizeEdge::Right));
+    // Top edge (x = 200, y = 77)
+    assert_eq!(win.resize_edge_at(Point::from((200, 77))), Some(ResizeEdge::Top));
+    // Bottom edge (x = 200, y = 401)
+    assert_eq!(win.resize_edge_at(Point::from((200, 401))), Some(ResizeEdge::Bottom));
+
+    // Content center: should return None
+    assert_eq!(win.resize_edge_at(Point::from((200, 200))), None);
+
+    // Titlebar buttons: close button hit area must return None (not resize)
+    let close_hit = win.close_button_hit_geometry();
+    assert_eq!(win.resize_edge_at(close_hit.loc), None);
+
+    // Titlebar body (x = 200, y = 90): should return None (handled as move/drag)
+    assert_eq!(win.resize_edge_at(Point::from((200, 90))), None);
+
+    // Maximized window: resize must return None
+    win.is_maximized = true;
+    assert_eq!(win.resize_edge_at(Point::from((99, 77))), None);
+}
+
+#[test]
+fn test_window_8_direction_resize_execution() {
+    use smithay::utils::{Point, Size};
+    use termway::compositor::window::{ManagedWindow, ResizeEdge};
+
+    let win = ManagedWindow::new_dummy(
+        1,
+        "Resize Math Window".into(),
+        Point::from((200, 200)),
+        Size::from((400, 300)),
+    );
+    let start_geo = win.content_geometry();
+
+    // Helper simulating resize drag calculation
+    let simulate_resize = |edge: ResizeEdge, dx: i32, dy: i32| -> (Point<i32, smithay::utils::Logical>, Size<i32, smithay::utils::Logical>) {
+        const MIN_W: i32 = 100;
+        const MIN_H: i32 = 60;
+        let (start_x, start_y) = (start_geo.loc.x, start_geo.loc.y);
+        let (start_w, start_h) = (start_geo.size.w, start_geo.size.h);
+
+        let (new_x, new_w) = match edge {
+            ResizeEdge::Right | ResizeEdge::TopRight | ResizeEdge::BottomRight => {
+                let w = (start_w + dx).max(MIN_W);
+                (start_x, w)
+            }
+            ResizeEdge::Left | ResizeEdge::TopLeft | ResizeEdge::BottomLeft => {
+                let w = (start_w - dx).max(MIN_W);
+                let x = start_x + (start_w - w);
+                (x, w)
+            }
+            ResizeEdge::Top | ResizeEdge::Bottom => (start_x, start_w),
+        };
+
+        let (new_y, new_h) = match edge {
+            ResizeEdge::Bottom | ResizeEdge::BottomLeft | ResizeEdge::BottomRight => {
+                let h = (start_h + dy).max(MIN_H);
+                (start_y, h)
+            }
+            ResizeEdge::Top | ResizeEdge::TopLeft | ResizeEdge::TopRight => {
+                let h = (start_h - dy).max(MIN_H);
+                let y = start_y + (start_h - h);
+                (y, h)
+            }
+            ResizeEdge::Left | ResizeEdge::Right => (start_y, start_h),
+        };
+        (Point::from((new_x, new_y)), Size::from((new_w, new_h)))
+    };
+
+    // Right resize by +50: width becomes 450, x stays 200
+    let (loc, sz) = simulate_resize(ResizeEdge::Right, 50, 0);
+    assert_eq!(loc.x, 200);
+    assert_eq!(sz.w, 450);
+
+    // Left resize by +50 (drag rightward to shrink): width becomes 350, x moves to 250, right edge stays at 600
+    let (loc, sz) = simulate_resize(ResizeEdge::Left, 50, 0);
+    assert_eq!(loc.x, 250);
+    assert_eq!(sz.w, 350);
+    assert_eq!(loc.x + sz.w, 600);
+
+    // Top resize by +40 (drag downward to shrink): height becomes 260, y moves to 240, bottom stays at 500
+    let (loc, sz) = simulate_resize(ResizeEdge::Top, 0, 40);
+    assert_eq!(loc.y, 240);
+    assert_eq!(sz.h, 260);
+    assert_eq!(loc.y + sz.h, 500);
+
+    // Bottom resize by +50: height becomes 350, y stays 200
+    let (loc, sz) = simulate_resize(ResizeEdge::Bottom, 0, 50);
+    assert_eq!(loc.y, 200);
+    assert_eq!(sz.h, 350);
+
+    // TopLeft resize by (-30, -20): expands left by 30, expands top by 20
+    let (loc, sz) = simulate_resize(ResizeEdge::TopLeft, -30, -20);
+    assert_eq!(loc.x, 170);
+    assert_eq!(sz.w, 430);
+    assert_eq!(loc.y, 180);
+    assert_eq!(sz.h, 320);
+
+    // Minimum size constraint: attempt to shrink width to 10px from left
+    let (loc, sz) = simulate_resize(ResizeEdge::Left, 500, 0);
+    assert_eq!(sz.w, 100); // clamped to MIN_W
+    assert_eq!(loc.x, 500); // 200 + (400 - 100) = 500; right edge stays at 600
 }
 
 #[test]

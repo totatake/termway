@@ -208,7 +208,7 @@ impl XdgShellHandler for TermwayState {
         surface: ToplevelSurface,
         _seat: wl_seat::WlSeat,
         _serial: Serial,
-        _edges: xdg_toplevel::ResizeEdge,
+        edges: xdg_toplevel::ResizeEdge,
     ) {
         if !self.enable_wm {
             return;
@@ -216,7 +216,18 @@ impl XdgShellHandler for TermwayState {
         if let Some(win) = self.wm.find_toplevel(&surface) {
             let cur_loc = self.pointer.current_location();
             let win_geo = win.content_geometry();
+            let edge = match edges {
+                xdg_toplevel::ResizeEdge::Top => crate::compositor::window::ResizeEdge::Top,
+                xdg_toplevel::ResizeEdge::Bottom => crate::compositor::window::ResizeEdge::Bottom,
+                xdg_toplevel::ResizeEdge::Left => crate::compositor::window::ResizeEdge::Left,
+                xdg_toplevel::ResizeEdge::Right => crate::compositor::window::ResizeEdge::Right,
+                xdg_toplevel::ResizeEdge::TopLeft => crate::compositor::window::ResizeEdge::TopLeft,
+                xdg_toplevel::ResizeEdge::TopRight => crate::compositor::window::ResizeEdge::TopRight,
+                xdg_toplevel::ResizeEdge::BottomLeft => crate::compositor::window::ResizeEdge::BottomLeft,
+                xdg_toplevel::ResizeEdge::BottomRight | _ => crate::compositor::window::ResizeEdge::BottomRight,
+            };
             self.wm.drag_state = WindowDragState::Resizing {
+                edge,
                 start_cursor: (cur_loc.x, cur_loc.y),
                 start_window_geo: win_geo,
             };

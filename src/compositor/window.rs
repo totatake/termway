@@ -5,6 +5,29 @@ use smithay::{
     xwayland::X11Surface,
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResizeEdge {
+    Top,
+    Bottom,
+    Left,
+    Right,
+    TopLeft,
+    TopRight,
+    BottomLeft,
+    BottomRight,
+}
+
+impl ResizeEdge {
+    pub fn cursor_shape(&self) -> &'static str {
+        match self {
+            ResizeEdge::Left | ResizeEdge::Right => "ew-resize",
+            ResizeEdge::Top | ResizeEdge::Bottom => "ns-resize",
+            ResizeEdge::TopLeft | ResizeEdge::BottomRight => "nwse-resize",
+            ResizeEdge::TopRight | ResizeEdge::BottomLeft => "nesw-resize",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum WindowDragState {
     None,
@@ -13,6 +36,7 @@ pub enum WindowDragState {
         start_window_pos: (i32, i32),
     },
     Resizing {
+        edge: ResizeEdge,
         start_cursor: (f64, f64),
         start_window_geo: Rectangle<i32, Logical>,
     },
@@ -196,9 +220,10 @@ impl ManagedWindow {
         Rectangle::new(self.loc, self.size)
     }
 
-    /// Clamps a window's client content origin `(loc.x, loc.y)` so that its outer frame
-    /// (including the SSD titlebar on top and `BORDER_WIDTH` on left, right, and bottom)
-    /// remains within `[0, screen_w] × [0, screen_h]`.
+    /// Clamps a window's client content origin `(loc.x, loc.y)` so that:
+    /// - Vertically: The titlebar remains visible and reachable on-screen (cannot fall off bottom or disappear off top).
+    /// - Horizontally: The window can be dragged partially off-screen (e.g. to reveal its right edge when oversized),
+    ///   retaining at least `MIN_VISIBLE_MARGIN` (48px) within the screen viewport.
     pub fn clamp_content_loc(
         loc: Point<i32, Logical>,
         size: Size<i32, Logical>,
@@ -207,10 +232,14 @@ impl ManagedWindow {
         screen_h: u32,
     ) -> Point<i32, Logical> {
         let border = if has_ssd { BORDER_WIDTH } else { 0 };
-        let min_x = border;
         let min_y = if has_ssd { TITLEBAR_HEIGHT + border } else { 0 };
-        let max_x = (screen_w as i32 - size.w - border).max(min_x);
-        let max_y = (screen_h as i32 - size.h - border).max(min_y);
+        let max_y = (screen_h as i32 - TITLEBAR_HEIGHT.max(20)).max(min_y);
+
+        // Allow partial off-screen horizontal movement while retaining a visible grab margin
+        const MIN_VISIBLE_MARGIN: i32 = 48;
+        let min_x = (MIN_VISIBLE_MARGIN - border - size.w).min(border);
+        let max_x = (screen_w as i32 - MIN_VISIBLE_MARGIN + border).max(min_x);
+
         Point::from((loc.x.clamp(min_x, max_x), loc.y.clamp(min_y, max_y)))
     }
 
@@ -318,6 +347,77 @@ impl ManagedWindow {
             (fg.loc.x + fg.size.w - hit_size, fg.loc.y + fg.size.h - hit_size).into(),
             (hit_size, hit_size).into(),
         )
+    }
+
+    /// Determines which resize edge/corner (if any) is under the given coordinates.
+    pub fn resize_edge_at(&self, p: Point<i32, Logical>) -> Option<ResizeEdge> {
+        if !self.has_ssd || self.is_maximized || self.is_minimized {
+            return None;
+        }
+
+        // Titlebar buttons have priority over top/corner resize
+        if self.close_button_hit_geometry().contains(p)
+            || self.maximize_button_hit_geometry().contains(p)
+            || self.minimize_button_hit_geometry().contains(p)
+        {
+            return None;
+        }
+
+        let fg = self.frame_geometry();
+        let hit_margin = 6; // 6px border hit zone
+        let corner_size = 24; // 24px corner hit zone
+
+        let outer = Rectangle::new(
+            (fg.loc.x - hit_margin, fg.loc.y - hit_margin).into(),
+            (fg.size.w + hit_margin * 2, fg.size.h + hit_margin * 2).into(),
+        );
+
+        if !outer.contains(p) {
+            return None;
+        }
+
+        let inner = Rectangle::new(
+            (fg.loc.x + hit_margin, fg.loc.y + hit_margin).into(),
+            (fg.size.w - hit_margin * 2, fg.size.h - hit_margin * 2).into(),
+        );
+
+        // Check if inside the existing 28x28 bottom-right triangle grip area
+        let in_bottom_right_grip = p.x >= fg.loc.x + fg.size.w - 28 && p.y >= fg.loc.y + fg.size.h - 28;
+
+        // If inside the window and not in the outer border band (and not in bottom-right grip), it's not a resize
+        if inner.contains(p) && !in_bottom_right_grip {
+            return None;
+        }
+
+        let on_left = p.x <= fg.loc.x + hit_margin;
+        let on_right = p.x >= fg.loc.x + fg.size.w - hit_margin || in_bottom_right_grip;
+        let on_top = p.y <= fg.loc.y + hit_margin;
+        let on_bottom = p.y >= fg.loc.y + fg.size.h - hit_margin || in_bottom_right_grip;
+
+        let near_left = p.x <= fg.loc.x + corner_size;
+        let near_right = p.x >= fg.loc.x + fg.size.w - corner_size;
+        let near_top = p.y <= fg.loc.y + corner_size;
+        let near_bottom = p.y >= fg.loc.y + fg.size.h - corner_size;
+
+        if (on_top && near_left) || (on_left && near_top) {
+            Some(ResizeEdge::TopLeft)
+        } else if (on_top && near_right) || (on_right && near_top) {
+            Some(ResizeEdge::TopRight)
+        } else if (on_bottom && near_left) || (on_left && near_bottom) {
+            Some(ResizeEdge::BottomLeft)
+        } else if (on_bottom && near_right) || (on_right && near_bottom) || in_bottom_right_grip {
+            Some(ResizeEdge::BottomRight)
+        } else if on_left {
+            Some(ResizeEdge::Left)
+        } else if on_right {
+            Some(ResizeEdge::Right)
+        } else if on_top {
+            Some(ResizeEdge::Top)
+        } else if on_bottom {
+            Some(ResizeEdge::Bottom)
+        } else {
+            None
+        }
     }
 
     pub fn update_title(&mut self) {
