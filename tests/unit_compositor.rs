@@ -323,8 +323,12 @@ fn test_window_8_direction_resize_hit_testing() {
 
     // Top-Left corner: (99, 77)
     assert_eq!(win.resize_edge_at(Point::from((99, 77))), Some(ResizeEdge::TopLeft));
-    // Top-Right corner: (503, 75) - outside close button
-    assert_eq!(win.resize_edge_at(Point::from((503, 75))), Some(ResizeEdge::TopRight));
+    // Top-Right corner: just below the titlebar button strip on the right edge
+    assert_eq!(win.resize_edge_at(Point::from((500, 104))), Some(ResizeEdge::TopRight));
+    // The [×]/[□]/[-] button strip and the invisible margin above/right of it must never be a resize zone
+    for (x, y) in [(500, 77), (503, 75), (508, 70), (490, 80), (480, 98), (459, 90), (439, 85)] {
+        assert_eq!(win.resize_edge_at(Point::from((x, y))), None, "({x},{y}) must not resize");
+    }
     // Bottom-Left corner: (99, 401)
     assert_eq!(win.resize_edge_at(Point::from((99, 401))), Some(ResizeEdge::BottomLeft));
     // Bottom-Right corner: (500, 400) or inside grip (485, 385)

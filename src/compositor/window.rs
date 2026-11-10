@@ -355,17 +355,21 @@ impl ManagedWindow {
             return None;
         }
 
-        // Titlebar buttons have priority over top/corner resize
-        if self.close_button_hit_geometry().contains(p)
-            || self.maximize_button_hit_geometry().contains(p)
-            || self.minimize_button_hit_geometry().contains(p)
-        {
-            return None;
-        }
-
         let fg = self.frame_geometry();
         let hit_margin = 8; // 8px border hit zone (16px active hover band)
         let corner_size = 28; // 28px corner hit zone (matches bottom-right grip)
+
+        // Titlebar buttons have priority over top/corner resize. The exclusion zone spans the
+        // whole button strip (minimize..close) over the full titlebar height AND the invisible
+        // resize margin above/right of it, so aiming at the [×] icon never yields a resize arrow
+        // (terminal cell quantization often lands the pointer a few px outside the icon).
+        let btn_left = self.minimize_button_hit_geometry().loc.x;
+        let btn_right = fg.loc.x + fg.size.w + hit_margin;
+        let btn_top = fg.loc.y - hit_margin;
+        let btn_bottom = fg.loc.y + TITLEBAR_HEIGHT + BORDER_WIDTH;
+        if p.x >= btn_left && p.x < btn_right && p.y >= btn_top && p.y < btn_bottom {
+            return None;
+        }
 
         let outer = Rectangle::new(
             (fg.loc.x - hit_margin, fg.loc.y - hit_margin).into(),
