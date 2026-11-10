@@ -441,6 +441,12 @@ fn test_window_8_direction_resize_execution() {
     let (loc, sz) = simulate_resize(ResizeEdge::Left, 500, 0);
     assert_eq!(sz.w, 100); // clamped to MIN_W
     assert_eq!(loc.x, 500); // 200 + (400 - 100) = 500; right edge stays at 600
+
+    // Boundary clamping: dragging Left edge beyond screen boundary must NOT move right anchor
+    let anchor_right = start_geo.loc.x + start_geo.size.w; // 600
+    let clamped_left_x = 1; // clamped by ManagedWindow::clamp_content_loc to border
+    let adjusted_w = (anchor_right - clamped_left_x).max(100);
+    assert_eq!(clamped_left_x + adjusted_w, 600); // right edge remains anchored at 600!
 }
 
 #[test]

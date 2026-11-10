@@ -600,12 +600,14 @@ pub fn dispatch_mouse_event(
                     if let Some(top_win) = state.wm.windows.last_mut() {
                         let (start_x, start_y) = (start_window_geo.loc.x, start_window_geo.loc.y);
                         let (start_w, start_h) = (start_window_geo.size.w, start_window_geo.size.h);
+                        let anchor_right = start_x + start_w;
+                        let anchor_bottom = start_y + start_h;
 
                         const MIN_W: i32 = 100;
                         const MIN_H: i32 = 60;
 
                         use crate::compositor::window::ResizeEdge;
-                        let (new_x, new_w) = match edge {
+                        let (mut new_x, mut new_w) = match edge {
                             ResizeEdge::Right | ResizeEdge::TopRight | ResizeEdge::BottomRight => {
                                 let w = (start_w + dx).max(MIN_W);
                                 (start_x, w)
@@ -620,7 +622,7 @@ pub fn dispatch_mouse_event(
                             }
                         };
 
-                        let (new_y, new_h) = match edge {
+                        let (mut new_y, mut new_h) = match edge {
                             ResizeEdge::Bottom | ResizeEdge::BottomLeft | ResizeEdge::BottomRight => {
                                 let h = (start_h + dy).max(MIN_H);
                                 (start_y, h)
@@ -643,7 +645,18 @@ pub fn dispatch_mouse_event(
                             state.height,
                         );
 
-                        top_win.set_loc(clamped_loc);
+                        // If the left or top edge was clamped by screen boundaries, adjust width/height
+                        // so the opposite anchor edge (right or bottom) remains fixed in place.
+                        if matches!(edge, ResizeEdge::Left | ResizeEdge::TopLeft | ResizeEdge::BottomLeft) {
+                            new_x = clamped_loc.x;
+                            new_w = (anchor_right - new_x).max(MIN_W);
+                        }
+                        if matches!(edge, ResizeEdge::Top | ResizeEdge::TopLeft | ResizeEdge::TopRight) {
+                            new_y = clamped_loc.y;
+                            new_h = (anchor_bottom - new_y).max(MIN_H);
+                        }
+
+                        top_win.set_loc(Point::from((new_x, new_y)));
                         top_win.configure_size(new_w, new_h);
                         state.dirty = true;
                     }

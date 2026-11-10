@@ -72,8 +72,12 @@ pub struct ManagedWindow {
 pub const TITLEBAR_HEIGHT: i32 = 22;
 pub const BORDER_WIDTH: i32 = 1;
 pub const BUTTON_SIZE: i32 = 16;
-/// Default invisible resize hit margin (px) on each side of the window frame.
-pub const DEFAULT_RESIZE_MARGIN: i32 = 8;
+
+/// Default resize hit margin in logical px (used when the pointer is pixel-accurate,
+/// i.e. not cell-quantized by terminal mouse tracking). When tracking is cell-quantized,
+/// the compositor widens this via `state.resize_margin` so a cell center always lands inside
+/// a border band regardless of which sub-cell the pointer occupies.
+pub const DEFAULT_RESIZE_MARGIN: i32 = 12;
 
 fn get_wayland_title(surface: &ToplevelSurface) -> Option<String> {
     smithay::wayland::compositor::with_states(surface.wl_surface(), |states| {
@@ -352,7 +356,7 @@ impl ManagedWindow {
     }
 
     /// Determines which resize edge/corner (if any) is under the given coordinates
-    /// (default 8px hit margin; see [`Self::resize_edge_at_margin`]).
+    /// (default hit margin; see [`Self::resize_edge_at_margin`]).
     pub fn resize_edge_at(&self, p: Point<i32, Logical>) -> Option<ResizeEdge> {
         self.resize_edge_at_margin(p, DEFAULT_RESIZE_MARGIN)
     }
@@ -367,7 +371,6 @@ impl ManagedWindow {
 
         let fg = self.frame_geometry();
         let hit_margin = hit_margin.max(DEFAULT_RESIZE_MARGIN);
-        let corner_size = 28i32.max(hit_margin * 2); // corner hit zone (>= bottom-right grip)
 
         // Titlebar buttons have priority over top/corner resize. The exclusion zone spans the
         // whole button strip (minimize..close) over the full titlebar height AND the invisible
@@ -403,11 +406,19 @@ impl ManagedWindow {
             return None;
         }
 
-        let on_left = p.x <= fg.loc.x + hit_margin;
-        let on_right = p.x >= fg.loc.x + fg.size.w - hit_margin || in_bottom_right_grip;
-        let on_top = p.y <= fg.loc.y + hit_margin;
-        let on_bottom = p.y >= fg.loc.y + fg.size.h - hit_margin || in_bottom_right_grip;
+        // Dedicated bottom-right grip priority
+        if in_bottom_right_grip {
+            return Some(ResizeEdge::BottomRight);
+        }
 
+        // Pure border edges
+        let on_left = p.x <= fg.loc.x + hit_margin;
+        let on_right = p.x >= fg.loc.x + fg.size.w - hit_margin;
+        let on_top = p.y <= fg.loc.y + hit_margin;
+        let on_bottom = p.y >= fg.loc.y + fg.size.h - hit_margin;
+
+        // Corner hit zone (matches bottom-right grip and covers corner grab zones)
+        let corner_size = 28i32.max(hit_margin * 2);
         let near_left = p.x <= fg.loc.x + corner_size;
         let near_right = p.x >= fg.loc.x + fg.size.w - corner_size;
         let near_top = p.y <= fg.loc.y + corner_size;
@@ -419,7 +430,7 @@ impl ManagedWindow {
             Some(ResizeEdge::TopRight)
         } else if (on_bottom && near_left) || (on_left && near_bottom) {
             Some(ResizeEdge::BottomLeft)
-        } else if (on_bottom && near_right) || (on_right && near_bottom) || in_bottom_right_grip {
+        } else if (on_bottom && near_right) || (on_right && near_bottom) {
             Some(ResizeEdge::BottomRight)
         } else if on_left {
             Some(ResizeEdge::Left)
