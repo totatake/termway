@@ -719,6 +719,32 @@ fn test_compositor_cursor_shape_synchronization() {
     dispatch_mouse_event(&mut state, 800, 600, 800, 600, &hover_resize, &mut child);
     assert_eq!(state.current_cursor_shape, "nwse-resize");
 
+    // Hover over left edge without clicking (e.g. at x=99, y=200) -> should be "ew-resize"
+    let hover_left = MouseEvent {
+        button: MouseButton::None,
+        action: MouseAction::Move,
+        col: 100, // px = 99.5
+        row: 201, // py = 200.5
+        shift: false,
+        meta: false,
+        ctrl: false,
+    };
+    dispatch_mouse_event(&mut state, 800, 600, 800, 600, &hover_left, &mut child);
+    assert_eq!(state.current_cursor_shape, "ew-resize");
+
+    // Hover over top edge without clicking (e.g. at x=200, y=77) -> should be "ns-resize"
+    let hover_top = MouseEvent {
+        button: MouseButton::None,
+        action: MouseAction::Move,
+        col: 201, // px = 200.5
+        row: 78,  // py = 77.5
+        shift: false,
+        meta: false,
+        ctrl: false,
+    };
+    dispatch_mouse_event(&mut state, 800, 600, 800, 600, &hover_top, &mut child);
+    assert_eq!(state.current_cursor_shape, "ns-resize");
+
     // Hover over close button
     let close_rect = state.wm.windows[0].close_button_hit_geometry();
     let hover_close = MouseEvent {

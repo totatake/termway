@@ -486,6 +486,11 @@ fn find_pointer_focus(
         if win.is_minimized {
             continue;
         }
+        // If the pointer is on an SSD decoration (titlebar, buttons, or resize border),
+        // it is interacting with the window manager frame, NOT client content.
+        if win.has_ssd && (win.titlebar_geometry().contains(loc_i32) || win.resize_edge_at(loc_i32).is_some()) {
+            continue;
+        }
         let content_geo = win.content_geometry();
         if content_geo.contains(loc_i32) {
             if let WindowSurface::Wayland(ref toplevel) = win.surface {

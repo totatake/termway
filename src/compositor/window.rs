@@ -364,8 +364,8 @@ impl ManagedWindow {
         }
 
         let fg = self.frame_geometry();
-        let hit_margin = 6; // 6px border hit zone
-        let corner_size = 24; // 24px corner hit zone
+        let hit_margin = 8; // 8px border hit zone (16px active hover band)
+        let corner_size = 28; // 28px corner hit zone (matches bottom-right grip)
 
         let outer = Rectangle::new(
             (fg.loc.x - hit_margin, fg.loc.y - hit_margin).into(),
