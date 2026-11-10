@@ -72,6 +72,8 @@ pub struct ManagedWindow {
 pub const TITLEBAR_HEIGHT: i32 = 22;
 pub const BORDER_WIDTH: i32 = 1;
 pub const BUTTON_SIZE: i32 = 16;
+/// Default invisible resize hit margin (px) on each side of the window frame.
+pub const DEFAULT_RESIZE_MARGIN: i32 = 8;
 
 fn get_wayland_title(surface: &ToplevelSurface) -> Option<String> {
     smithay::wayland::compositor::with_states(surface.wl_surface(), |states| {
@@ -349,15 +351,23 @@ impl ManagedWindow {
         )
     }
 
-    /// Determines which resize edge/corner (if any) is under the given coordinates.
+    /// Determines which resize edge/corner (if any) is under the given coordinates
+    /// (default 8px hit margin; see [`Self::resize_edge_at_margin`]).
     pub fn resize_edge_at(&self, p: Point<i32, Logical>) -> Option<ResizeEdge> {
+        self.resize_edge_at_margin(p, DEFAULT_RESIZE_MARGIN)
+    }
+
+    /// Same as [`Self::resize_edge_at`] with an explicit hit margin (logical px on each side of the
+    /// frame). Cell-quantized mouse tracking (no SGR-Pixels) needs a margin of about half a cell
+    /// height so that at least one cell center always falls inside the band.
+    pub fn resize_edge_at_margin(&self, p: Point<i32, Logical>, hit_margin: i32) -> Option<ResizeEdge> {
         if !self.has_ssd || self.is_maximized || self.is_minimized {
             return None;
         }
 
         let fg = self.frame_geometry();
-        let hit_margin = 8; // 8px border hit zone (16px active hover band)
-        let corner_size = 28; // 28px corner hit zone (matches bottom-right grip)
+        let hit_margin = hit_margin.max(DEFAULT_RESIZE_MARGIN);
+        let corner_size = 28i32.max(hit_margin * 2); // corner hit zone (>= bottom-right grip)
 
         // Titlebar buttons have priority over top/corner resize. The exclusion zone spans the
         // whole button strip (minimize..close) over the full titlebar height AND the invisible

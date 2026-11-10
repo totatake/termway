@@ -488,7 +488,7 @@ fn find_pointer_focus(
         }
         // If the pointer is on an SSD decoration (titlebar, buttons, or resize border),
         // it is interacting with the window manager frame, NOT client content.
-        if win.has_ssd && (win.titlebar_geometry().contains(loc_i32) || win.resize_edge_at(loc_i32).is_some()) {
+        if win.has_ssd && (win.titlebar_geometry().contains(loc_i32) || win.resize_edge_at_margin(loc_i32, state.resize_margin).is_some()) {
             continue;
         }
         let content_geo = win.content_geometry();
@@ -543,6 +543,7 @@ pub fn dispatch_mouse_event(
     let time = state.start_time.elapsed().as_millis() as u32;
 
     let (px, py) = if state.pixel_mouse {
+        state.resize_margin = crate::compositor::window::DEFAULT_RESIZE_MARGIN;
         (
             ev.col.saturating_sub(1) as f64,
             ev.row.saturating_sub(1) as f64,
@@ -550,6 +551,9 @@ pub fn dispatch_mouse_event(
     } else {
         let cell_w = renderer_width as f64 / term_cols.max(1) as f64;
         let cell_h = renderer_height as f64 / avail_rows.max(1) as f64;
+        // Cell-quantized pointer: widen the resize band to ~half a cell so a cell center always lands in it.
+        let half_cell = (cell_w.max(cell_h) / state.scale.max(0.1) * 0.5).ceil() as i32 + 1;
+        state.resize_margin = half_cell.max(crate::compositor::window::DEFAULT_RESIZE_MARGIN);
         (
             (ev.col.saturating_sub(1)) as f64 * cell_w + (cell_w * 0.5),
             (ev.row.saturating_sub(1)) as f64 * cell_h + (cell_h * 0.5),
@@ -661,7 +665,7 @@ pub fn dispatch_mouse_event(
                                 on_decoration = true;
                                 break;
                             }
-                            if let Some(edge) = win.resize_edge_at(loc_i32) {
+                            if let Some(edge) = win.resize_edge_at_margin(loc_i32, state.resize_margin) {
                                 cursor_shape = edge.cursor_shape();
                                 on_decoration = true;
                                 break;
@@ -842,7 +846,7 @@ pub fn dispatch_mouse_event(
                         break;
                     }
                     if is_left && !win.is_maximized {
-                        if let Some(edge) = win.resize_edge_at(loc_i32) {
+                        if let Some(edge) = win.resize_edge_at_margin(loc_i32, state.resize_margin) {
                             hit_window_id = Some(win.id);
                             clicked_resize = Some(edge);
                             win_geo = win.content_geometry();

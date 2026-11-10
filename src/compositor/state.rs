@@ -120,6 +120,8 @@ pub struct TermwayState {
     /// Set from the input path *before* `pointer.motion()`; read by `cursor_image()` which is
     /// invoked by smithay while the pointer mutex is held (so it must never lock the pointer).
     pub pointer_on_decoration: bool,
+    /// Resize hit margin in logical px; widened when mouse tracking is cell-quantized.
+    pub resize_margin: i32,
     pub current_terminal_title: String,
     pub pixel_mouse: bool,
     pub enable_cursor_shape: bool,
@@ -229,6 +231,7 @@ impl TermwayState {
             start_time: std::time::Instant::now(),
             current_cursor_shape: String::from("default"),
             pointer_on_decoration: false,
+            resize_margin: crate::compositor::window::DEFAULT_RESIZE_MARGIN,
             current_terminal_title: String::from("termway"),
             pixel_mouse: false,
             enable_cursor_shape: std::env::var("TERMWAY_NO_CURSOR_SHAPE").is_err(),
