@@ -143,6 +143,25 @@ fn test_graphics_protocol_fastpath_detection() {
     std::env::set_var("WT_SESSION", "dummy-session-id");
     assert_eq!(query_graphics_protocol(), GraphicsProtocol::Sixel);
 
+    // Test TERM_PROGRAM=vscode -> Sixel
+    std::env::remove_var("WT_SESSION");
+    std::env::set_var("TERM_PROGRAM", "vscode");
+    assert_eq!(query_graphics_protocol(), GraphicsProtocol::Sixel);
+
+    // Test VS Code remote environment variables -> Sixel
+    std::env::remove_var("TERM_PROGRAM");
+    std::env::set_var("VSCODE_SHELL_INTEGRATION", "1");
+    assert_eq!(query_graphics_protocol(), GraphicsProtocol::Sixel);
+    std::env::remove_var("VSCODE_SHELL_INTEGRATION");
+
+    // Test TERMWAY_FORCE_PROTOCOL override
+    std::env::set_var("TERM", "xterm-kitty");
+    std::env::set_var("TERMWAY_FORCE_PROTOCOL", "sixel");
+    assert_eq!(query_graphics_protocol(), GraphicsProtocol::Sixel);
+    std::env::set_var("TERMWAY_FORCE_PROTOCOL", "kitty");
+    assert_eq!(query_graphics_protocol(), GraphicsProtocol::Kitty);
+    std::env::remove_var("TERMWAY_FORCE_PROTOCOL");
+
     // Clean up
     std::env::remove_var("WT_SESSION");
     std::env::set_var("TERM", "dumb");

@@ -12,6 +12,16 @@ pub enum GraphicsProtocol {
 }
 
 pub fn query_graphics_protocol() -> GraphicsProtocol {
+    // 0. Explicit environment variable override
+    if let Ok(v) = env::var("TERMWAY_FORCE_PROTOCOL") {
+        let v = v.trim().to_lowercase();
+        if v == "kitty" {
+            return GraphicsProtocol::Kitty;
+        } else if v == "sixel" {
+            return GraphicsProtocol::Sixel;
+        }
+    }
+
     // 1. Fast path: Environment variables
     if let Ok(term) = env::var("TERM") {
         let term_lower = term.to_lowercase();
@@ -30,6 +40,19 @@ pub fn query_graphics_protocol() -> GraphicsProtocol {
         if tp.contains("iterm.app") || tp.contains("mintty") {
             return GraphicsProtocol::Sixel;
         }
+        // VS Code integrated terminal (xterm.js) responds OK to Kitty a=q queries,
+        // but its Kitty graphics rendering is incomplete or unsupported, leaving the screen blank.
+        // However, it correctly declares Sixel support in DA1 (?62;4;...c), which works properly.
+        if tp.contains("vscode") {
+            return GraphicsProtocol::Sixel;
+        }
+    }
+    // VS Code Remote / Server / shell integration environment variables
+    if env::var("VSCODE_SHELL_INTEGRATION").is_ok()
+        || env::var("VSCODE_IPC_HOOK_CLI").is_ok()
+        || env::var("VSCODE_GIT_ASKPASS_MAIN").is_ok()
+    {
+        return GraphicsProtocol::Sixel;
     }
     if env::var("KITTY_WINDOW_ID").is_ok()
         || env::var("KITTY_PID").is_ok()
@@ -224,10 +247,35 @@ fn query_graphics_protocol_via_da() -> GraphicsProtocol {
     // Restore terminal
     unsafe { libc::tcsetattr(stdin_fd, libc::TCSANOW, &orig_termios) };
 
-    if found_kitty {
+    // Determine protocol with false-positive protection:
+    // Some terminal emulators or web-based multiplexers (such as xterm.js in VS Code, Theia, etc.)
+    // return OK to Kitty `a=q` queries even though they do not fully render Kitty graphics,
+    // while properly supporting Sixel (declared via DA1 param '4').
+    // Only trust Kitty over Sixel when running in a verified Kitty-compatible environment,
+    // or when Sixel is not supported.
+    let kitty_trusted = {
+        let term_program = env::var("TERM_PROGRAM").unwrap_or_default().to_lowercase();
+        let term = env::var("TERM").unwrap_or_default().to_lowercase();
+        term_program.contains("kitty")
+            || term_program.contains("wezterm")
+            || term_program.contains("ghostty")
+            || term.contains("kitty")
+            || term.contains("wezterm")
+            || term.contains("ghostty")
+            || env::var("KITTY_WINDOW_ID").is_ok()
+            || env::var("KITTY_PID").is_ok()
+            || env::var("WEZTERM_PANE").is_ok()
+            || env::var("GHOSTTY_RESOURCES_DIR").is_ok()
+    };
+
+    if found_kitty && kitty_trusted {
         GraphicsProtocol::Kitty
     } else if has_sixel {
+        // Untrusted Kitty ACK or non-Kitty environment with DA1 Sixel support: choose Sixel
         GraphicsProtocol::Sixel
+    } else if found_kitty {
+        // Fall back to Kitty only if Sixel is completely absent
+        GraphicsProtocol::Kitty
     } else {
         GraphicsProtocol::None
     }

@@ -123,6 +123,7 @@ termway supports both high-speed inline graphics protocols (**Kitty** & **Sixel*
 | | **WezTerm** | Windows, Linux, macOS | Full Kitty graphics support |
 | | **Foot** | Linux (Wayland) | High performance Wayland terminal |
 | **Sixel Graphics** | **Windows Terminal** | Windows | Supported via `--sixel` |
+| | **VS Code Integrated Terminal** | Windows, Linux, macOS | Auto-detected via Sixel (xterm.js) |
 | | **WezTerm** | Windows, Linux, macOS | Supports both Kitty & Sixel |
 | | **Foot** | Linux (Wayland) | Supports both Kitty & Sixel |
 | | **iTerm2** | macOS | Full Sixel & 24-bit TrueColor support |
@@ -236,10 +237,10 @@ Specify the target command and arguments after `--`:
 ### 3. Graphics Protocol Auto-Detection & Explicit Selection (`--kitty`, `--sixel`)
 `termway` automatically detects terminal graphics protocol capabilities on startup:
 - **Kitty-capable terminals** (Noctty, Kitty, Ghostty, WezTerm, etc.): Automatically uses Kitty Graphics Protocol.
-- **Sixel-capable terminals** (Windows Terminal, iTerm2, Foot, mlterm, RLogin, etc.): Automatically uses Sixel Graphics Protocol.
+- **Sixel-capable terminals** (Windows Terminal, VS Code integrated terminal, iTerm2, Foot, mlterm, RLogin, etc.): Automatically uses Sixel Graphics Protocol.
 - **VTE-based terminals** (GNOME Terminal, xterm, etc.): Automatically falls back to Sixel protocol.
 
-You can explicitly override the protocol using `--kitty` or `--sixel`:
+You can explicitly override the protocol using `--kitty` or `--sixel`, or via the `TERMWAY_FORCE_PROTOCOL` environment variable (`TERMWAY_FORCE_PROTOCOL=sixel|kitty`):
 
 ```bash
 # Force Sixel protocol
@@ -247,6 +248,9 @@ You can explicitly override the protocol using `--kitty` or `--sixel`:
 
 # Force Kitty protocol
 ./target/release/termway --kitty -- gvim
+
+# Or via environment variable (useful in scripts or remote sessions)
+TERMWAY_FORCE_PROTOCOL=sixel ./target/release/termway -- gvim
 ```
 
 #### Kitty Graphics Protocol `f=101` (JPEG) Extension & Dynamic Fallback
