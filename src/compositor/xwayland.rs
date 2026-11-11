@@ -312,7 +312,9 @@ impl XwmHandler for TermwayState {
                     }
                     let max_w = (self.width as i32 - side_margin * 2).max(160);
                     let max_h = (self.height as i32 - top_margin - side_margin).max(100);
-                    w.size = (geometry.size.w.min(max_w), geometry.size.h.min(max_h)).into();
+                    if !matches!(self.wm.drag_state, WindowDragState::Resizing { .. }) {
+                        w.size = (geometry.size.w.min(max_w), geometry.size.h.min(max_h)).into();
+                    }
                     if was_pending_unmaximize {
                         let total_frame_w = if w.has_ssd { w.size.w + BORDER_WIDTH * 2 } else { w.size.w };
                         let total_frame_h = if w.has_ssd { w.size.h + TITLEBAR_HEIGHT + BORDER_WIDTH * 2 } else { w.size.h };
@@ -321,10 +323,13 @@ impl XwmHandler for TermwayState {
                         w.loc.x = if w.has_ssd { frame_x + BORDER_WIDTH } else { frame_x };
                         w.loc.y = if w.has_ssd { frame_y + TITLEBAR_HEIGHT + BORDER_WIDTH } else { frame_y };
                     } else {
-                        let max_x = (self.width as i32 - w.size.w - side_margin).max(side_margin);
-                        let max_y = (self.height as i32 - w.size.h - side_margin).max(top_margin);
-                        if w.loc.x > max_x { w.loc.x = max_x; }
-                        if w.loc.y > max_y { w.loc.y = max_y; }
+                        w.loc = ManagedWindow::clamp_content_loc(
+                            w.loc,
+                            w.size,
+                            w.has_ssd,
+                            self.width,
+                            self.height,
+                        );
                     }
                 } else {
                     w.loc = (0, 0).into();
@@ -348,6 +353,9 @@ impl XwmHandler for TermwayState {
             WindowSurface::X11(t) => t == &window,
             _ => false,
         }) {
+            if win.is_maximized {
+                return;
+            }
             let cur_loc = self.pointer.current_location();
             let win_geo = win.content_geometry();
             let edge = match resize_edge {
@@ -365,6 +373,7 @@ impl XwmHandler for TermwayState {
                 start_cursor: (cur_loc.x, cur_loc.y),
                 start_window_geo: win_geo,
             };
+            self.update_cursor_shape(edge.cursor_shape());
         }
     }
 
@@ -376,12 +385,16 @@ impl XwmHandler for TermwayState {
             WindowSurface::X11(t) => t == &window,
             _ => false,
         }) {
+            if win.is_maximized {
+                return;
+            }
             let cur_loc = self.pointer.current_location();
             let win_loc = win.loc;
             self.wm.drag_state = WindowDragState::Moving {
                 start_cursor: (cur_loc.x, cur_loc.y),
                 start_window_pos: (win_loc.x, win_loc.y),
             };
+            self.update_cursor_shape("grabbing");
         }
     }
 

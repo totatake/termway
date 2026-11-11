@@ -13,7 +13,9 @@ use smithay::{
 };
 
 use crate::compositor::state::{ClientState, TermwayState};
-use crate::compositor::window::{ManagedWindow, WindowSurface, BORDER_WIDTH, TITLEBAR_HEIGHT};
+use crate::compositor::window::{
+    ManagedWindow, ResizeEdge, WindowDragState, WindowSurface, BORDER_WIDTH, TITLEBAR_HEIGHT,
+};
 
 // 1. BufferHandler
 impl BufferHandler for TermwayState {
@@ -88,6 +90,10 @@ impl CompositorHandler for TermwayState {
                 w.update_title();
             }
             self.update_active_window_title();
+            let drag_edge = match self.wm.drag_state {
+                WindowDragState::Resizing { edge, .. } => Some(edge),
+                _ => None,
+            };
             if let Some(w) = self.wm.get_mut(win_id) {
                 if self.enable_wm {
                     let bbox = smithay::desktop::utils::bbox_from_surface_tree(surface, (0, 0));
@@ -128,7 +134,29 @@ impl CompositorHandler for TermwayState {
                             } else {
                                 let clamped_w = bbox.size.w.min(max_allowed_w);
                                 let clamped_h = bbox.size.h.min(max_allowed_h);
-                                w.size = (clamped_w, clamped_h).into();
+
+                                // If the window is currently being resized by the user, preserve the opposite
+                                // anchor (right/bottom) if edge is Left/Top, so in-flight buffer commits never
+                                // cause the window to expand in the opposite direction.
+                                if let Some(edge) = drag_edge {
+                                    let anchor_right = w.loc.x + w.size.w;
+                                    let anchor_bottom = w.loc.y + w.size.h;
+                                    w.size = (clamped_w, clamped_h).into();
+                                    match edge {
+                                        ResizeEdge::Left | ResizeEdge::TopLeft | ResizeEdge::BottomLeft => {
+                                            w.loc.x = anchor_right - w.size.w;
+                                        }
+                                        _ => {}
+                                    }
+                                    match edge {
+                                        ResizeEdge::Top | ResizeEdge::TopLeft | ResizeEdge::TopRight => {
+                                            w.loc.y = anchor_bottom - w.size.h;
+                                        }
+                                        _ => {}
+                                    }
+                                } else {
+                                    w.size = (clamped_w, clamped_h).into();
+                                }
 
                                 // 画面枠外への適度な移動を許容しつつ位置を安全にクランプ
                                 w.loc = ManagedWindow::clamp_content_loc(

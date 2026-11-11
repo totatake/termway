@@ -352,8 +352,46 @@ fn test_window_8_direction_resize_hit_testing() {
     let close_hit = win.close_button_hit_geometry();
     assert_eq!(win.resize_edge_at(close_hit.loc), None);
 
-    // Titlebar body (x = 200, y = 90): should return None (handled as move/drag)
+    // Titlebar body (x = 200, y = 85..90): should return None (handled as move/drag)
+    assert_eq!(win.resize_edge_at(Point::from((200, 85))), None);
     assert_eq!(win.resize_edge_at(Point::from((200, 90))), None);
+
+    // Cell-quantized mode (e.g. cell_h = 18px, default window content at y = 65 -> fg.loc.y = 42):
+    // Row 3 center (py = 45) lands 3px inside the 22px titlebar and MUST return None (for moving),
+    // while Row 2 center (py = 27, 15px above fg.loc.y) MUST hit Top resize with hit_margin = 18.
+    let default_win = ManagedWindow::new_dummy(
+        3,
+        "Default Pos SSD".into(),
+        Point::from((80, 65)),
+        Size::from((400, 300)),
+    );
+    assert_eq!(default_win.frame_geometry().loc.y, 42);
+    assert_eq!(default_win.resize_edge_at_margin(Point::from((200, 45)), 18), None);
+    assert!(default_win.titlebar_geometry().contains(Point::from((200, 45))));
+    assert_eq!(
+        default_win.resize_edge_at_margin(Point::from((200, 27)), 18),
+        Some(ResizeEdge::Top)
+    );
+
+    // CSD window (e.g. Firefox with has_ssd = false):
+    let mut csd_win = ManagedWindow::new_dummy(
+        2,
+        "CSD Window".into(),
+        Point::from((100, 100)),
+        Size::from((400, 300)),
+    );
+    csd_win.has_ssd = false;
+    // Outer border grabs:
+    assert_eq!(csd_win.resize_edge_at(Point::from((98, 200))), Some(ResizeEdge::Left));
+    assert_eq!(csd_win.resize_edge_at(Point::from((502, 200))), Some(ResizeEdge::Right));
+    assert_eq!(csd_win.resize_edge_at(Point::from((200, 98))), Some(ResizeEdge::Top));
+    assert_eq!(csd_win.resize_edge_at(Point::from((200, 402))), Some(ResizeEdge::Bottom));
+    assert_eq!(csd_win.resize_edge_at(Point::from((98, 98))), Some(ResizeEdge::TopLeft));
+    assert_eq!(csd_win.resize_edge_at(Point::from((502, 98))), Some(ResizeEdge::TopRight));
+    assert_eq!(csd_win.resize_edge_at(Point::from((98, 402))), Some(ResizeEdge::BottomLeft));
+    assert_eq!(csd_win.resize_edge_at(Point::from((502, 402))), Some(ResizeEdge::BottomRight));
+    // Inside content center: returns None
+    assert_eq!(csd_win.resize_edge_at(Point::from((200, 200))), None);
 
     // Maximized window: resize must return None
     win.is_maximized = true;
@@ -823,6 +861,30 @@ fn test_compositor_cursor_shape_synchronization() {
     };
     dispatch_mouse_event(&mut state, 800, 600, 800, 600, &hover_bg, &mut child);
     assert_eq!(state.current_cursor_shape, "default");
+
+    // Add a CSD window (has_ssd = false) to verify edge hover arrow on CSD windows
+    state.wm.windows.clear();
+    let mut csd_win = ManagedWindow::new_dummy(
+        10,
+        "CSD Window".into(),
+        Point::from((200, 200)),
+        Size::from((300, 200)),
+    );
+    csd_win.has_ssd = false;
+    state.wm.windows.push(csd_win);
+
+    // Hover over CSD left edge (e.g. col = 199/200, row = 250)
+    let hover_csd_left = MouseEvent {
+        button: MouseButton::None,
+        action: MouseAction::Move,
+        col: 199, // px = 198.5
+        row: 251, // py = 250.5
+        shift: false,
+        meta: false,
+        ctrl: false,
+    };
+    dispatch_mouse_event(&mut state, 800, 600, 800, 600, &hover_csd_left, &mut child);
+    assert_eq!(state.current_cursor_shape, "ew-resize");
 }
 
 #[test]

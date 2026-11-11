@@ -486,9 +486,11 @@ fn find_pointer_focus(
         if win.is_minimized {
             continue;
         }
-        // If the pointer is on an SSD decoration (titlebar, buttons, or resize border),
+        // If the pointer is on a decoration (titlebar, buttons, or resize border),
         // it is interacting with the window manager frame, NOT client content.
-        if win.has_ssd && (win.titlebar_geometry().contains(loc_i32) || win.resize_edge_at_margin(loc_i32, state.resize_margin).is_some()) {
+        let on_decoration = (win.has_ssd && win.titlebar_geometry().contains(loc_i32))
+            || win.resize_edge_at_margin(loc_i32, state.resize_margin).is_some();
+        if on_decoration {
             continue;
         }
         let content_geo = win.content_geometry();
@@ -551,9 +553,11 @@ pub fn dispatch_mouse_event(
     } else {
         let cell_w = renderer_width as f64 / term_cols.max(1) as f64;
         let cell_h = renderer_height as f64 / avail_rows.max(1) as f64;
-        // Cell-quantized pointer: widen the resize band to ~half a cell so a cell center always lands in it.
-        let half_cell = (cell_w.max(cell_h) / state.scale.max(0.1) * 0.5).ceil() as i32 + 1;
-        state.resize_margin = half_cell.max(crate::compositor::window::DEFAULT_RESIZE_MARGIN);
+        // Cell-quantized pointer: because inner penetration is kept thin (1-4px) to protect
+        // the 22px titlebar and client content, the outer resize band must span a full cell
+        // (`cell_h / scale`) so at least one cell center is guaranteed to land in it.
+        let full_cell = (cell_w.max(cell_h) / state.scale.max(0.1)).ceil() as i32;
+        state.resize_margin = full_cell.max(crate::compositor::window::DEFAULT_RESIZE_MARGIN);
         (
             (ev.col.saturating_sub(1)) as f64 * cell_w + (cell_w * 0.5),
             (ev.row.saturating_sub(1)) as f64 * cell_h + (cell_h * 0.5),
@@ -656,8 +660,7 @@ pub fn dispatch_mouse_event(
                             new_h = (anchor_bottom - new_y).max(MIN_H);
                         }
 
-                        top_win.set_loc(Point::from((new_x, new_y)));
-                        top_win.configure_size(new_w, new_h);
+                        top_win.configure_geometry(Point::from((new_x, new_y)), new_w, new_h);
                         state.dirty = true;
                     }
                     return;
@@ -685,6 +688,12 @@ pub fn dispatch_mouse_event(
                             }
                             if win.titlebar_geometry().contains(loc_i32) {
                                 cursor_shape = "grab";
+                                on_decoration = true;
+                                break;
+                            }
+                        } else {
+                            if let Some(edge) = win.resize_edge_at_margin(loc_i32, state.resize_margin) {
+                                cursor_shape = edge.cursor_shape();
                                 on_decoration = true;
                                 break;
                             }
@@ -842,21 +851,23 @@ pub fn dispatch_mouse_event(
                 if win.is_minimized {
                     continue;
                 }
-                if state.enable_wm && win.has_ssd {
-                    if is_left && win.close_button_hit_geometry().contains(loc_i32) {
-                        hit_window_id = Some(win.id);
-                        clicked_close = true;
-                        break;
-                    }
-                    if is_left && win.maximize_button_hit_geometry().contains(loc_i32) {
-                        hit_window_id = Some(win.id);
-                        clicked_maximize = true;
-                        break;
-                    }
-                    if is_left && win.minimize_button_hit_geometry().contains(loc_i32) {
-                        hit_window_id = Some(win.id);
-                        clicked_minimize = true;
-                        break;
+                if state.enable_wm {
+                    if win.has_ssd {
+                        if is_left && win.close_button_hit_geometry().contains(loc_i32) {
+                            hit_window_id = Some(win.id);
+                            clicked_close = true;
+                            break;
+                        }
+                        if is_left && win.maximize_button_hit_geometry().contains(loc_i32) {
+                            hit_window_id = Some(win.id);
+                            clicked_maximize = true;
+                            break;
+                        }
+                        if is_left && win.minimize_button_hit_geometry().contains(loc_i32) {
+                            hit_window_id = Some(win.id);
+                            clicked_minimize = true;
+                            break;
+                        }
                     }
                     if is_left && !win.is_maximized {
                         if let Some(edge) = win.resize_edge_at_margin(loc_i32, state.resize_margin) {
@@ -866,7 +877,7 @@ pub fn dispatch_mouse_event(
                             break;
                         }
                     }
-                    if win.titlebar_geometry().contains(loc_i32) {
+                    if win.has_ssd && win.titlebar_geometry().contains(loc_i32) {
                         hit_window_id = Some(win.id);
                         clicked_titlebar = true;
                         win_loc = win.loc;
@@ -1052,6 +1063,25 @@ pub fn dispatch_mouse_event(
             state.wm.drag_state = WindowDragState::None;
 
             if was_dragging {
+                // If the drag was initiated by a client via `xdg_toplevel.move`/`resize`
+                // after a pointer button press, Smithay's `ClickGrab` is still active on
+                // `pointer` with the button recorded as pressed. Release it cleanly so
+                // subsequent clicks and moves are not stuck in the old grab.
+                if pointer.is_grabbed() {
+                    let btn = match ev.button {
+                        MouseButton::Left => 0x110,
+                        MouseButton::Middle => 0x112,
+                        MouseButton::Right => 0x111,
+                        _ => 0x110,
+                    };
+                    let btn_ev = ButtonEvent { serial, time, button: btn, state: ButtonState::Released };
+                    pointer.button(state, &btn_ev);
+                    pointer.frame(state);
+                    let focus = find_pointer_focus(state, loc_i32);
+                    let motion = MotionEvent { location: loc, serial, time };
+                    pointer.motion(state, focus, &motion);
+                    pointer.frame(state);
+                }
                 state.update_cursor_shape("default");
                 state.dirty = true;
                 return;

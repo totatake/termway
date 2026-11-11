@@ -206,7 +206,31 @@ impl ManagedWindow {
     }
 
 
-    /// Full frame geometry including titlebar and border (if has_ssd is true)
+    /// Returns the client-reported visible window geometry (`xdg_surface.set_window_geometry`)
+    /// relative to the surface origin `(0, 0)`, clamped to `self.size`.
+    /// CSD clients like Firefox/GTK3 surround floating windows with a ~26px transparent shadow
+    /// margin in the `WlSurface` buffer and report the actual visible bounds via this geometry.
+    pub fn xdg_surface_geometry(&self) -> Option<Rectangle<i32, Logical>> {
+        if let WindowSurface::Wayland(ref toplevel) = self.surface {
+            let bbox = Rectangle::new((0, 0).into(), self.size);
+            smithay::wayland::compositor::with_states(toplevel.wl_surface(), |states| {
+                states
+                    .cached_state
+                    .get::<smithay::wayland::shell::xdg::SurfaceCachedState>()
+                    .current()
+                    .geometry
+                    .and_then(|geo| geo.intersection(bbox))
+            })
+            .filter(|geo| geo.size.w > 0 && geo.size.h > 0)
+        } else {
+            None
+        }
+    }
+
+    /// Full visible frame geometry in compositor coordinates:
+    /// - For SSD windows: includes the compositor-drawn titlebar and border.
+    /// - For CSD windows: uses `xdg_surface.set_window_geometry` when present so resize hit-testing
+    ///   aligns with the visible window edges rather than the outer transparent CSD drop-shadow.
     pub fn frame_geometry(&self) -> Rectangle<i32, Logical> {
         if self.has_ssd {
             Rectangle::new(
@@ -215,6 +239,11 @@ impl ManagedWindow {
                     self.size.w + BORDER_WIDTH * 2,
                     self.size.h + TITLEBAR_HEIGHT + BORDER_WIDTH * 2,
                 ).into(),
+            )
+        } else if let Some(geo) = self.xdg_surface_geometry() {
+            Rectangle::new(
+                (self.loc.x + geo.loc.x, self.loc.y + geo.loc.y).into(),
+                geo.size,
             )
         } else {
             Rectangle::new(self.loc, self.size)
@@ -361,27 +390,32 @@ impl ManagedWindow {
         self.resize_edge_at_margin(p, DEFAULT_RESIZE_MARGIN)
     }
 
-    /// Same as [`Self::resize_edge_at`] with an explicit hit margin (logical px on each side of the
-    /// frame). Cell-quantized mouse tracking (no SGR-Pixels) needs a margin of about half a cell
-    /// height so that at least one cell center always falls inside the band.
+    /// Determines which resize edge/corner (if any) is under the given coordinates.
+    ///
+    /// Supports both SSD and CSD windows:
+    /// - Outer border hit margin (`hit_margin` logical px outside the frame) allows comfortable
+    ///   grabbing even with cell-quantized mouse tracking.
+    /// - Inner penetration is limited to a thin 4px band (plus SSD bottom-right grip) so that
+    ///   SSD titlebar dragging, buttons, and client content remain fully responsive.
     pub fn resize_edge_at_margin(&self, p: Point<i32, Logical>, hit_margin: i32) -> Option<ResizeEdge> {
-        if !self.has_ssd || self.is_maximized || self.is_minimized {
+        if self.is_maximized || self.is_minimized {
             return None;
         }
 
         let fg = self.frame_geometry();
         let hit_margin = hit_margin.max(DEFAULT_RESIZE_MARGIN);
 
-        // Titlebar buttons have priority over top/corner resize. The exclusion zone spans the
-        // whole button strip (minimize..close) over the full titlebar height AND the invisible
-        // resize margin above/right of it, so aiming at the [×] icon never yields a resize arrow
-        // (terminal cell quantization often lands the pointer a few px outside the icon).
-        let btn_left = self.minimize_button_hit_geometry().loc.x;
-        let btn_right = fg.loc.x + fg.size.w + hit_margin;
-        let btn_top = fg.loc.y - hit_margin;
-        let btn_bottom = fg.loc.y + TITLEBAR_HEIGHT + BORDER_WIDTH;
-        if p.x >= btn_left && p.x < btn_right && p.y >= btn_top && p.y < btn_bottom {
-            return None;
+        // For SSD windows, titlebar buttons have priority over top/corner resize.
+        // The exclusion zone spans the whole button strip (minimize..close) over the full titlebar
+        // height AND the invisible resize margin above/right of it.
+        if self.has_ssd {
+            let btn_left = self.minimize_button_hit_geometry().loc.x;
+            let btn_right = fg.loc.x + fg.size.w + hit_margin;
+            let btn_top = fg.loc.y - hit_margin;
+            let btn_bottom = fg.loc.y + TITLEBAR_HEIGHT + BORDER_WIDTH;
+            if p.x >= btn_left && p.x < btn_right && p.y >= btn_top && p.y < btn_bottom {
+                return None;
+            }
         }
 
         let outer = Rectangle::new(
@@ -393,31 +427,36 @@ impl ManagedWindow {
             return None;
         }
 
+        // Inner penetration: how far inside the frame counts as resize.
+        // - For SSD windows, top inner penetration is just `BORDER_WIDTH` (1px) so the entire
+        //   22px titlebar remains available for dragging/moving (critical for 18px terminal cells).
+        // - Side and bottom inner penetration is a thin 4px band (plus SSD bottom-right grip).
+        // Outside the frame (p outside fg), the full hit_margin is available for easy grabbing.
+        const INNER_HIT: i32 = 4;
+        let inner_top = if self.has_ssd { BORDER_WIDTH } else { 2 };
         let inner = Rectangle::new(
-            (fg.loc.x + hit_margin, fg.loc.y + hit_margin).into(),
-            (fg.size.w - hit_margin * 2, fg.size.h - hit_margin * 2).into(),
+            (fg.loc.x + INNER_HIT, fg.loc.y + inner_top).into(),
+            ((fg.size.w - INNER_HIT * 2).max(0), (fg.size.h - inner_top - INNER_HIT).max(0)).into(),
         );
 
-        // Check if inside the existing 28x28 bottom-right triangle grip area
-        let in_bottom_right_grip = p.x >= fg.loc.x + fg.size.w - 28 && p.y >= fg.loc.y + fg.size.h - 28;
+        // Check if inside the SSD 28x28 bottom-right triangle grip area
+        let in_ssd_grip = self.has_ssd && p.x >= fg.loc.x + fg.size.w - 28 && p.y >= fg.loc.y + fg.size.h - 28;
 
-        // If inside the window and not in the outer border band (and not in bottom-right grip), it's not a resize
-        if inner.contains(p) && !in_bottom_right_grip {
+        if inner.contains(p) && !in_ssd_grip {
             return None;
         }
 
-        // Dedicated bottom-right grip priority
-        if in_bottom_right_grip {
+        if in_ssd_grip {
             return Some(ResizeEdge::BottomRight);
         }
 
-        // Pure border edges
-        let on_left = p.x <= fg.loc.x + hit_margin;
-        let on_right = p.x >= fg.loc.x + fg.size.w - hit_margin;
-        let on_top = p.y <= fg.loc.y + hit_margin;
-        let on_bottom = p.y >= fg.loc.y + fg.size.h - hit_margin;
+        // Border edges
+        let on_left = p.x <= fg.loc.x + INNER_HIT;
+        let on_right = p.x >= fg.loc.x + fg.size.w - INNER_HIT;
+        let on_top = p.y <= fg.loc.y + inner_top;
+        let on_bottom = p.y >= fg.loc.y + fg.size.h - INNER_HIT;
 
-        // Corner hit zone (matches bottom-right grip and covers corner grab zones)
+        // Corner hit zones (matches 28px bottom-right grip and covers corner grab zones)
         let corner_size = 28i32.max(hit_margin * 2);
         let near_left = p.x <= fg.loc.x + corner_size;
         let near_right = p.x >= fg.loc.x + fg.size.w - corner_size;
@@ -487,17 +526,64 @@ impl ManagedWindow {
         }
     }
 
+    /// Atomically updates both location and size of the window, issuing a single configure request.
+    /// This prevents intermediate states (e.g. old size with new location) during resize operations.
+    pub fn configure_geometry(&mut self, new_loc: Point<i32, Logical>, new_w: i32, new_h: i32) {
+        let min_w = 100;
+        let min_h = 60;
+        let w = new_w.max(min_w);
+        let h = new_h.max(min_h);
+        let (shadow_w, shadow_h) = if !self.has_ssd {
+            if let Some(geo) = self.xdg_surface_geometry() {
+                ((self.size.w - geo.size.w).max(0), (self.size.h - geo.size.h).max(0))
+            } else {
+                (0, 0)
+            }
+        } else {
+            (0, 0)
+        };
+        self.loc = new_loc;
+        self.size = (w, h).into();
+
+        match &self.surface {
+            WindowSurface::Wayland(win) => {
+                let cfg_w = (w - shadow_w).max(min_w);
+                let cfg_h = (h - shadow_h).max(min_h);
+                win.with_pending_state(|state| {
+                    state.size = Some((cfg_w, cfg_h).into());
+                });
+                win.send_configure();
+            }
+            WindowSurface::X11(win) => {
+                let rect = Rectangle::new(self.loc, self.size);
+                let _ = win.configure(rect);
+            }
+            WindowSurface::Dummy => {}
+        }
+    }
+
     pub fn configure_size(&mut self, new_w: i32, new_h: i32) {
         let min_w = 100;
         let min_h = 60;
         let w = new_w.max(min_w);
         let h = new_h.max(min_h);
+        let (shadow_w, shadow_h) = if !self.has_ssd {
+            if let Some(geo) = self.xdg_surface_geometry() {
+                ((self.size.w - geo.size.w).max(0), (self.size.h - geo.size.h).max(0))
+            } else {
+                (0, 0)
+            }
+        } else {
+            (0, 0)
+        };
         self.size = (w, h).into();
 
         match &self.surface {
             WindowSurface::Wayland(win) => {
+                let cfg_w = (w - shadow_w).max(min_w);
+                let cfg_h = (h - shadow_h).max(min_h);
                 win.with_pending_state(|state| {
-                    state.size = Some((w, h).into());
+                    state.size = Some((cfg_w, cfg_h).into());
                 });
                 win.send_configure();
             }

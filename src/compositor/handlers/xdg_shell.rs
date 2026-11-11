@@ -194,12 +194,16 @@ impl XdgShellHandler for TermwayState {
             return;
         }
         if let Some(win) = self.wm.find_toplevel(&surface) {
+            if win.is_maximized {
+                return;
+            }
             let cur_loc = self.pointer.current_location();
             let win_loc = win.loc;
             self.wm.drag_state = WindowDragState::Moving {
                 start_cursor: (cur_loc.x, cur_loc.y),
                 start_window_pos: (win_loc.x, win_loc.y),
             };
+            self.update_cursor_shape("grabbing");
         }
     }
 
@@ -214,6 +218,9 @@ impl XdgShellHandler for TermwayState {
             return;
         }
         if let Some(win) = self.wm.find_toplevel(&surface) {
+            if win.is_maximized {
+                return;
+            }
             let cur_loc = self.pointer.current_location();
             let win_geo = win.content_geometry();
             let edge = match edges {
@@ -231,6 +238,7 @@ impl XdgShellHandler for TermwayState {
                 start_cursor: (cur_loc.x, cur_loc.y),
                 start_window_geo: win_geo,
             };
+            self.update_cursor_shape(edge.cursor_shape());
         }
     }
 
