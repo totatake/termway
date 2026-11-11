@@ -378,7 +378,6 @@ TERMWAY_TRACE_FILE=/tmp/termway_trace.json.gz \
 
 | Option | Argument | Description | Default |
 | :--- | :--- | :--- | :--- |
-| `--wayland` | - | Use Smithay headless Wayland compositor mode (default) | Enabled |
 | `--kitty` | - | Force Kitty Graphics Protocol | Auto-detected |
 | `--sixel` | - | Force Sixel Graphics Protocol | Auto-detected |
 | `--jpeg` | - | Force-enable Kitty Graphics Protocol JPEG extension (`f=101`) | Auto-probed |

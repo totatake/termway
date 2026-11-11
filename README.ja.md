@@ -376,7 +376,6 @@ TERMWAY_TRACE_FILE=/tmp/termway_trace.json.gz \
 
 | オプション | 引数 | 説明 | デフォルト |
 | :--- | :--- | :--- | :--- |
-| `--wayland` | - | Smithay ベースのヘッドレス Wayland コンポジタモードを使用する（デフォルト） | 有効 |
 | `--kitty` | - | Kitty Graphics Protocol を明示的に使用する | 自動検出 |
 | `--sixel` | - | Sixel Graphics Protocol を明示的に使用する | 自動検出 |
 | `--jpeg` | - | Kitty Graphics Protocol JPEG 拡張 (`f=101`) を明示的に有効化 | 自動プローブ判定 |

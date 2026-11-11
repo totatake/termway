@@ -10,7 +10,6 @@ USAGE:
     termway [OPTIONS] [--] [COMMAND [ARGS...]]
 
 OPTIONS:
-    --wayland                 Use native Smithay Wayland Compositor (default)
     --width <PIXELS>          Virtual display width (default: auto from terminal)
     --height <PIXELS>         Virtual display height (default: auto from terminal)
     --cell-size <WxH>         Font cell pixel size (e.g. 10x20, default: auto/env/10x20)
@@ -209,8 +208,6 @@ fn main() -> Result<()> {
                     std::process::exit(1);
                 }
             }
-        } else if arg == "--wayland" {
-            // Native Smithay Wayland Compositor is the default and sole engine
         } else if arg == "--sixel" {
             explicit_sixel = true;
         } else if arg == "--kitty" {
