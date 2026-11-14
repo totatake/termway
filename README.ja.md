@@ -383,9 +383,12 @@ TERMWAY_TRACE_FILE=/tmp/termway_trace.json.gz \
 | `--jpeg-quality` | `<1-100>` | JPEG 圧縮品質 (1〜100) を設定 | `75` |
 | `--pixel-mouse` | - | SGR-Pixels (DEC 1016h) 1px 精度マウストラッキングを明示的に有効化 | 自動検出 |
 | `--no-pixel-mouse` | - | SGR-Pixels を無効化（標準セル単位モードを強制） | 自動検出 |
+| `--no-host-keyring` | - | ホストの `org.freedesktop.secrets` キーリング中継を無効化（`TERMWAY_NO_HOST_KEYRING=1` でも可） | 有効（Allow-list制限あり） |
+| `--no-osc52` | - | OSC 52 によるホストクリップボード同期を無効化（`TERMWAY_NO_OSC52=1` でも可） | 有効 |
+| `--no-polkit` | - | Polkit 認証エージェントの自動起動を無効化（`TERMWAY_NO_POLKIT=1` でも可） | 有効 |
 | `--cell-size` | `<WxH>` | フォントセル寸法（幅x高さ）をピクセル単位で明示指定 (例: `10x22`) | SGR 14t 自動測定 |
-| `--width` | `<PIXELS>` | 仮想ディスプレイ解像度の幅 | 端末サイズから自動算出 |
-| `--height` | `<PIXELS>` | 仮想ディスプレイ解像度の高さ | 端末サイズから自動算出 |
+| `--width` | `<PIXELS>` | 仮想ディスプレイ解像度の幅 (`320..=7680`) | 端末サイズから自動算出 |
+| `--height` | `<PIXELS>` | 仮想ディスプレイ解像度の高さ (`240..=4320`) | 端末サイズから自動算出 |
 | `--fps` | `<FPS>` | 目標フレームレート | `30` |
 | `--scale` | `<FACTOR>` | Wayland 出力スケール係数 (HiDPI / Fractional Scale 制御, 例: `1.25`, `1.5`, `2.0`) | `1.0` |
 | `--hud` | - | 画面上部にリアルタイムパフォーマンスインジケータ（FPS・エンコード時間・帯域・Damageタイル数・トレースリング溢れ `Ovf`）を表示 | 無効 |

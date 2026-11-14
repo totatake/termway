@@ -10,8 +10,8 @@ USAGE:
     termway [OPTIONS] [--] [COMMAND [ARGS...]]
 
 OPTIONS:
-    --width <PIXELS>          Virtual display width (default: auto from terminal)
-    --height <PIXELS>         Virtual display height (default: auto from terminal)
+    --width <PIXELS>          Virtual display width (320..=7680, default: auto from terminal)
+    --height <PIXELS>         Virtual display height (240..=4320, default: auto from terminal)
     --cell-size <WxH>         Font cell pixel size (e.g. 10x20, default: auto/env/10x20)
     --fps <FPS>               Target frame rate (default: 30)
     --scale <FACTOR>          Wayland output scale factor (e.g. 1.0, 1.25, 1.5, 2.0; default: 1.0)
@@ -22,6 +22,9 @@ OPTIONS:
     --jpeg-quality <1-100>    Set JPEG compression quality (default: 75)
     --pixel-mouse             Enable SGR-Pixels (DEC 1016h) 1px precision mouse tracking
     --no-pixel-mouse          Disable SGR-Pixels mouse tracking (use standard cell mode)
+    --no-host-keyring         Disable forwarding of host Secret Service (keyring) to isolated bus
+    --no-osc52                Disable OSC 52 host clipboard synchronization
+    --no-polkit               Disable automatic startup of Polkit authentication agent
     --hud                     Enable real-time performance HUD indicator
     --profile                 Enable performance profiling and latency breakdown
     --trace                   Enable zero-allocation timeline tracing (Chrome Trace JSON)
@@ -139,9 +142,14 @@ fn main() -> Result<()> {
                 std::process::exit(1);
             }
             match args[i].parse::<u32>() {
-                Ok(w) if w >= 320 => config.width = Some(w),
+                Ok(w) if (320..=termway::compositor::MAX_DISPLAY_WIDTH).contains(&w) => {
+                    config.width = Some(w)
+                }
                 _ => {
-                    eprintln!("Error: --width must be an integer >= 320");
+                    eprintln!(
+                        "Error: --width must be an integer >= 320 (up to {})",
+                        termway::compositor::MAX_DISPLAY_WIDTH
+                    );
                     std::process::exit(1);
                 }
             }
@@ -152,9 +160,14 @@ fn main() -> Result<()> {
                 std::process::exit(1);
             }
             match args[i].parse::<u32>() {
-                Ok(h) if h >= 240 => config.height = Some(h),
+                Ok(h) if (240..=termway::compositor::MAX_DISPLAY_HEIGHT).contains(&h) => {
+                    config.height = Some(h)
+                }
                 _ => {
-                    eprintln!("Error: --height must be an integer >= 240");
+                    eprintln!(
+                        "Error: --height must be an integer >= 240 (up to {})",
+                        termway::compositor::MAX_DISPLAY_HEIGHT
+                    );
                     std::process::exit(1);
                 }
             }
@@ -275,6 +288,12 @@ fn main() -> Result<()> {
             }
         } else if arg == "--trace-no-input" {
             config.trace_no_input = true;
+        } else if arg == "--no-host-keyring" {
+            config.no_host_keyring = true;
+        } else if arg == "--no-osc52" {
+            config.no_osc52 = true;
+        } else if arg == "--no-polkit" {
+            config.no_polkit = true;
         } else if arg == "--no-splash" {
             config.no_splash = true;
         } else if arg == "--demo" {

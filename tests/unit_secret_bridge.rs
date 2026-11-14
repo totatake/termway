@@ -1,7 +1,8 @@
 use std::sync::mpsc;
 use std::time::Duration;
 use termway::session::secret_bridge::{
-    Arg, Connection, Message, ServiceBridge, METHOD_CALL, METHOD_RETURN, SIGNAL,
+    is_allowed_secret_call, Arg, Connection, Message, ServiceBridge, METHOD_CALL, METHOD_RETURN,
+    SIGNAL,
 };
 use termway::session::DbusSession;
 
@@ -107,4 +108,98 @@ fn test_bridge_requires_service_on_host() {
         return;
     };
     assert!(ServiceBridge::start("org.termway.Missing", isolated_bus.address(), host_bus.address()).is_err());
+}
+
+#[test]
+fn test_secret_bridge_allow_list_policy() {
+    // Allowed Secret Service paths & methods
+    assert!(is_allowed_secret_call(
+        "/org/freedesktop/secrets",
+        "org.freedesktop.Secret.Service",
+        "OpenSession"
+    ));
+    assert!(is_allowed_secret_call(
+        "/org/freedesktop/secrets/aliases/default",
+        "org.freedesktop.Secret.Collection",
+        "SearchItems"
+    ));
+    assert!(is_allowed_secret_call(
+        "/org/freedesktop/secrets/collection/login/42",
+        "org.freedesktop.Secret.Item",
+        "GetSecret"
+    ));
+    assert!(is_allowed_secret_call(
+        "/org/freedesktop/secrets/session/s1",
+        "org.freedesktop.Secret.Session",
+        "Close"
+    ));
+    assert!(is_allowed_secret_call(
+        "/org/freedesktop/secrets/prompt/p1",
+        "org.freedesktop.Secret.Prompt",
+        "Prompt"
+    ));
+    assert!(is_allowed_secret_call(
+        "/org/freedesktop/secrets",
+        "org.freedesktop.DBus.Properties",
+        "GetAll"
+    ));
+
+    // Blocked destructive collection deletion
+    assert!(!is_allowed_secret_call(
+        "/org/freedesktop/secrets/collection/login",
+        "org.freedesktop.Secret.Collection",
+        "Delete"
+    ));
+
+    // Blocked non-secret paths & arbitrary interfaces
+    assert!(!is_allowed_secret_call(
+        "/org/freedesktop/DBus",
+        "org.freedesktop.Secret.Service",
+        "OpenSession"
+    ));
+    assert!(!is_allowed_secret_call(
+        "/org/freedesktop/secrets/evil",
+        "org.freedesktop.DBus",
+        "Hello"
+    ));
+    assert!(!is_allowed_secret_call(
+        "/org/freedesktop/secrets",
+        "org.gnome.Keyring.Internal",
+        "DumpAll"
+    ));
+    assert!(!is_allowed_secret_call(
+        "/org/freedesktop/secrets",
+        "org.freedesktop.Secret.Service",
+        ""
+    ));
+}
+
+#[test]
+fn test_message_decode_and_string_array_bounds_safety() {
+    // Truncated header (< 16 bytes) must error cleanly without panic
+    assert!(Message::decode(&[b'l', 1, 0, 1]).is_err());
+
+    // Overflowing fields_len in header (0xFFFF_FFFF) must return Err, never panic or wrap
+    let mut overflow_fields = vec![b'l', 1, 0, 1];
+    overflow_fields.extend_from_slice(&0u32.to_le_bytes()); // body_len = 0
+    overflow_fields.extend_from_slice(&1u32.to_le_bytes()); // serial = 1
+    overflow_fields.extend_from_slice(&u32::MAX.to_le_bytes()); // fields_len = MAX
+    assert!(Message::decode(&overflow_fields).is_err());
+
+    // Overflowing body_len in header must return Err cleanly
+    let mut overflow_body = vec![b'l', 1, 0, 1];
+    overflow_body.extend_from_slice(&u32::MAX.to_le_bytes()); // body_len = MAX
+    overflow_body.extend_from_slice(&1u32.to_le_bytes()); // serial = 1
+    overflow_body.extend_from_slice(&0u32.to_le_bytes()); // fields_len = 0
+    assert!(Message::decode(&overflow_body).is_err());
+
+    // body_string_array with length exceeding buffer must return Err without panic
+    let mut bad_array_msg = Message {
+        signature: Some("as".into()),
+        body: u32::MAX.to_le_bytes().to_vec(),
+        ..Default::default()
+    };
+    assert!(bad_array_msg.body_string_array().is_err());
+    bad_array_msg.body = 100u32.to_le_bytes().to_vec();
+    assert!(bad_array_msg.body_string_array().is_err());
 }

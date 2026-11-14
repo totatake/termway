@@ -125,6 +125,7 @@ pub struct TermwayState {
     pub current_terminal_title: String,
     pub pixel_mouse: bool,
     pub enable_cursor_shape: bool,
+    pub enable_osc52: bool,
 }
 
 impl TermwayState {
@@ -235,6 +236,7 @@ impl TermwayState {
             current_terminal_title: String::from("termway"),
             pixel_mouse: false,
             enable_cursor_shape: std::env::var("TERMWAY_NO_CURSOR_SHAPE").is_err(),
+            enable_osc52: std::env::var("TERMWAY_NO_OSC52").is_err(),
         };
         state.init_unicode_keymap_cache();
         state

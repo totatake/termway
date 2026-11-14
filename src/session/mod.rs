@@ -343,6 +343,12 @@ impl LauncherShims {
             let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
                 continue;
             };
+            if name.is_empty()
+                || name.contains('/')
+                || name.chars().any(|c| c.is_control() || c.is_whitespace())
+            {
+                continue;
+            }
             write_shim(
                 name,
                 format!(
@@ -478,6 +484,10 @@ pub struct SessionManager {
 
 impl SessionManager {
     pub fn new() -> Self {
+        Self::with_options(std::env::var("TERMWAY_NO_HOST_KEYRING").is_err())
+    }
+
+    pub fn with_options(enable_host_keyring: bool) -> Self {
         // 1. Capture host's ambient systemd user session bus if available
         let uid = unsafe { libc::getuid() };
         let run_user_bus = format!("/run/user/{}/bus", uid);
@@ -518,23 +528,28 @@ impl SessionManager {
 
         // 4. Relay the host keyring (Secret Service) into the isolated bus so that apps
         // storing credentials through libsecret (VS Code, Chromium) can use the OS keyring.
-        let secret_bridge = match (&isolated_dbus, &ambient_dbus_address) {
-            (Some(isolated), Some(ambient)) => {
-                match secret_bridge::ServiceBridge::start_secret_service(isolated.address(), ambient) {
-                    Ok(bridge) => {
-                        import_host_current_desktop();
-                        Some(bridge)
-                    }
-                    Err(e) => {
-                        crate::compositor::log_line(format!(
-                            "[termway] Notice: Secret Service not bridged ({}).",
-                            e
-                        ));
-                        None
+        let secret_bridge = if enable_host_keyring {
+            match (&isolated_dbus, &ambient_dbus_address) {
+                (Some(isolated), Some(ambient)) => {
+                    match secret_bridge::ServiceBridge::start_secret_service(isolated.address(), ambient) {
+                        Ok(bridge) => {
+                            import_host_current_desktop();
+                            Some(bridge)
+                        }
+                        Err(e) => {
+                            crate::compositor::log_line(format!(
+                                "[termway] Notice: Secret Service not bridged ({}).",
+                                e
+                            ));
+                            None
+                        }
                     }
                 }
+                _ => None,
             }
-            _ => None,
+        } else {
+            crate::compositor::log_line("[termway] Host keyring relay disabled by option (--no-host-keyring).");
+            None
         };
 
         Self {
@@ -560,9 +575,21 @@ impl SessionManager {
         if !snap_bin.is_dir() {
             return None;
         }
-        let base = std::env::var("XDG_RUNTIME_DIR")
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|_| std::env::temp_dir());
+        let Ok(runtime_dir) = std::env::var("XDG_RUNTIME_DIR") else {
+            return None;
+        };
+        let base = std::path::PathBuf::from(runtime_dir);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            let uid = unsafe { libc::getuid() };
+            let Ok(meta) = std::fs::symlink_metadata(&base) else {
+                return None;
+            };
+            if !meta.is_dir() || meta.file_type().is_symlink() || meta.uid() != uid {
+                return None;
+            }
+        }
         remove_stale_shim_dirs(&base);
         let dir = base.join(format!("{}{}", SHIM_DIR_PREFIX, std::process::id()));
         match LauncherShims::create(&dir, snap_bin, ambient) {

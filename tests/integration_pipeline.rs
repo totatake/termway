@@ -313,11 +313,27 @@ fn test_cli_argument_validation() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("--width must be an integer >= 320"), "stderr: {}", stderr);
 
-    // 3. Invalid height (< 240)
+    let output = std::process::Command::new(binary)
+        .args(["--width", "99999"])
+        .output()
+        .expect("execute termway with excessive width");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("--width must be an integer >= 320"), "stderr: {}", stderr);
+
+    // 3. Invalid height (< 240 or > 4320)
     let output = std::process::Command::new(binary)
         .args(["--height", "100"])
         .output()
         .expect("execute termway with too small height");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("--height must be an integer >= 240"), "stderr: {}", stderr);
+
+    let output = std::process::Command::new(binary)
+        .args(["--height", "99999"])
+        .output()
+        .expect("execute termway with excessive height");
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("--height must be an integer >= 240"), "stderr: {}", stderr);
@@ -348,7 +364,7 @@ fn test_cli_argument_validation() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("--cell-size dimensions must be greater than zero"), "stderr: {}", stderr);
 
-    // 6. Help flag should succeed
+    // 6. Help flag should succeed and list security opt-out flags
     let output = std::process::Command::new(binary)
         .arg("--help")
         .output()
@@ -356,6 +372,16 @@ fn test_cli_argument_validation() {
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("USAGE:"), "stdout: {}", stdout);
+    assert!(stdout.contains("--no-host-keyring"), "stdout: {}", stdout);
+    assert!(stdout.contains("--no-osc52"), "stdout: {}", stdout);
+    assert!(stdout.contains("--no-polkit"), "stdout: {}", stdout);
+
+    // 7. Security opt-out flags are accepted without error
+    let output = std::process::Command::new(binary)
+        .args(["--no-host-keyring", "--no-osc52", "--no-polkit", "--version"])
+        .output()
+        .expect("execute termway with security opt-out flags");
+    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
 }
 
 #[test]

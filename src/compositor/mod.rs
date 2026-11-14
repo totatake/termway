@@ -40,6 +40,13 @@ use self::renderer::TermwayRenderer;
 use self::state::{send_frames_surface_tree, ClientState, TermwayState};
 use self::window::WindowSurface;
 
+/// Maximum allowed virtual display width (8K UHD) to prevent excessive framebuffer allocations.
+pub const MAX_DISPLAY_WIDTH: u32 = 7680;
+/// Maximum allowed virtual display height (8K UHD) to prevent excessive framebuffer allocations.
+pub const MAX_DISPLAY_HEIGHT: u32 = 4320;
+/// Maximum buffered bytes while waiting for a Bracketed Paste closing sequence (`\x1b[201~`).
+const MAX_PASTE_BUFFER_BYTES: usize = 1024 * 1024;
+
 #[derive(Debug, Clone)]
 pub struct EngineConfig {
     pub width: Option<u32>,
@@ -54,6 +61,9 @@ pub struct EngineConfig {
     pub hud: bool,
     pub profile: bool,
     pub no_splash: bool,
+    pub no_host_keyring: bool,
+    pub no_osc52: bool,
+    pub no_polkit: bool,
     pub pixel_mouse: Option<bool>,
     pub trace: bool,
     pub trace_file: Option<String>,
@@ -81,6 +91,9 @@ impl Default for EngineConfig {
             .ok()
             .and_then(|s| s.parse::<u64>().ok());
         let trace_no_input = std::env::var("TERMWAY_TRACE_NO_INPUT").is_ok();
+        let no_host_keyring = std::env::var("TERMWAY_NO_HOST_KEYRING").is_ok();
+        let no_osc52 = std::env::var("TERMWAY_NO_OSC52").is_ok();
+        let no_polkit = std::env::var("TERMWAY_NO_POLKIT").is_ok();
 
         Self {
             width: None,
@@ -95,6 +108,9 @@ impl Default for EngineConfig {
             hud: false,
             profile: false,
             no_splash: false,
+            no_host_keyring,
+            no_osc52,
+            no_polkit,
             pixel_mouse: None,
             trace,
             trace_file,
@@ -127,6 +143,7 @@ pub struct TermwayCompositor {
     xwayland_source: Option<smithay::xwayland::XWayland>,
     _xwayland_client: Option<smithay::reexports::wayland_server::Client>,
     session: crate::session::SessionManager,
+    no_polkit: bool,
     cell_size_queried: bool,
     wrap_dir: Option<tempfile::TempDir>,
     damage_tracker: crate::display::DamageTracker,
@@ -174,22 +191,24 @@ impl TermwayCompositor {
         } else {
             term_size.width_px as u32
         };
-        let width = config.width.unwrap_or(effective_w).max(320);
+        let width = config.width.unwrap_or(effective_w).clamp(320, MAX_DISPLAY_WIDTH);
         let avail_rows = term_size.rows.saturating_sub(1).max(1);
         let raw_h = avail_rows as u32 * term_size.cell_height_px as u32;
         let height = if let Some(h) = config.height {
-            h.max(240)
+            h.clamp(240, MAX_DISPLAY_HEIGHT)
         } else if config.use_sixel {
             // Sixel 出力時は最下行（ステータス表示行）を空け、高さを 6 の倍数に切り捨てて端末スクロールを完全に防止
-            (raw_h / 6 * 6).max(240)
+            (raw_h / 6 * 6).clamp(240, MAX_DISPLAY_HEIGHT)
         } else {
             // Kitty 出力時も最下行（タスクバー・ステータス表示行）を空けてウィンドウとの重なりを防止
-            raw_h.max(240)
+            raw_h.clamp(240, MAX_DISPLAY_HEIGHT)
         };
 
         Self::ensure_xdg_runtime_dir();
 
-        let session = crate::session::SessionManager::new();
+        let enable_host_keyring =
+            !config.no_host_keyring && std::env::var("TERMWAY_NO_HOST_KEYRING").is_err();
+        let session = crate::session::SessionManager::with_options(enable_host_keyring);
 
         let display = Display::new()?;
         let dh = display.handle();
@@ -230,6 +249,7 @@ impl TermwayCompositor {
         let pixel_mouse = config.pixel_mouse.unwrap_or_else(crate::terminal::query_pixel_mouse_support);
         let mut state = TermwayState::with_scale(&dh, width, height, config.enable_wm, config.scale);
         state.pixel_mouse = pixel_mouse;
+        state.enable_osc52 = !config.no_osc52 && std::env::var("TERMWAY_NO_OSC52").is_err();
         if pixel_mouse {
             log_line("[termway] Mouse tracking: SGR-Pixels (DECSET 1016h) enabled");
         } else {
@@ -275,11 +295,19 @@ impl TermwayCompositor {
         // We create a wrapper script that unsets WAYLAND_SOCKET and uses WAYLAND_DISPLAY instead.
         let mut wrap_dir_guard = None;
         if let Some(xwayland_real) = find_xwayland_binary() {
-            if let Ok(temp_dir) = tempfile::Builder::new().prefix("termway_wrap_").tempdir() {
+            let wrap_parent = (!runtime_dir.is_empty() && std::path::Path::new(&runtime_dir).is_dir())
+                .then(|| std::path::Path::new(&runtime_dir));
+            let temp_res = match wrap_parent {
+                Some(dir) => tempfile::Builder::new().prefix("termway_wrap_").tempdir_in(dir),
+                None => tempfile::Builder::new().prefix("termway_wrap_").tempdir(),
+            };
+            if let Ok(temp_dir) = temp_res {
+                let shell_q = |s: &str| format!("'{}'", s.replace('\'', "'\\''"));
                 let wrapper_path = temp_dir.path().join("Xwayland");
                 let wrapper_script = format!(
                     "#!/bin/bash\nunset WAYLAND_SOCKET\nexport WAYLAND_DISPLAY={}\nARGS=()\nfor arg in \"$@\"; do\n    if [ \"$arg\" != \"-terminate\" ]; then\n        ARGS+=(\"$arg\")\n    fi\ndone\nexec {} \"${{ARGS[@]}}\" -ac\n",
-                    socket_name, xwayland_real.display()
+                    shell_q(&socket_name),
+                    shell_q(&xwayland_real.to_string_lossy())
                 );
                 if std::fs::write(&wrapper_path, wrapper_script).is_ok() {
                     let _ = std::fs::set_permissions(&wrapper_path, std::os::unix::fs::PermissionsExt::from_mode(0o700));
@@ -388,6 +416,7 @@ impl TermwayCompositor {
                 socket_name,
                 x11_display,
                 session,
+                no_polkit: config.no_polkit || std::env::var("TERMWAY_NO_POLKIT").is_ok(),
                 cell_size_queried,
                 wrap_dir: wrap_dir_guard,
                 term_cols: term_size.cols.max(1),
@@ -527,7 +556,7 @@ impl TermwayCompositor {
             let xwayland_is_ready = self.state.xwayland_ready || self.x11_display.is_none();
             if loop_count >= 5 && xwayland_is_ready {
                 // Start Polkit Authentication Agent once Wayland and XWayland are fully ready
-                if !self.session.is_polkit_initialized() {
+                if !self.no_polkit && !self.session.is_polkit_initialized() {
                     self.session.update_activation_environment(Some(&self.socket_name), self.x11_display.as_deref());
                     self.session.start_polkit(Some(&self.socket_name), self.x11_display.as_deref());
                     // Allow the agent to register with D-Bus and polkitd only if an agent was actually found and started
@@ -1035,16 +1064,18 @@ impl TermwayCompositor {
     }
 
     fn apply_terminal_size(&mut self, mut new_size: TerminalSize) {
-        let max_grid_w = new_size.cols as u32 * new_size.cell_width_px as u32;
+        let max_grid_w = (new_size.cols as u32).saturating_mul(new_size.cell_width_px as u32);
         if max_grid_w > 0 {
-            new_size.width_px = (new_size.width_px as u32).min(max_grid_w).max(320) as u16;
+            new_size.width_px = ((new_size.width_px as u32)
+                .min(max_grid_w)
+                .clamp(320, MAX_DISPLAY_WIDTH)) as u16;
         }
         let avail_rows = new_size.rows.saturating_sub(1).max(1);
-        let raw_h = avail_rows as u32 * new_size.cell_height_px as u32;
+        let raw_h = (avail_rows as u32).saturating_mul(new_size.cell_height_px as u32);
         if self.backend.is_sixel() {
-            new_size.height_px = ((raw_h / 6 * 6).max(240)) as u16;
+            new_size.height_px = ((raw_h / 6 * 6).clamp(240, MAX_DISPLAY_HEIGHT)) as u16;
         } else {
-            new_size.height_px = (raw_h.max(240)) as u16;
+            new_size.height_px = (raw_h.clamp(240, MAX_DISPLAY_HEIGHT)) as u16;
         }
 
         let phys_w = new_size.width_px as u32;
@@ -1126,6 +1157,14 @@ impl TermwayCompositor {
                         self.handle_bracketed_paste(pasted_text);
                         continue;
                     } else {
+                        if self.input_buffer.len() > MAX_PASTE_BUFFER_BYTES {
+                            log_line(format!(
+                                "[termway] Warning: Bracketed paste exceeded {} bytes without terminator, draining buffer.",
+                                MAX_PASTE_BUFFER_BYTES
+                            ));
+                            self.input_buffer.drain(..start + 6);
+                            continue;
+                        }
                         // Incomplete bracketed paste; wait for remainder to arrive
                         break;
                     }
@@ -1146,8 +1185,8 @@ impl TermwayCompositor {
                                     let mut new_size = self.backend.term_size();
                                     new_size.cell_width_px = w;
                                     new_size.cell_height_px = h;
-                                    new_size.width_px = new_size.cols * w;
-                                    new_size.height_px = new_size.rows * h;
+                                    new_size.width_px = new_size.cols.saturating_mul(w).min(MAX_DISPLAY_WIDTH as u16);
+                                    new_size.height_px = new_size.rows.saturating_mul(h).min(MAX_DISPLAY_HEIGHT as u16);
                                     self.apply_terminal_size(new_size);
                                 }
                             }
@@ -1176,8 +1215,8 @@ impl TermwayCompositor {
                                         if let Some(res) = h.checked_div(new_size.rows) {
                                             new_size.cell_height_px = res.max(1);
                                         }
-                                        new_size.width_px = new_size.cols * new_size.cell_width_px;
-                                        new_size.height_px = new_size.rows * new_size.cell_height_px;
+                                        new_size.width_px = new_size.cols.saturating_mul(new_size.cell_width_px).min(MAX_DISPLAY_WIDTH as u16);
+                                        new_size.height_px = new_size.rows.saturating_mul(new_size.cell_height_px).min(MAX_DISPLAY_HEIGHT as u16);
                                         self.apply_terminal_size(new_size);
                                     }
                                 }
@@ -1233,7 +1272,15 @@ impl TermwayCompositor {
                 continue;
             }
 
-            if self.input_buffer.windows(6).any(|w| w == b"\x1b[200~") {
+            if let Some(pos) = self.input_buffer.windows(6).position(|w| w == b"\x1b[200~") {
+                if self.input_buffer.len() > MAX_PASTE_BUFFER_BYTES {
+                    log_line(format!(
+                        "[termway] Warning: Incomplete bracketed paste exceeded {} bytes, draining buffer.",
+                        MAX_PASTE_BUFFER_BYTES
+                    ));
+                    self.input_buffer.drain(..pos + 6);
+                    continue;
+                }
                 break;
             }
 

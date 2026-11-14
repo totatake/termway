@@ -1,7 +1,19 @@
 //! Input seat focus tracking, zwp_text_input_v3 IME protocol, and clipboard selection bridging
 //! (Wayland data device <-> host terminal via OSC 52).
 
-use std::os::unix::io::{FromRawFd, OwnedFd};
+use std::os::unix::io::{AsFd, OwnedFd};
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+const MAX_ACTIVE_CLIPBOARD_READERS: usize = 2;
+static ACTIVE_CLIPBOARD_READERS: AtomicUsize = AtomicUsize::new(0);
+
+struct ClipboardReaderGuard;
+
+impl Drop for ClipboardReaderGuard {
+    fn drop(&mut self) {
+        ACTIVE_CLIPBOARD_READERS.fetch_sub(1, Ordering::AcqRel);
+    }
+}
 
 use smithay::{
     input::{Seat, SeatHandler, SeatState},
@@ -169,6 +181,9 @@ impl SelectionHandler for TermwayState {
     type SelectionUserData = Vec<u8>;
 
     fn new_selection(&mut self, ty: SelectionTarget, source: Option<SelectionSource>, seat: Seat<Self>) {
+        if !self.enable_osc52 {
+            return;
+        }
         let (is_primary, osc_target) = match ty {
             SelectionTarget::Clipboard => (false, "c"),
             SelectionTarget::Primary => (true, "p"),
@@ -185,11 +200,13 @@ impl SelectionHandler for TermwayState {
         }).cloned();
 
         if let Some(mime) = text_mime {
-            let mut fds = [0i32; 2];
-            if unsafe { libc::pipe(fds.as_mut_ptr()) } == 0 {
-                let read_fd = unsafe { OwnedFd::from_raw_fd(fds[0]) };
-                let write_fd = unsafe { OwnedFd::from_raw_fd(fds[1]) };
+            if ACTIVE_CLIPBOARD_READERS.fetch_add(1, Ordering::AcqRel) >= MAX_ACTIVE_CLIPBOARD_READERS {
+                ACTIVE_CLIPBOARD_READERS.fetch_sub(1, Ordering::AcqRel);
+                return;
+            }
+            let _guard = ClipboardReaderGuard;
 
+            if let Ok((read_fd, write_fd)) = nix::unistd::pipe() {
                 let req_ok = if is_primary {
                     smithay::wayland::selection::primary_selection::request_primary_client_selection(
                         &seat,
@@ -207,22 +224,50 @@ impl SelectionHandler for TermwayState {
                 if req_ok {
                     let osc_target = osc_target.to_string();
                     std::thread::spawn(move || {
+                        let _reader_guard = _guard;
                         use std::io::{Read, Write};
                         use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
-                        // Limit clipboard reading to 1MB to prevent OOM, pipe blocking, or massive Base64 PTY flooding
-                        const MAX_CLIPBOARD_BYTES: u64 = 1024 * 1024;
-                        let file = std::fs::File::from(read_fd);
-                        let mut take_reader = file.take(MAX_CLIPBOARD_BYTES);
+                        // Limit clipboard reading to 1MB and 1000ms timeout to prevent OOM, pipe blocking, or PTY flooding
+                        const MAX_CLIPBOARD_BYTES: usize = 1024 * 1024;
+                        let mut file = std::fs::File::from(read_fd);
                         let mut data = Vec::new();
-                        if take_reader.read_to_end(&mut data).is_ok() {
-                            if let Ok(text) = std::str::from_utf8(&data) {
-                                if !text.is_empty() {
-                                    let b64 = BASE64.encode(text);
-                                    let label = if osc_target == "p" { "primary selection" } else { "clipboard" };
-                                    eprintln!("[termway] Copied to host {}: {:?}", label, text);
-                                    print!("\x1b]52;{};{}\x07", osc_target, b64);
-                                    let _ = std::io::stdout().flush();
+                        let mut chunk = [0u8; 8192];
+                        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(1000);
+
+                        while data.len() < MAX_CLIPBOARD_BYTES {
+                            let Some(remaining) = deadline.checked_duration_since(std::time::Instant::now()) else {
+                                break;
+                            };
+                            let timeout_ms = remaining.as_millis().min(1000) as u16;
+                            let mut poll_fds = [nix::poll::PollFd::new(
+                                file.as_fd(),
+                                nix::poll::PollFlags::POLLIN,
+                            )];
+                            match nix::poll::poll(&mut poll_fds, nix::poll::PollTimeout::from(timeout_ms)) {
+                                Ok(0) => break,
+                                Ok(_) => {
+                                    let max_read = chunk.len().min(MAX_CLIPBOARD_BYTES - data.len());
+                                    match file.read(&mut chunk[..max_read]) {
+                                        Ok(0) => break,
+                                        Ok(n) => data.extend_from_slice(&chunk[..n]),
+                                        Err(_) => break,
+                                    }
                                 }
+                                Err(_) => break,
+                            }
+                        }
+
+                        if let Ok(text) = std::str::from_utf8(&data) {
+                            if !text.is_empty() {
+                                let b64 = BASE64.encode(text);
+                                let label = if osc_target == "p" { "primary selection" } else { "clipboard" };
+                                crate::compositor::log_line(format!(
+                                    "[termway] Synced {} bytes to host {}",
+                                    text.len(),
+                                    label
+                                ));
+                                print!("\x1b]52;{};{}\x07", osc_target, b64);
+                                let _ = std::io::stdout().flush();
                             }
                         }
                     });

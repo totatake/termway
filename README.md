@@ -385,9 +385,12 @@ TERMWAY_TRACE_FILE=/tmp/termway_trace.json.gz \
 | `--jpeg-quality` | `<1-100>` | Set JPEG compression quality (1..=100) | `75` |
 | `--pixel-mouse` | - | Force-enable SGR-Pixels (DEC 1016h) 1px precision mouse tracking | Auto-detected |
 | `--no-pixel-mouse` | - | Force-disable SGR-Pixels (use standard cell mode) | Auto-detected |
+| `--no-host-keyring` | - | Disable forwarding of host `org.freedesktop.secrets` keyring into the isolated D-Bus session (also `TERMWAY_NO_HOST_KEYRING=1`) | Enabled (allow-listed) |
+| `--no-osc52` | - | Disable OSC 52 host clipboard synchronization (also `TERMWAY_NO_OSC52=1`) | Enabled |
+| `--no-polkit` | - | Disable automatic startup of the Polkit authentication agent (also `TERMWAY_NO_POLKIT=1`) | Enabled |
 | `--cell-size` | `<WxH>` | Specify font cell dimensions in pixels (e.g. `10x22`) | Auto-detected via SGR 14t |
-| `--width` | `<PIXELS>` | Virtual display resolution width | Auto-calculated from terminal |
-| `--height` | `<PIXELS>` | Virtual display resolution height | Auto-calculated from terminal |
+| `--width` | `<PIXELS>` | Virtual display resolution width (`320..=7680`) | Auto-calculated from terminal |
+| `--height` | `<PIXELS>` | Virtual display resolution height (`240..=4320`) | Auto-calculated from terminal |
 | `--fps` | `<FPS>` | Target frame rate limit | `30` |
 | `--scale` | `<FACTOR>` | Wayland output scale factor for HiDPI / fractional scaling (e.g. `1.25`, `1.5`, `2.0`) | `1.0` |
 | `--hud` | - | Show real-time performance HUD overlay (FPS, encode time, bandwidth, damage tiles, and trace buffer overflow `Ovf`) | Disabled |

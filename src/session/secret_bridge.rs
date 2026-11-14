@@ -37,8 +37,41 @@ const FIELD_SENDER: u8 = 7;
 const FIELD_SIGNATURE: u8 = 8;
 const FIELD_UNIX_FDS: u8 = 9;
 
-/// Upper bound from the D-Bus specification (128 MiB)
-const MAX_MESSAGE_SIZE: usize = 128 * 1024 * 1024;
+/// Maximum relayed D-Bus message size (4 MiB) to prevent memory exhaustion.
+const MAX_MESSAGE_SIZE: usize = 4 * 1024 * 1024;
+/// Maximum number of concurrent in-flight D-Bus replies tracked in the relay pending map.
+const MAX_PENDING_REPLIES: usize = 256;
+
+const ALLOWED_SECRET_INTERFACES: &[&str] = &[
+    "org.freedesktop.Secret.Service",
+    "org.freedesktop.Secret.Collection",
+    "org.freedesktop.Secret.Item",
+    "org.freedesktop.Secret.Session",
+    "org.freedesktop.Secret.Prompt",
+    "org.freedesktop.DBus.Properties",
+    "org.freedesktop.DBus.Introspectable",
+    "org.freedesktop.DBus.Peer",
+];
+
+/// Validates whether a D-Bus method call may be relayed to the host Secret Service.
+/// Enforces a deny-by-default path/interface allow-list and blocks destructive collection deletion.
+pub fn is_allowed_secret_call(path: &str, interface: &str, member: &str) -> bool {
+    if member.is_empty() {
+        return false;
+    }
+    let valid_path = path == "/org/freedesktop/secrets"
+        || path.starts_with("/org/freedesktop/secrets/");
+    if !valid_path {
+        return false;
+    }
+    if !ALLOWED_SECRET_INTERFACES.contains(&interface) {
+        return false;
+    }
+    if interface == "org.freedesktop.Secret.Collection" && member == "Delete" {
+        return false;
+    }
+    true
+}
 
 /// A D-Bus message with its body kept as opaque, already-marshalled bytes.
 ///
@@ -193,9 +226,16 @@ impl Message {
         let fields_len = r.u32()? as usize;
 
         r.align(8);
-        let fields_end = r.pos + fields_len;
+        let fields_end = r
+            .pos
+            .checked_add(fields_len)
+            .filter(|&e| e <= buf.len())
+            .ok_or_else(|| invalid("truncated header fields"))?;
         while r.pos < fields_end {
             r.align(8);
+            if r.pos >= fields_end {
+                break;
+            }
             let code = r.u8()?;
             let sig = r.signature()?;
             match (code, sig.as_str()) {
@@ -227,10 +267,11 @@ impl Message {
 
         r.pos = fields_end;
         r.align(8);
-        let body_end = r.pos + body_len;
-        if body_end > buf.len() {
-            return Err(invalid("truncated body"));
-        }
+        let body_end = r
+            .pos
+            .checked_add(body_len)
+            .filter(|&e| e <= buf.len())
+            .ok_or_else(|| invalid("truncated body"))?;
         msg.body = buf[r.pos..body_end].to_vec();
         Ok(msg)
     }
@@ -259,7 +300,11 @@ impl Message {
         let mut r = Reader { buf: &self.body, pos: 0, big_endian: self.big_endian };
         let len = r.u32()? as usize;
         r.align(4);
-        let end = r.pos + len;
+        let end = r
+            .pos
+            .checked_add(len)
+            .filter(|&e| e <= self.body.len())
+            .ok_or_else(|| invalid("truncated string array"))?;
         let mut out = Vec::new();
         while r.pos < end {
             out.push(r.string()?);
@@ -649,6 +694,33 @@ fn relay_calls(
             continue;
         }
         let expects_reply = msg.flags & FLAG_NO_REPLY_EXPECTED == 0;
+        if name == SECRET_SERVICE_NAME {
+            let path = msg.path.as_deref().unwrap_or("");
+            let interface = msg.interface.as_deref().unwrap_or("");
+            let member = msg.member.as_deref().unwrap_or("");
+            if !is_allowed_secret_call(path, interface, member) {
+                if expects_reply {
+                    let err = error_reply(
+                        &msg,
+                        "org.freedesktop.DBus.Error.AccessDenied",
+                        "method call blocked by termway secret_bridge policy",
+                    );
+                    let _ = isolated.send(err, |_| {});
+                }
+                continue;
+            }
+        }
+        if expects_reply
+            && pending.lock().unwrap_or_else(|e| e.into_inner()).len() >= MAX_PENDING_REPLIES
+        {
+            let err = error_reply(
+                &msg,
+                "org.freedesktop.DBus.Error.LimitsExceeded",
+                "too many pending secret_bridge requests",
+            );
+            let _ = isolated.send(err, |_| {});
+            continue;
+        }
         let forward = Message {
             big_endian: msg.big_endian,
             msg_type: METHOD_CALL,
