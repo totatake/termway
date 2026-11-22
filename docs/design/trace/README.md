@@ -9,11 +9,11 @@ Termway は「集計統計（`--profile`）」と「タイムライン（`--trac
 | [02-detail-design.md](02-detail-design.md) | **詳細設計** — `src/trace/` の API 契約、既存モジュールへの組み込み点、Chrome Trace JSON 変換、panic/SIGUSR1 ハンドリング |
 | [03-cli-and-env.md](03-cli-and-env.md) | **CLI / 環境変数仕様** — `--trace-*` オプションと `TERMWAY_TRACE_*` の意味、`--profile` との統合、README 反映方針 |
 | [04-roadmap.md](04-roadmap.md) | **実装ロードマップ** — M1〜M5 の分割方針、各ステップの完了条件と検証シナリオ |
-| [../adr/0003-zero-allocation-time-line-tracer.md](../adr/0003-zero-allocation-time-line-tracer.md) | **ADR-0003** — 上記の主要決定（Chrome JSON 自前・スレッド独立リング・32B 構造化イベント・flow event・PTY 書き込み分離）を ADR 形式で採択記録 |
+| [../../adr/0003-zero-allocation-time-line-tracer.md](../../adr/0003-zero-allocation-time-line-tracer.md) | **ADR-0003** — 上記の主要決定（Chrome JSON 自前・スレッド独立リング・32B 構造化イベント・flow event・PTY 書き込み分離）を ADR 形式で採択記録 |
 
 ## 前提知識
 
-- 既存の可観測性は [docs/SPECIFICATION.md](../SPECIFICATION.md) と [docs/ARCHITECTURE.md §4](../ARCHITECTURE.md) で `CompositorMetrics` / `BackendMetrics` / `LatencyHistogram`（対数ヒストグラム）として解説されています。本トレーシングは**これを置き換えず補完**します。
+- 既存の可観測性は [docs/requirements.md](../../requirements.md) と [docs/architecture.md §4](../../architecture.md) で `CompositorMetrics` / `BackendMetrics` / `LatencyHistogram`（対数ヒストグラム）として解説されています。本トレーシングは**これを置き換えず補完**します。
 - Perfetto UI は <https://ui.perfetto.dev/> でホストされており、Chrome Trace Event JSON（`[ {...}, {...} ]` の 1 event 1 line 形式、`.gz` 自動解凍対応）をそのままドラッグ＆ドロップで開けます。protobuf 形式 `.perfetto-trace` は本実装では出力しません。
 
 ## 「集計」と「タイムライン」の使い分け

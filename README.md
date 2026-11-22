@@ -4,7 +4,7 @@
 
 **termway** is a high-performance terminal GUI bridge that embeds and renders Wayland and X11 GUI applications directly inside your terminal emulator. It features an integrated headless Wayland compositor powered by [Smithay](https://github.com/Smithay/smithay) and XWayland support.
 
-![termway demo](docs/demo.gif)
+![termway demo](docs/assets/demo.gif)
 
 ---
 
@@ -138,7 +138,7 @@ termway supports both high-speed inline graphics protocols (**Kitty** & **Sixel*
 
 ```bash
 # Ubuntu / Debian (Native x86_64 or aarch64)
-sudo apt-get install -y build-essential pkg-config libpixman-1-dev libwayland-dev xwayland dbus-daemon
+sudo apt-get install -y build-essential pkg-config libpixman-1-dev libxkbcommon-dev libwayland-dev xwayland dbus-daemon
 
 # Recommended for running privileged tools (e.g. gparted) with password prompts (choose one)
 sudo apt-get install -y policykit-1-gnome   # Official GNOME authentication dialog (Recommended)
@@ -374,7 +374,7 @@ TERMWAY_TRACE_FILE=/tmp/termway_trace.json.gz \
 | `Ctrl-V` / Terminal Paste | Paste from Clipboard | Pastes text from the host clipboard directly into the application via Bracketed Paste with full UTF-8 / multibyte support |
 | Middle Mouse Click | Paste Primary Selection | Pastes highlighted text via Wayland Primary Selection protocol (`zwp_primary_selection_v1`) |
 
-### 7. Command Line Options
+### 8. Command Line Options
 
 | Option | Argument | Description | Default |
 | :--- | :--- | :--- | :--- |
@@ -429,7 +429,7 @@ command = "mount -o remount,rw /tmp/.X11-unix"
 
 ## Running Tests
 
-`termway` comes with a comprehensive test suite (unit, integration, benchmark, and end-to-end tests: 127 tests total):
+`termway` comes with a comprehensive test suite (unit, integration, benchmark, and end-to-end tests: 156 tests total):
 
 ```bash
 cargo test --release
@@ -464,11 +464,22 @@ Traditional remote GUI solutions (X11 Forwarding via `ssh -X`, VNC, RDP, or web-
 
 ## Documentation
 
-- **[System Architecture & Design (`docs/ARCHITECTURE.md`)](docs/ARCHITECTURE.md)**: Static structure (module layering, class/ownership diagrams) and dynamic structure (startup sequence, async render pipeline, window state machine, hit-test routing).
-- **[Requirements & Test Specification (`docs/SPECIFICATION.md`)](docs/SPECIFICATION.md)**: Functional/non-functional requirements and traceability matrix across all 127 tests.
+Full technical documentation lives under [`docs/`](docs/README.md):
+
+- **[Overview & Comparisons (`docs/overview.md`)](docs/overview.md)**: Background, why in-terminal GUI, comparison with SSH X11 / VNC / RDP, and key use cases.
+- **[System Architecture & Design (`docs/architecture.md`)](docs/architecture.md)**: Static structure (module layering, class/ownership diagrams) and dynamic structure (startup sequence, async render pipeline, window state machine, hit-test routing).
+- **[Requirements (`docs/requirements.md`)](docs/requirements.md) & [Testing (`docs/testing.md`)](docs/testing.md)**: Functional/non-functional requirements, traceability matrix, and suite specs (latest snapshot in [test-results.md](docs/reports/test-results.md)).
+- **[User Guide (`docs/guides/usage.md`)](docs/guides/usage.md)**: Terminal compatibility, CLI flags, `TERMWAY_*` environment variables, shortcuts, and troubleshooting.
 - **[Architecture Decision Records (`docs/adr/`)](docs/adr/README.md)**: Key architectural decisions and trade-offs (e.g. [ADR-0001: Hybrid D-Bus Session Routing](docs/adr/0001-hybrid-dbus-session-routing.md), [ADR-0003: Zero-Allocation Timeline Tracer](docs/adr/0003-zero-allocation-time-line-tracer.md)).
-- **[Timeline Tracing Guide (`docs/trace/`)](docs/trace/README.md)**: Zero-allocation tracer architecture, Chrome Trace Event JSON specification, and Perfetto visualization cookbook.
-- **[Engineering Roadmap (`docs/ROADMAP.md`)](docs/ROADMAP.md)**: Completed optimization phases and future milestones.
+- **[Subsystem Design Packs (`docs/design/`)](docs/design/README.md)**: Deep design packs for the [Async Pipeline & SIMD JPEG (`docs/design/pipeline/`)](docs/design/pipeline/README.md) and [Timeline Tracing (`docs/design/trace/`)](docs/design/trace/README.md).
+- **[Reports (`docs/reports/`)](docs/reports/README.md)**: Quantitative pipeline benchmarks and test execution snapshots.
+- **[Engineering Roadmap (`docs/roadmap.md`)](docs/roadmap.md)**: Completed optimization phases and future milestones.
+
+---
+
+## Contributing & Security
+
+Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for Linux build prerequisites, test commands, and hot-path invariants, [CHANGELOG.md](CHANGELOG.md) for release history, and [SECURITY.md](SECURITY.md) for private vulnerability reporting.
 
 ---
 

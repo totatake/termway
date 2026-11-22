@@ -3,7 +3,7 @@
 * **ステータス**: 承認済 (Accepted)
 * **日付**: 2026-11-02
 * **対象コンポーネント**: `src/trace/`（新規: `mod.rs` / `event.rs` / `ring.rs` / `frame.rs` / `writer.rs`）、`src/compositor/profile.rs`（`CompositorMetrics`）、`src/backend/terminal.rs`（`BackendMetrics` / ワーカー）、`src/compositor/input.rs`、`src/compositor/window_manager.rs` / `window.rs`、`src/compositor/handlers/`
-* **関連文書**: [docs/trace/](../trace/README.md)（背景・アーキ・詳細・CLI・ロードマップ）、[ADR-0001](0001-hybrid-dbus-session-routing.md)、[ADR-0002](0002-fixed-image-id-partial-placement.md)
+* **関連文書**: [docs/design/trace/](../design/trace/README.md)（背景・アーキ・詳細・CLI・ロードマップ）、[ADR-0001](0001-hybrid-dbus-session-routing.md)、[ADR-0002](0002-fixed-image-id-partial-placement.md)
 
 ---
 

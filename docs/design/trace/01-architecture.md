@@ -1,6 +1,6 @@
 # 01. アーキテクチャ設計（Architecture）
 
-本ドキュメントはタイムライン・トレーシング機構の全体像を示します。API の詳細契約は [02-detail-design.md](02-detail-design.md)、採択根拠は [ADR-0003](../adr/0003-zero-allocation-time-line-tracer.md) です。
+本ドキュメントはタイムライン・トレーシング機構の全体像を示します。API の詳細契約は [02-detail-design.md](02-detail-design.md)、採択根拠は [ADR-0003](../../adr/0003-zero-allocation-time-line-tracer.md) です。
 
 ---
 
@@ -165,7 +165,7 @@ Rust の `std::io::Stdout` は内部に 1024B の `LineWriter` を持つため�
 
 ## 7. WM 状態遷移の counter track
 
-`ARCHITECTURE.md` §2.3 のステートマシンを、ウィンドウ単位の counter track（`ph:"C"`、`id = window_id`、`arg3 = 0(Minimized) | 1(Floating) | 2(Maximized)`）として出力する。Perfetto 上で各ウィンドウがいつ最大化・最小化・復元されたかがステップグラフとして可視化される。
+`architecture.md` §2.3 のステートマシンを、ウィンドウ単位の counter track（`ph:"C"`、`id = window_id`、`arg3 = 0(Minimized) | 1(Floating) | 2(Maximized)`）として出力する。Perfetto 上で各ウィンドウがいつ最大化・最小化・復元されたかがステップグラフとして可視化される。
 
 ---
 

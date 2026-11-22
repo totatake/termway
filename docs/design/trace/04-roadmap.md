@@ -55,7 +55,7 @@
 
 ## M4 — ウィンドウ管理 (WM) 状態遷移 counter track とプロトコルイベント
 
-**目的**：`ARCHITECTURE.md` §2.3 のウィンドウ状態遷移（Minimized=0, Floating=1, Maximized=2）とライフサイクルイベントをタイムライン上で相関可能にする。
+**目的**：`architecture.md` §2.3 のウィンドウ状態遷移（Minimized=0, Floating=1, Maximized=2）とライフサイクルイベントをタイムライン上で相関可能にする。
 
 **変更点**：
 - `window_manager.rs` / `window.rs` / `state.rs` / `handlers/` にて、`WindowStateChange`（`ph:"C"`, `win_{id}_state`）、`WindowMap`, `WindowConfigure`, `WindowRaise`, `WindowClose`, `ClientCommit`, `ResizeApplied` を記録。
@@ -74,7 +74,7 @@
 - `SIGUSR1` / `SIGUSR2` 検知時および `--trace-flush-secs` 経過時の連番スナップショット出力を `src/compositor/mod.rs` に統合。
 - `src/terminal/raw.rs` の panic フックにて、端末安全復元完了後の `Once` トレースダンプを追加。
 - `--hud` 有効時の HUD 表示にトレースリング `overflow` カウンタを統合。
-- `README.md`, `README.ja.md`, `docs/ARCHITECTURE.md`, `docs/SPECIFICATION.md`, `docs/ROADMAP.md` を更新。
+- `README.md`, `README.ja.md`, `docs/architecture.md`, `docs/requirements.md`, `docs/testing.md`, `docs/roadmap.md` を更新。
 
 **完了条件**：
 - `TRC-004`：連番スナップショット出力、CLI 引数パース、HUD 表示を含む全テストが通過すること。
@@ -85,7 +85,7 @@
 
 ## 検証シナリオ ↔ テスト ID 対応表
 
-`docs/SPECIFICATION.md` の可観測性要件に以下を登録する。
+`docs/requirements.md` / `docs/testing.md` の可観測性要件に以下を登録する。
 
 | ID | シナリオ | 検証内容 | ステップ |
 | :--- | :--- | :--- | :--- |

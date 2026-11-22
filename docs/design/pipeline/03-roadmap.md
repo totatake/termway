@@ -24,7 +24,7 @@ flowchart LR
    - `--profile` の JSON レポート（Encode / Write の avg / p95 / p99、Dropped、KB/s）
    - Perfetto トレース（`BackendEncode` / `FrameAssemble` / `BackendWrite` の分布）
 2. **各マイルストーン完了時に同条件で再計測**し、コミットメッセージ本文に Before / After を記録する。
-3. 既存テスト（現在 128 件超）を 1 件も壊さない。テスト件数の変化は `docs/SPECIFICATION.md` に反映する。
+3. 既存テスト（現在 128 件超）を 1 件も壊さない。テスト件数の変化は `docs/testing.md` に反映する。
 
 ---
 
@@ -126,9 +126,9 @@ M2 は段階ごとにさらに分割してコミットすることを推奨し�
 ## M4 — 計測・ドキュメント・リリース
 
 **変更点**:
-- ベースライン → M1 → M2 → M3 の Before / After 計測結果を `docs/pipeline/04-results.md` として追加（Perfetto スクリーンショットと `--profile` JSON の要点）。
+- ベースライン → M1 → M2 → M3 の Before / After 計測結果を `docs/design/pipeline/04-results.md` として追加（Perfetto スクリーンショットと `--profile` JSON の要点）。
 - 設計判断（`vmsplice` 不採用、エンコード後 Drop 禁止のランデブー方式、ビット完全一致契約）を **ADR-0005** として `docs/adr/` に記録。
-- `docs/ARCHITECTURE.md`（スレッド構成図・§4 計測）、`docs/SPECIFICATION.md`（新規 FR / `PIP-001`〜`PIP-005` / テスト件数）、`docs/ROADMAP.md`（§16 から完了マイルストーンへ移動）、`docs/trace/`（`AsyncWrite` レーン追記）、`README.md` / `README.ja.md`（`TERMWAY_JPEG_SIMD` / `TERMWAY_PIPELINE`）を更新。
+- `docs/architecture.md`（スレッド構成図・§4 計測）、`docs/requirements.md` / `docs/testing.md`（新規 FR / `PIP-001`〜`PIP-005` / テスト件数）、`docs/roadmap.md`（§16 から完了マイルストーンへ移動）、`docs/design/trace/`（`AsyncWrite` レーン追記）、`README.md` / `README.ja.md`（`TERMWAY_JPEG_SIMD` / `TERMWAY_PIPELINE`）を更新。
 - バージョンを上げてタグを付与（マイナーバージョンアップ想定）。
 
 **コミット**: `docs: document double-buffered pipeline, SIMD JPEG, and writev results`

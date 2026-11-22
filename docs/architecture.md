@@ -1,4 +1,4 @@
-# termway システムアーキテクチャ詳細設計書 (v0.19.0)
+# termway システムアーキテクチャ詳細設計書 (v0.24.0)
 
 本書は、`termway` の**静的構造（モジュール構成・クラス/構造体関係・責務分割）**および**動的構造（起動シーケンス・非同期レンダリングパイプライン・ウィンドウ状態遷移・入力ディスパッチ）**について解説する技術設計ドキュメントです。
 
@@ -8,15 +8,17 @@
 
 ### 1.1 レイヤー構成とディレクトリツリー
 
-`termway` は単一バイナリの Smithay ベース自立型 Wayland コンポジタとして設計されており、以下の 5 つの疎結合なコアレイヤーで構成されています（v0.6.0 にてレガシー Xvfb エンジンを廃止し Smithay + XWayland アーキテクチャへ一本化、v0.7.0 にてコンポジタのモジュール分割とストリーム最適化、v0.8.0 にて aarch64/ARM NEON 最適化、v0.9.0 にて Kitty 部分プレースメント転送および Wayland Fractional Scale/HiDPI 制御、v0.10.0 にて OSC 22 マウスカーソル同期、Kitty Keyboard Protocol (CSI u)、Wayland Primary Selection、OSC 2 端末タブタイトル動的同期、v0.11.0 にて 16-bit RGB565 色量子化 SIMD 前処理、端末保護固定画像 ID 方式、動的描画ゴーストを排除する全画面標準更新、v0.12.0 にて純粋 Rust 製ゼロアロケーション Baseline JPEG エンコーダ、Kitty Graphics `f=101` 拡張ストリーミング、動的プローブ検知と透過安全フォールバック、v0.13.0 にて Wayland コンポジタ即時フレーム通知による 50ms ポーリング遅延解消、JPEG 固定小数点逆数乗算による除算完全排除、境界バイパス走査、品質適正化、v0.14.0 にてイベントループのペーシング精度向上・clean_skipタイマー保持・早期フレームコールバックによる 30fps クロック完全同期、Polkit 親切エラー案内、v0.15.0 にて SGR-Pixels (DEC 1016h) 1px 高精度マウストラッキング、ワンショット Polkit 初期化による起動遅延根絶、単一バッファアトミック write_all、制御文字サニタイズ & OSC 52 1MB 制限、2D 隣接タイル結合、SIMD タイルハッシュ拡散強化、タスクバー CJK カラム幅対応、p95 レイテンシヒストグラム、v0.16.0 / v0.16.1 にてシグナル（SIGINT/SIGTERM/SIGHUP）および panic 安全端末復元（`?2026l` 同期描画ロック解除）、`--query` 機能診断レポート、`TERMWAY_NO_CURSOR_SHAPE`、`TERMWAY_FPS`、p99 レイテンシヒストグラム、v0.17.0 にて Wayland トップレベル二重管理の解消、ウィンドウクランプ処理の共通化、不要コード削除、XKB キーマップ 64 スロット超マルチバッチロールオーバー検証、v0.18.0 にてゼロアロケーション・タイムライントレーシング基盤と Perfetto / Chrome Trace Event 連携を実装、v0.19.0 にて Wayland ポインタフレーム分離と水平スクロール対応による GTK/Tauri 互換性確保を実装）。
+`termway` は単一バイナリの Smithay ベース自立型 Wayland コンポジタとして設計されており、以下の疎結合なコアレイヤーで構成されています（v0.6.0 にて Smithay + XWayland へ一本化、v0.7.0〜v0.19.0 にてモジュール分割・SIMD・Kitty/Sixel 最適化・Fractional Scale・`f=101` JPEG・SGR-Pixels・ゼロアロケーショントレーサ・Wayland ポインタフレーム分離を段階導入し、v0.20.0 にて Double-Buffering 非同期パイプライン＋AVX2/NEON SIMD JPEG＋`writev` ゼロコピー送信を統合、v0.21.0 にて 8 方向リサイズとパーシャル画面外ドラッグを実装、v0.22.0 にて VS Code 端末向け Sixel 優先選択と `--wayland` オプション廃止を実施、v0.23.0 にて Secret Service / OSC 52 / `XDG_RUNTIME_DIR` のセキュリティ強化を実施、v0.24.0 にて OSS リポジトリ構造およびドキュメント体系を標準化）。
 
 ```text
 src/
 ├── main.rs                         # CLIパーサー、グラフィックスプロトコル自動判定、エントリポイント
 ├── lib.rs                          # クレート公開モジュール定義
+├── error.rs                        # 統一エラー列挙型 (TermwayError)
 ├── backend/                        # 【描画バックエンド・非同期I/O層】
 │   ├── mod.rs
-│   └── terminal.rs                 # TerminalBackend: 非同期エンコードワーカースレッド & 最新フレーム間引き
+│   ├── terminal.rs                 # TerminalBackend: Double-Buffering 非同期 Encode / Write パイプライン
+│   └── vectored.rs                 # writev_all: scatter-gather ゼロコピー PTY 出力
 ├── compositor/                     # 【Smithay Wayland コンポジタ & WM コア層】
 │   ├── mod.rs                      # TermwayCompositor: 統一 FD ポーリング、フレームペーシング、メインループ
 │   ├── env.rs                      # XDG ランタイム環境設定、X11 ディスプレイ候補検索、シグナル処理、ログ出力
@@ -43,9 +45,14 @@ src/
 │   └── framebuffer.rs              # Framebuffer: RGBA8888 バッファ & BGRX→RGBA 変換 (AVX2 SIMD 高速化)
 ├── protocol/                       # 【ターミナルプロトコル エンコード・デコード層】
 │   ├── mod.rs
+│   ├── jpeg.rs                     # 純粋 Rust Baseline JPEG (YCbCr 4:2:0) エンコーダ
+│   ├── jpeg_simd/                  # SIMD JPEG 加速 (x86_64 AVX2 / aarch64 NEON / スカラーフォールバック)
+│   │   ├── mod.rs
+│   │   ├── avx2.rs
+│   │   └── neon.rs
 │   ├── kitty.rs                    # KittyEncoder & KittyStreamEncoder: RFC 1950 zlib 圧縮 (o=z) & ゼロアロケーション Base64 ストリーミング
 │   ├── sixel.rs                    # SixelEncoder & SixelStreamEncoder: ダーティバンドキャッシュ、RGB332 減色、RLE 圧縮 (AVX2 + tzcnt)
-│   ├── sgr_mouse.rs                # SgrMouseParser: xterm SGR 1006 (Any-event 1003h) マウスシーケンスパーサー
+│   ├── sgr_mouse.rs                # SgrMouseParser: xterm SGR 1006 (Any-event 1003h) & SGR-Pixels マウスシーケンスパーサー
 │   └── keyboard.rs                 # KeyboardParser: UTF-8・ANSI/CSI 修飾キー・Bracketed Paste パーサー
 ├── session/                        # 【セッション管理・IPC ブリッジ層】
 │   ├── mod.rs                      # SessionManager: ハイブリッド D-Bus 管理、Snap シム生成、Polkit エージェント管理
@@ -53,8 +60,9 @@ src/
 ├── terminal/                       # 【端末制御・RAII 保護・解像度検出層】
 │   ├── mod.rs
 │   ├── raw.rs                      # RawModeGuard: termios Raw モード & Alternate Screen の RAII 復元保証
-│   ├── winsize.rs                  # TerminalSize: TIOCGWINSZ & SGR 14t/16t セルピクセル寸法測定・SIGWINCH 捕捉
-│   └── query.rs                    # GraphicsProtocol: 端末環境変数およびエスケープシーケンス応答によるプロトコル検出
+│   ├── query.rs                    # GraphicsProtocol: 端末環境変数およびエスケープシーケンス応答によるプロトコル検出
+│   ├── sanitize.rs                 # 端末テキストサニタイズ & CJK カラム幅計算
+│   └── winsize.rs                  # TerminalSize: TIOCGWINSZ & SGR 14t/16t セルピクセル寸法測定・SIGWINCH 捕捉
 └── trace/                          # 【ゼロアロケーション・タイムライントレース層】
     ├── mod.rs                      # トレース初期化、グローバル有効化フラグ、セッション時刻
     ├── event.rs                    # TraceEvent (32B Copy)、Phase、ThreadRole、EventId
@@ -591,7 +599,7 @@ stateDiagram-v2
 
 ### 3.5 ゼロアロケーション・タイムライントレーシング (`src/trace/`)
 
-パフォーマンス診断およびフレームドロップ・入力遅延のナノ〜マイクロ秒解析のため、ホットパスでのヒープ確保ゼロのタイムライントレーサーを内蔵しています（詳細は [docs/trace/README.md](trace/README.md) および [ADR-0003](adr/0003-zero-allocation-time-line-tracer.md) を参照）。
+パフォーマンス診断およびフレームドロップ・入力遅延のナノ〜マイクロ秒解析のため、ホットパスでのヒープ確保ゼロのタイムライントレーサーを内蔵しています（詳細は [docs/design/trace/README.md](design/trace/README.md) および [ADR-0003](adr/0003-zero-allocation-time-line-tracer.md) を参照）。
 
 1. **32バイト固定長イベントモデル (`TraceEvent`)**:
    - `ts_us (8B)`, `dur_us (4B)`, `id (4B)`, `arg1 (4B)`, `arg2 (4B)`, `arg3 (2B)`, `lane (1B)`, `phase (1B)`, `thread_id (2B)`, `event_id (2B)` の計 32 バイト固定長 `Copy` 構造体。

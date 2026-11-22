@@ -863,8 +863,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "-o",
         "--output",
-        default="docs/demo.gif",
-        help="Output GIF path (default: docs/demo.gif).",
+        default="docs/assets/demo.gif",
+        help="Output GIF path (default: docs/assets/demo.gif).",
     )
     return parser.parse_args()
 

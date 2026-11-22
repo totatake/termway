@@ -43,7 +43,7 @@ kill -USR1 $(pgrep termway)
 
 ---
 
-## 3. README / `docs/ARCHITECTURE.md` 反映方針
+## 3. README / `docs/architecture.md` 反映方針
 
 ### 3.1 README への追記
 
@@ -61,18 +61,18 @@ TERMWAY_TRACE_FILE=/tmp/termway.trace.gz \
 # → Search で frame_id を検索、Timeline で Render→Encode→Write を追跡
 ```
 
-5. `docs/trace/` と `docs/adr/0003-zero-allocation-time-line-tracer.md` へのリンクを README 末尾「ドキュメント」節に追加。
+5. `docs/design/trace/` と `docs/adr/0003-zero-allocation-time-line-tracer.md` へのリンクを README 末尾「ドキュメント」節に追加。
 
-### 3.2 `docs/ARCHITECTURE.md` への追記
+### 3.2 `docs/architecture.md` への追記
 
 - §1.1 ディレクトリツリーに `src/trace/` を追加。
 - §2.2 「イベント駆動メインループと非同期レンダリングパイプライン」にトレース機構の連携（`frame_id` による `Render → EnqueueSubmit → BackendEncode → FrameAssemble → BackendWrite → FrameComplete` の async flow）を追記。
 - §3 に「タイムライン・トレーシング（`src/trace/`）」を新設。
 
-### 3.3 `docs/SPECIFICATION.md` への追記
+### 3.3 `docs/requirements.md` / `docs/testing.md` への追記
 
 - 要件定義およびテスト仕様に `--trace`（テスト ID: TRC-001〜TRC-005）を追加。
 
 ### 3.4 ADR
 
-- `docs/adr/README.md` 一覧に [ADR-0003](../adr/0003-zero-allocation-time-line-tracer.md) を追加済み。
+- `docs/adr/README.md` 一覧に [ADR-0003](../../adr/0003-zero-allocation-time-line-tracer.md) を追加済み。

@@ -2,7 +2,7 @@
 
 * **ステータス**: 承認済 (Accepted)
 * **日付**: 2026-11-09
-* **対象コンポーネント**: `src/compositor/input.rs` (`dispatch_mouse_event`, `find_pointer_focus`), `src/protocol/sgr_mouse.rs` (`SgrMouseParser`, `MouseButton`), `docs/SPECIFICATION.md`, `docs/ARCHITECTURE.md`
+* **対象コンポーネント**: `src/compositor/input.rs` (`dispatch_mouse_event`, `find_pointer_focus`), `src/protocol/sgr_mouse.rs` (`SgrMouseParser`, `MouseButton`), `docs/requirements.md`, `docs/testing.md`, `docs/architecture.md`
 
 ---
 

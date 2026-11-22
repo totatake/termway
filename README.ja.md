@@ -4,7 +4,7 @@
 
 ターミナル（端末エミュレータ）の画面内に、Wayland および X11 GUI アプリケーションを直接埋め込んで実行・操作できる高速ブリッジツールです。Smithay ベースの自立型ヘッドレスコンポジタと XWayland を内蔵しています。
 
-![termway demo](docs/demo.gif)
+![termway demo](docs/assets/demo.gif)
 
 ---
 
@@ -123,6 +123,7 @@ termway は高速グラフィックスプロトコル（**Kitty** および **Si
 | | **WezTerm** | Windows, Linux, macOS | Kitty グラフィックス完全対応 |
 | | **Foot** | Linux (Wayland) | 高速 Wayland ネイティブ端末 |
 | **Sixel Graphics** | **Windows Terminal** | Windows | `--sixel` で対応 |
+| | **VS Code 統合ターミナル** | Windows, Linux, macOS | Sixel 自動検出 (xterm.js) |
 | | **WezTerm** | Windows, Linux, macOS | Kitty / Sixel 両対応 |
 | | **Foot** | Linux (Wayland) | Kitty / Sixel 両対応 |
 | | **iTerm2** | macOS | Sixel 24-bit TrueColor フル対応 |
@@ -137,7 +138,7 @@ termway は高速グラフィックスプロトコル（**Kitty** および **Si
 
 ```bash
 # Ubuntu / Debian (x86_64 / aarch64 ネイティブ環境)
-sudo apt-get install -y build-essential pkg-config libpixman-1-dev libwayland-dev xwayland dbus-daemon
+sudo apt-get install -y build-essential pkg-config libpixman-1-dev libxkbcommon-dev libwayland-dev xwayland dbus-daemon
 
 # gparted 等の管理者権限 GUI ツール（Polkit 認証ダイアログ）を使用する場合（いずれか1つ）
 sudo apt-get install -y policykit-1-gnome   # Ubuntu 標準の GNOME 認証ダイアログ（推奨）
@@ -237,10 +238,10 @@ Sixelを使いたい場合は `--sixel` を追加します：
 
 termway は起動時に端末エミュレータのプロトコル対応状況を自動検出します：
 - **Kitty 対応端末**（Noctty, Kitty, Ghostty, WezTerm 等）: 自動的に Kitty Graphics Protocol を使用
-- **Sixel 対応端末**（Windows Terminal, iTerm2, Foot, mlterm, RLogin 等）: 自動的に Sixel プロトコルを使用
+- **Sixel 対応端末**（Windows Terminal, VS Code 統合ターミナル, iTerm2, Foot, mlterm, RLogin 等）: 自動的に Sixel プロトコルを使用
 - **VTE 系端末**（GNOME Terminal, xterm 等）: 自動的に Sixel プロトコルへフォールバック
 
-明示的にプロトコルを強制したい場合は `--kitty` または `--sixel` を指定できます：
+明示的にプロトコルを強制したい場合は `--kitty` または `--sixel`、あるいは環境変数 `TERMWAY_FORCE_PROTOCOL`（`TERMWAY_FORCE_PROTOCOL=sixel|kitty`）を指定できます：
 
 ```bash
 # Sixel プロトコルを明示指定
@@ -248,6 +249,9 @@ termway は起動時に端末エミュレータのプロトコル対応状況を
 
 # Kitty プロトコルを明示指定
 ./target/release/termway --kitty -- gvim
+
+# 環境変数で指定（スクリプトやリモートセッションで便利）
+TERMWAY_FORCE_PROTOCOL=sixel ./target/release/termway -- gvim
 ```
 
 #### Kitty Graphics Protocol `f=101` (JPEG) 拡張と動的フォールバック
@@ -286,6 +290,10 @@ Sixel および SGR マウスプロトコルでのピクセルパーフェクト
 ```bash
 # セルサイズを指定して起動
 ./target/release/termway --cell-size 10x22 -- gvim
+
+# または環境変数で指定
+export TERMWAY_CELL_SIZE=10x22
+./target/release/termway -- gvim
 ```
 
 ### 5. 性能プロファイリングと JSON 出力 (`--profile`, `TERMWAY_PROFILE_FILE`)
@@ -372,7 +380,7 @@ TERMWAY_TRACE_FILE=/tmp/termway_trace.json.gz \
 | `Ctrl-V` / 端末貼り付け | クリップボードから貼り付け | ホスト側でコピーしたテキストを Bracketed Paste 経由で日本語・マルチバイト文字も含めそのままアプリへ貼り付けます |
 | マウス中クリック | Primary Selection 貼り付け | テキスト選択範囲を Wayland Primary Selection プロトコル（`zwp_primary_selection_v1`）経由で貼り付けます |
 
-### 7. 主なコマンドラインオプション
+### 8. 主なコマンドラインオプション
 
 | オプション | 引数 | 説明 | デフォルト |
 | :--- | :--- | :--- | :--- |
@@ -430,7 +438,7 @@ command = "mount -o remount,rw /tmp/.X11-unix"
 本プロジェクトは要求仕様からシステム受入テストまでの厳密なトレーサビリティを確保して開発されており、単体テスト・結合テスト・ベンチマークテスト・E2Eシステムテストが整備されています。
 
 ```bash
-# 全テスト (単体・結合・ベンチマーク・E2E: 計127テスト) の実行
+# 全テスト (単体・結合・ベンチマーク・E2E: 計156テスト) の実行
 cargo test --release
 ```
 
@@ -463,11 +471,22 @@ cargo test --release
 
 ## ドキュメント
 
-- **[システムアーキテクチャ詳細設計書 (`docs/ARCHITECTURE.md`)](docs/ARCHITECTURE.md)**: 静的構造（レイヤー構成・クラス図・責務分割）および動的構造（起動シーケンス・非同期レンダリングパイプライン・ウィンドウ状態遷移・ヒットテスト優先順位）。
-- **[要求仕様およびテスト仕様書 (`docs/SPECIFICATION.md`)](docs/SPECIFICATION.md)**: 機能要件・非機能要件と全 127 テストのトレーサビリティマトリクス。
+設計・仕様・運用ガイドの詳細は [`docs/`](docs/README.md) に整理しています：
+
+- **[概要・開発背景と比較 (`docs/overview.md`)](docs/overview.md)**: なぜ端末内 GUI か、SSH X11 / VNC / RDP との比較、実践ユースケース。
+- **[システムアーキテクチャ詳細設計書 (`docs/architecture.md`)](docs/architecture.md)**: 静的構造（レイヤー構成・クラス図・責務分割）および動的構造（起動シーケンス・非同期レンダリングパイプライン・ウィンドウ状態遷移・ヒットテスト優先順位）。
+- **[要求仕様書 (`docs/requirements.md`)](docs/requirements.md) ・ [テスト仕様 (`docs/testing.md`)](docs/testing.md)**: 機能・非機能要件、トレーサビリティマトリクス、テストスイート一覧（最新実行ログは [test-results.md](docs/reports/test-results.md)）。
+- **[利用ガイド (`docs/guides/usage.md`)](docs/guides/usage.md)**: 対応端末、CLI オプション、`TERMWAY_*` 環境変数、ショートカット、トラブルシューティング。
 - **[Architecture Decision Records (`docs/adr/`)](docs/adr/README.md)**: 設計上の意思決定とトレードオフの記録（[ADR-0001: ハイブリッド D-Bus セッションルーティング](docs/adr/0001-hybrid-dbus-session-routing.md), [ADR-0003: ゼロアロケーション・タイムライントレーサー](docs/adr/0003-zero-allocation-time-line-tracer.md) 等）。
-- **[タイムライン・トレーシング設計仕様 (`docs/trace/`)](docs/trace/README.md)**: 32B 固定長イベント、スレッド独立リング、Chrome Trace JSON 変換、Perfetto 可視化クックブック。
-- **[エンジニアリング・ロードマップ (`docs/ROADMAP.md`)](docs/ROADMAP.md)**: パフォーマンス刷新・ドメイン分割・エンジン統合の達成状況と今後の計画。
+- **[サブシステム設計パック (`docs/design/`)](docs/design/README.md)**: [非同期パイプライン＆SIMD JPEG (`docs/design/pipeline/`)](docs/design/pipeline/README.md) と [タイムライン・トレーシング (`docs/design/trace/`)](docs/design/trace/README.md) の詳細設計。
+- **[計測・検証レポート (`docs/reports/`)](docs/reports/README.md)**: パイプライン最適化ベンチマークおよびテスト実行結果スナップショット。
+- **[エンジニアリング・ロードマップ (`docs/roadmap.md`)](docs/roadmap.md)**: パフォーマンス刷新・ドメイン分割・エンジン統合の達成状況と今後の計画。
+
+---
+
+## コントリビュート・セキュリティ
+
+コントリビューションを歓迎します。Linux ビルドの前提パッケージ・テストコマンド・ホットパス不変条件は [CONTRIBUTING.md](CONTRIBUTING.md)、更新履歴は [CHANGELOG.md](CHANGELOG.md)、脆弱性の非公開報告手順は [SECURITY.md](SECURITY.md) をご覧ください。
 
 ---
 

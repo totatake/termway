@@ -51,7 +51,7 @@ Bytes: 251.1 MB | KB/s: 2119.3 | Dropped: 104 (10.6%)
 
 ## 3. なぜ Flamegraph / tracing / perfetto-rs では足りなかったか
 
-「タイムラインを可視化」という目的で検討した既存の手段と、このプロジェクトへの不適合理由を記録します（詳細な採択根拠は [ADR-0003](../adr/0003-zero-allocation-time-line-tracer.md)）。
+「タイムラインを可視化」という目的で検討した既存の手段と、このプロジェクトへの不適合理由を記録します（詳細な採択根拠は [ADR-0003](../../adr/0003-zero-allocation-time-line-tracer.md)）。
 
 ### 3.1 Flamegraph / `samply` / `perf record`
 
